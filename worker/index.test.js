@@ -19,9 +19,40 @@ test("buildGitReleaseRedirect rejects non git route", () => {
   );
 });
 
+test("buildGitReleaseRedirect rejects invalid tag", () => {
+  assert.equal(
+    buildGitReleaseRedirect("/toolchain/git/latest/MinGit-2.1.0-64-bit.zip"),
+    null,
+  );
+});
+
+test("buildGitReleaseRedirect rejects invalid asset", () => {
+  assert.equal(
+    buildGitReleaseRedirect("/toolchain/git/v2.1.0/git-installer.exe"),
+    null,
+  );
+});
+
 test("worker rejects non-CN country", async () => {
   const request = new Request("https://example.workers.dev/toolchain/git/v2.1.0/MinGit-2.1.0-64-bit.zip", {
     headers: { "cf-ipcountry": "US" },
+  });
+  const resp = await worker.fetch(request);
+  assert.equal(resp.status, 403);
+});
+
+test("worker rejects non-GET methods", async () => {
+  const request = new Request("https://example.workers.dev/toolchain/git/v2.1.0/MinGit-2.1.0-64-bit.zip", {
+    method: "POST",
+    headers: { "cf-ipcountry": "CN" },
+  });
+  const resp = await worker.fetch(request);
+  assert.equal(resp.status, 405);
+});
+
+test("worker rejects unknown route even for CN", async () => {
+  const request = new Request("https://example.workers.dev/toolchain/gh/v2.1.0/gh.zip", {
+    headers: { "cf-ipcountry": "CN" },
   });
   const resp = await worker.fetch(request);
   assert.equal(resp.status, 403);

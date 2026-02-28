@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  rust-matrix:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -37,3 +37,66 @@ jobs:
       - name: Worker test
         working-directory: worker
         run: npm test
+
+  rust-clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  worker-node-matrix:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["20", "22"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Worker test
+        working-directory: worker
+        run: npm test
+
+  cli-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build binary
+        run: cargo build --release
+
+      - name: Smoke bootstrap output
+        run: |
+          export OUT="$(./target/release/toolchain-installer --json --tool custom-tool)"
+          python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["OUT"])
+assert data["schema_version"] == 1
+PY
+
+      - name: Smoke direct method output
+        run: |
+          export OUT="$(./target/release/toolchain-installer --json --method unknown --id demo)"
+          python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["OUT"])
+assert data["items"][0]["status"] == "unsupported"
+PY

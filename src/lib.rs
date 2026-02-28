@@ -1386,6 +1386,82 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn normalize_tools_dedups_and_trims() {
+        let tools = normalize_tools(&[
+            " git ".to_string(),
+            "gh".to_string(),
+            "git".to_string(),
+            "  ".to_string(),
+            "GH".to_string(),
+        ]);
+        assert_eq!(tools, vec!["git".to_string(), "gh".to_string()]);
+    }
+
+    #[test]
+    fn parse_sha256_user_input_rejects_short_value() {
+        assert!(parse_sha256_user_input("abc").is_none());
+    }
+
+    #[test]
+    fn make_gateway_asset_candidate_normalizes_base_trailing_slash() {
+        let out = make_gateway_asset_candidate(
+            "https://gw.example/",
+            "git",
+            "v1.2.3",
+            "MinGit-1.2.3-64-bit.zip",
+        );
+        assert_eq!(
+            out,
+            "https://gw.example/toolchain/git/v1.2.3/MinGit-1.2.3-64-bit.zip"
+        );
+    }
+
+    #[test]
+    fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
+        let cfg = PublicBootstrapConfig {
+            github_api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
+            mirror_prefixes: Vec::new(),
+            gateway_base: Some("https://gw.example".to_string()),
+            country: Some("CN".to_string()),
+            http_timeout: Duration::from_secs(5),
+        };
+        assert!(
+            infer_gateway_candidate_for_git_release(
+                &cfg,
+                "https://example.com/download/v1/file.zip"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn system_recipes_cover_macos() {
+        let recipes = system_package_install_recipes("macos", "git");
+        assert_eq!(recipes.len(), 1);
+        assert_eq!(recipes[0].program, "brew");
+    }
+
+    #[test]
+    fn target_binary_ext_matches_windows_and_unix() {
+        assert_eq!(target_binary_ext("x86_64-pc-windows-msvc"), ".exe");
+        assert_eq!(target_binary_ext("x86_64-unknown-linux-gnu"), "");
+    }
+
+    #[test]
+    fn detect_target_triple_uses_trimmed_override() {
+        let detected = detect_target_triple(Some("  custom-target  ")).expect("target");
+        assert_eq!(detected, "custom-target");
+    }
+
+    #[test]
+    fn resolve_managed_toolchain_dir_uses_override() {
+        let path = PathBuf::from("/tmp/toolchain-test");
+        let out = resolve_managed_toolchain_dir(Some(path.as_path()), "x86_64-unknown-linux-gnu")
+            .expect("resolved");
+        assert_eq!(out, path);
+    }
+
     fn sha256_hex(content: &[u8]) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
