@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "ruff",
+      "method": "pip",
+      "package": "ruff",
+      "python": "python3"
+    }
+  ]
+}

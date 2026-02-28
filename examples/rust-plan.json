@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "rustup",
+      "method": "release",
+      "url": "https://github.com/rust-lang/rustup/releases/latest/download/rustup-init-x86_64-unknown-linux-gnu",
+      "binary_name": "rustup-init"
+    }
+  ]
+}

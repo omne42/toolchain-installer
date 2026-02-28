@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "go",
+      "method": "release",
+      "url": "__LATEST_GO_STABLE_URL__",
+      "binary_name": "go",
+      "archive_binary": "go/bin/go"
+    }
+  ]
+}

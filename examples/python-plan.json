@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "python3.13",
+      "method": "release",
+      "url": "__LATEST_PYTHON_3_13_URL__",
+      "binary_name": "python3.13",
+      "archive_binary": "__LATEST_PYTHON_3_13_ARCHIVE_BINARY__"
+    }
+  ]
+}

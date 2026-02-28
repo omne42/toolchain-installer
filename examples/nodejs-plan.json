@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "node",
+      "method": "release",
+      "url": "__LATEST_NODE_LTS_URL__",
+      "binary_name": "node",
+      "archive_binary": "__LATEST_NODE_ARCHIVE_BINARY__"
+    }
+  ]
+}

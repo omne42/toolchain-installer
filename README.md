@@ -1,6 +1,6 @@
 # toolchain-installer
 
-一个通用可复用的工具链安装器，用于在用户机器缺少 `git` / `gh` 时，提供可验证、可观测、可集成的安装能力。  
+一个通用可复用的工具链安装器，用于在用户机器缺少开发工具链时，提供可验证、可观测、可集成的安装能力。  
 `omne-agent` 是调用方之一，但不是唯一调用方。
 
 ## 最终目标
@@ -9,7 +9,8 @@
 
 ## 做什么
 
-- 提供稳定 CLI：探测、下载、校验、安装 `git` / `gh`。
+- 提供稳定 CLI：探测、下载、校验、安装注册表中的工具（当前内置 `git` / `gh`）。
+- 提供通用 plan 执行能力：`release/system_package/pip` 三类安装基建由调用方组合。
 - 提供调用方无关 JSON 输出契约。
 - 提供公共来源优先的下载策略与镜像回退机制。
 - 提供可选 Cloudflare Worker 路由方案，解决网络可达性并控制滥用面。
@@ -43,5 +44,6 @@
 
 - `docs/architecture.md`：组件与边界。
 - `docs/contract.md`：CLI 契约与 JSON schema。
+- `docs/examples.md`：Node.js/Go/Rust/Python3.13/ruff/uv 的安装示例。
 - `docs/security.md`：威胁模型与反滥用策略。
 - `docs/roadmap.md`：分阶段推进与交接清单。

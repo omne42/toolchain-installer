@@ -24,6 +24,9 @@
 6. `gateway`（可选）  
 Cloudflare Worker 固定路由重定向层，用于网络优化与滥用防护。
 
+7. `plan executor`
+执行调用方给定的安装计划（`release/system_package/pip`），由调用方决定安装对象。
+
 ## 边界约束
 
 - 不耦合 `omne-agent` 私有协议、事件或目录结构。

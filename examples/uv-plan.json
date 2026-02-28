@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "uv",
+      "method": "pip",
+      "package": "uv",
+      "python": "python3"
+    }
+  ]
+}
