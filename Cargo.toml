@@ -6,16 +6,21 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-flate2 = "1"
+http-kit = { path = "../omne_foundation/crates/http-kit" }
+omne-archive-primitives = { path = "../omne-runtime/crates/omne-archive-primitives" }
+omne-fs-primitives = { path = "../omne-runtime/crates/omne-fs-primitives" }
+omne-host-info-primitives = { path = "../omne-runtime/crates/omne-host-info-primitives" }
+omne-integrity-primitives = { path = "../omne-runtime/crates/omne-integrity-primitives" }
+omne-process-primitives = { path = "../omne-runtime/crates/omne-process-primitives" }
+omne-system-package-primitives = { path = "../omne-runtime/crates/omne-system-package-primitives" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-tar = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-xz2 = "0.1"
-zip = "0.6"
 
 [dev-dependencies]
 assert_cmd = "2"
+flate2 = "1"
+tar = "0.4"
 tempfile = "3"
+xz2 = "0.1"
