@@ -95,20 +95,29 @@ pub(crate) fn resolve_command_path(command: &str) -> Option<PathBuf> {
 
     for dir in std::env::split_paths(&path_var) {
         let candidate = dir.join(command);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
         #[cfg(windows)]
         {
             let has_ext = Path::new(command).extension().is_some();
             if has_ext {
-                continue;
-            }
-            for ext in &pathexts {
-                let candidate = dir.join(format!("{command}{ext}"));
                 if candidate.is_file() {
                     return Some(candidate);
                 }
+                continue;
+            }
+            for ext in &pathexts {
+                let ext_candidate = dir.join(format!("{command}{ext}"));
+                if ext_candidate.is_file() {
+                    return Some(ext_candidate);
+                }
+            }
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
     }
