@@ -150,8 +150,15 @@ fn npm_prefix_root_for_target(target_triple: &str, managed_dir: &Path) -> Operat
     if target_triple.contains("windows") {
         return Ok(managed_dir.to_path_buf());
     }
-    managed_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| OperationError::install("cannot determine npm global prefix root"))
+    if managed_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value == "bin")
+    {
+        return managed_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| OperationError::install("cannot determine npm global prefix root"));
+    }
+    Ok(managed_dir.to_path_buf())
 }

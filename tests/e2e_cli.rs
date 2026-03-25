@@ -582,6 +582,57 @@ fn npm_global_rejects_destination_field() {
 
 #[cfg(unix)]
 #[test]
+fn npm_global_uses_custom_managed_dir_as_prefix_root() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+/bin/mkdir -p "$npm_config_prefix/bin"
+/bin/cat > "$npm_config_prefix/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+/bin/chmod +x "$npm_config_prefix/bin/http-server"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = managed_dir.join("bin").join("http-server");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+    assert!(expected.exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn cargo_install_reports_root_bin_destination_for_custom_managed_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
