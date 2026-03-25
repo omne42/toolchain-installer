@@ -1,0 +1,48 @@
+name: Checkout Shared Deps
+description: Checkout sibling omne shared repositories required by local path dependencies.
+
+inputs:
+  repo-owner:
+    description: GitHub owner that hosts the shared repositories.
+    required: true
+  token:
+    description: Token with read access to shared repositories.
+    required: true
+  foundation-ref:
+    description: Ref to checkout for omne_foundation.
+    required: false
+    default: main
+  runtime-ref:
+    description: Ref to checkout for omne-runtime.
+    required: false
+    default: main
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout omne_foundation
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.repo-owner }}/omne_foundation
+        ref: ${{ inputs.foundation-ref }}
+        token: ${{ inputs.token }}
+        path: _deps/omne_foundation
+        fetch-depth: 1
+
+    - name: Checkout omne-runtime
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.repo-owner }}/omne-runtime
+        ref: ${{ inputs.runtime-ref }}
+        token: ${{ inputs.token }}
+        path: _deps/omne-runtime
+        fetch-depth: 1
+
+    - name: Move shared repos into sibling layout
+      shell: bash
+      run: |
+        set -euo pipefail
+        rm -rf ../omne_foundation ../omne-runtime
+        mv _deps/omne_foundation ../omne_foundation
+        mv _deps/omne-runtime ../omne-runtime
+        rmdir _deps 2>/dev/null || true

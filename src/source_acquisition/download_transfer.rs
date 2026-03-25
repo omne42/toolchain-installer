@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use http_kit::write_response_body_limited;
+
 use super::download_candidates::DownloadCandidate;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -20,40 +22,7 @@ where
     if !response.status().is_success() {
         return Err(anyhow::anyhow!("HTTP {}", response.status()));
     }
-    read_response_body_into_writer(response, &candidate.url, writer, options).await
-}
-
-async fn read_response_body_into_writer<W>(
-    mut response: reqwest::Response,
-    url: &str,
-    writer: &mut W,
-    options: DownloadOptions,
-) -> anyhow::Result<()>
-where
-    W: Write + ?Sized,
-{
-    if let (Some(limit), Some(content_length)) = (options.max_bytes, response.content_length()) {
-        ensure_download_size_within_limit(content_length, limit, url)?;
-    }
-
-    let mut downloaded_bytes = 0_u64;
-    while let Some(chunk) = response.chunk().await? {
-        downloaded_bytes = downloaded_bytes
-            .checked_add(chunk.len() as u64)
-            .ok_or_else(|| anyhow::anyhow!("download size overflow"))?;
-        if let Some(limit) = options.max_bytes {
-            ensure_download_size_within_limit(downloaded_bytes, limit, url)?;
-        }
-        writer.write_all(&chunk)?;
-    }
-    Ok(())
-}
-
-fn ensure_download_size_within_limit(size: u64, limit: u64, url: &str) -> anyhow::Result<()> {
-    if size > limit {
-        return Err(anyhow::anyhow!(
-            "response body size {size} exceeds configured max download size {limit} for {url}"
-        ));
-    }
-    Ok(())
+    write_response_body_limited(response, writer, options.max_bytes)
+        .await
+        .map_err(|err| anyhow::anyhow!(err.to_string()))
 }

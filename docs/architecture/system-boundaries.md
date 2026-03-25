@@ -13,23 +13,23 @@
 - 安装域：`src/bootstrap/`、`src/plan/`、`src/installation/`、`src/managed_toolchain/`、`src/uv/`、`src/source_acquisition/`
   - 共同覆盖“确定装什么、从哪下载、如何安装、如何输出结果”。
 - 平台域：`src/platform/`
-  - 负责对 runtime 进程执行原语的安装域适配。
+  - 负责对 runtime 平台原语的安装域适配，包括进程执行适配和“宿主机探测 + OS 级系统包 recipe”组合。
 - 契约域：`src/contracts/`、`src/error.rs`、`src/installer_runtime_config.rs`
   - 负责外部输入/输出、退出码、环境变量和运行期配置边界。
-- Vendored foundation 依赖：`vendor/http-kit/`
-  - 提供通用 HTTP client、bounded body read / preview、URL 校验 / 脱敏、untrusted outbound policy 与 endpoint 探测。
-- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-integrity-primitives/`
+- Shared foundation 依赖：`../omne_foundation/crates/http-kit/`
+  - 提供通用 HTTP client、bounded body read / preview、bounded response streaming、URL 校验 / 脱敏、untrusted outbound policy 与 endpoint 探测。
+- Shared runtime 依赖：`../omne-runtime/crates/omne-integrity-primitives/`
   - 提供 `sha256` 解析、内容摘要计算与校验原语。
-- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-host-info-primitives/`
+- Shared runtime 依赖：`../omne-runtime/crates/omne-host-info-primitives/`
   - 提供宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀原语。
-- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-archive-primitives/`
+- Shared runtime 依赖：`../omne-runtime/crates/omne-archive-primitives/`
   - 提供 archive/compression 格式识别、归档条目遍历和目标二进制提取原语。
-- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-fs-primitives/`
+- Shared runtime 依赖：`../omne-runtime/crates/omne-fs-primitives/`
   - 提供底层目录创建、暂存文件写入、权限设置、文件校验与原子替换原语。
-- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-process-primitives/`
-  - 提供宿主机命令探测、带输出捕获的命令执行，以及 Unix 下对系统命令的 `sudo -n` 试探原语。
-- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-system-package-primitives/`
-  - 提供系统包管理器枚举、别名解析、安装 recipe 建模，以及按 OS / 当前宿主机生成默认系统包安装配方的原语。
+- Shared runtime 依赖：`../omne-runtime/crates/omne-process-primitives/`
+  - 提供宿主机命令探测、带输出捕获的命令执行、工作目录注入，以及命令路径解析 / 标准位置回退和 Unix 下对系统命令的 `sudo -n` 试探原语。
+- Shared runtime 依赖：`../omne-runtime/crates/omne-system-package-primitives/`
+  - 提供系统包管理器枚举、canonical 名称解析、安装 recipe 建模，以及按 OS 生成默认系统包安装配方的原语。
 - 外部网关项目：`../toolchain-edge-gateway/`
   - 可选固定路由层，用于网络优化与反滥用；installer 只通过 `--gateway-base` 与其集成，不在本仓库内持有实现。
 
@@ -45,7 +45,7 @@
   - 负责安装域编排：调用 archive runtime 提取目标二进制，再调用共享文件原语完成权限设置与目标路径落盘。
   - 不决定使用哪个来源或哪种安装方法。
 - `source_acquisition`
-  - 负责 installer 自己的下载候选建模、`gateway|canonical|mirror` 来源分类、受限响应体写入、GitHub Release 元数据抓取，以及外部网关资产路由拼装。
+  - 负责 installer 自己的下载候选建模、`gateway|canonical|mirror` 来源分类、GitHub Release 元数据抓取，以及外部网关资产路由拼装。
   - 不抽象成通用 HTTP foundation，也不承载 plan 编排、归档落盘或工具链布局策略。
 - `managed_toolchain`
   - 负责围绕 `managed_dir` 的托管工具链环境编排：收敛 `uv` 工具目录、Python 目录和缓存目录，解析托管根目录策略，并执行 `uv`、`uv python install`、`uv tool install`。
@@ -56,13 +56,14 @@
   - 通过 installer 自己的 `source_acquisition` 模块消费 GitHub release 元数据和下载来源策略。
   - 不拥有 `managed_dir` 布局、Python mirror/index 策略或 plan 输出模型。
 - `platform`
-  - 负责对 runtime 进程执行原语的安装域适配。
+  - 负责对 runtime 平台原语做 installer 侧组合适配。
+  - 例如把宿主机探测和 OS 级系统包 recipe 原语组合成“当前宿主机默认 recipe”。
   - 不关心上层 CLI 参数如何组织。
 - `omne-host-info-primitives`
   - 负责宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀推断。
   - 不负责 `OMNE_DATA_DIR`、`TOOLCHAIN_INSTALLER_MANAGED_DIR`、`managed_dir` 布局或 installer plan 语义。
 - `http-kit`
-  - 负责通用 HTTP client、bounded body read / preview、URL 校验 / 脱敏、untrusted outbound policy 与 HTTP 可达性探测。
+  - 负责通用 HTTP client、bounded body read / preview、bounded response streaming、URL 校验 / 脱敏、untrusted outbound policy 与 HTTP 可达性探测。
   - 不承载 GitHub release schema、下载来源分类、镜像 / 网关候选顺序或安装器资产命名。
 - `omne-integrity-primitives`
   - 负责 `sha256:<hex>` 解析、原始 hex 输入解析、内容摘要计算与校验错误建模。
@@ -74,11 +75,11 @@
   - 负责通用目录创建、临时文件写入、flush/sync、Unix chmod、文件有效性校验和原子替换。
   - 不理解归档格式、二进制名称匹配或工具链安装计划。
 - `omne-process-primitives`
-  - 负责通用宿主机命令探测、带输出捕获的命令执行，以及 Unix 下对 bare system command 的 `sudo -n` 试探。
+  - 负责通用宿主机命令探测、带输出捕获的命令执行、工作目录注入、命令路径解析 / 标准位置回退，以及 Unix 下对 bare system command 的 `sudo -n` 试探。
   - 不负责包管理器配方、plan 语义、超时策略或安装领域错误码。
 - `omne-system-package-primitives`
-  - 负责系统包管理器枚举、别名解析、安装 recipe 建模，以及按 OS / 当前宿主机生成默认系统包安装配方。
-  - 不负责 plan method、tool/package 映射、结果 contract 或进程执行。
+  - 负责系统包管理器枚举、canonical 名称解析、安装 recipe 建模，以及按 OS 生成默认系统包安装配方。
+  - 不负责宿主机探测、plan method、tool/package 映射、结果 contract 或进程执行。
 - `../toolchain-edge-gateway/`
   - 负责产品级边缘策略：固定路由重定向、国家限制和限流。
   - 不负责通用下载原语、归档/文件/进程原语，也不进入主 CLI 安装闭环。
