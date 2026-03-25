@@ -35,14 +35,27 @@ pub(crate) fn execute_npm_global_item(
         .filter(|value| !value.is_empty())
         .unwrap_or(item.id.as_str());
 
-    let recipe =
-        build_npm_global_recipe(manager, package, binary_name, target_triple, managed_dir)?;
+    let recipe = build_npm_global_recipe(
+        manager,
+        package.clone(),
+        binary_name,
+        target_triple,
+        managed_dir,
+    )?;
     run_recipe_with_env(recipe.program.as_ref(), &recipe.args, &recipe.env)?;
 
-    if !command_path_exists(&recipe.binary_path) {
+    let destination = resolve_npm_global_destination(&recipe.binary_path, &package, binary_name)
+        .ok_or_else(|| {
+            OperationError::install(format!(
+                "expected npm_global binary at {}",
+                recipe.binary_path.display()
+            ))
+        })?;
+
+    if !command_path_exists(&destination) {
         return Err(OperationError::install(format!(
             "expected npm_global binary at {}",
-            recipe.binary_path.display()
+            destination.display()
         )));
     }
 
@@ -52,7 +65,7 @@ pub(crate) fn execute_npm_global_item(
         source: Some(recipe.source),
         source_kind: None,
         archive_match: None,
-        destination: Some(recipe.binary_path.display().to_string()),
+        destination: Some(destination.display().to_string()),
         detail: None,
         error_code: None,
         failure_code: None,
@@ -161,4 +174,61 @@ fn npm_prefix_root_for_target(target_triple: &str, managed_dir: &Path) -> Operat
             .ok_or_else(|| OperationError::install("cannot determine npm global prefix root"));
     }
     Ok(managed_dir.to_path_buf())
+}
+
+fn resolve_npm_global_destination(
+    binary_path: &Path,
+    package: &str,
+    binary_name: &str,
+) -> Option<PathBuf> {
+    if command_path_exists(binary_path) {
+        return Some(binary_path.to_path_buf());
+    }
+
+    let prefix_root = binary_path.parent()?.parent()?;
+    let mut package_dir = prefix_root.join("lib").join("node_modules");
+    for segment in npm_package_name(package).split('/') {
+        package_dir.push(segment);
+    }
+    find_named_binary_under_dir(&package_dir, binary_name)
+}
+
+fn npm_package_name(package: &str) -> &str {
+    let package = package.trim();
+    if package.starts_with('@') {
+        if let Some((name, _version)) = package.rsplit_once('@')
+            && name.contains('/')
+        {
+            return name;
+        }
+        return package;
+    }
+    package
+        .split_once('@')
+        .map(|(name, _)| name)
+        .unwrap_or(package)
+}
+
+fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value == binary_name)
+                && command_path_exists(&path)
+            {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
