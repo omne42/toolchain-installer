@@ -456,6 +456,10 @@ def seven_zip_asset_name_for_target(target_triple: str) -> str | None:
     mapping = {
         "x86_64-unknown-linux-gnu": "7z2600-linux-x64.tar.xz",
         "x86_64-apple-darwin": "7z2600-mac.tar.xz",
+        # Upstream Windows x64 `7z2600-x64.exe` is a GUI installer.
+        # `7zr.exe` is the standalone CLI binary that matches our single-binary
+        # `release` method assumptions.
+        "x86_64-pc-windows-msvc": "7zr.exe",
     }
     return mapping.get(target_triple)
 
@@ -629,7 +633,7 @@ def build_release_catalog_specs(target_triple: str) -> list[dict[str, object]]:
                 "id": "7zip-release",
                 "url": seven_zip_asset["browser_download_url"],
                 "sha256": release_spec_sha256(seven_zip_asset),
-                "binary_name": "7z.exe" if "windows" in target_triple else "7zz",
+                "binary_name": "7zr.exe" if "windows" in target_triple else "7zz",
                 "archive_binary": None if "windows" in target_triple else "7zz",
                 "version_args": ["--help"],
                 "expected_fragment": "7-Zip",
