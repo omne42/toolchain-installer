@@ -917,6 +917,65 @@ EOF
 
 #[cfg(unix)]
 #[test]
+fn npm_global_bun_falls_back_to_discovered_executable() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_bun = fake_bin_dir.join("bun");
+    write_executable(
+        &fake_bun,
+        r#"#!/bin/sh
+[ -n "$BUN_INSTALL_GLOBAL_DIR" ] || exit 9
+[ -n "$BUN_INSTALL_BIN" ] || exit 10
+/bin/mkdir -p "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin"
+/bin/cat > "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin/http-server" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+/bin/chmod +x "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin/http-server"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-bun-root");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-bun-fallback",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+            "--manager",
+            "bun",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = managed_dir
+        .join("install")
+        .join("global")
+        .join("node_modules")
+        .join(".bin")
+        .join("http-server");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+    assert!(expected.exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn cargo_install_reports_root_bin_destination_for_custom_managed_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");

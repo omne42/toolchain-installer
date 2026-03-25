@@ -44,13 +44,18 @@ pub(crate) fn execute_npm_global_item(
     )?;
     run_recipe_with_env(recipe.program.as_ref(), &recipe.args, &recipe.env)?;
 
-    let destination = resolve_npm_global_destination(&recipe.binary_path, &package, binary_name)
-        .ok_or_else(|| {
-            OperationError::install(format!(
-                "expected npm_global binary at {}",
-                recipe.binary_path.display()
-            ))
-        })?;
+    let destination = resolve_npm_global_destination(
+        &recipe.binary_path,
+        &package,
+        binary_name,
+        Some(managed_dir),
+    )
+    .ok_or_else(|| {
+        OperationError::install(format!(
+            "expected npm_global binary at {}",
+            recipe.binary_path.display()
+        ))
+    })?;
 
     if !command_path_exists(&destination) {
         return Err(OperationError::install(format!(
@@ -198,6 +203,7 @@ fn resolve_npm_global_destination(
     binary_path: &Path,
     package: &str,
     binary_name: &str,
+    search_root: Option<&Path>,
 ) -> Option<PathBuf> {
     if let Some(destination) = find_binary_at_path(binary_path, binary_name) {
         return Some(destination);
@@ -208,7 +214,11 @@ fn resolve_npm_global_destination(
     for segment in npm_package_name(package).split('/') {
         package_dir.push(segment);
     }
-    find_named_binary_under_dir(&package_dir, binary_name)
+    if let Some(destination) = find_named_binary_under_dir(&package_dir, binary_name) {
+        return Some(destination);
+    }
+
+    search_root.and_then(|root| find_named_binary_under_dir(root, binary_name))
 }
 
 fn npm_package_name(package: &str) -> &str {
