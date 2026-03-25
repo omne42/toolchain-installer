@@ -27,15 +27,7 @@ pub(crate) fn run_recipe_with_env_in_dir(
     env: &[(String, String)],
     working_directory: Option<&Path>,
 ) -> OperationResult<()> {
-    let sudo_mode = if program
-        .to_str()
-        .is_some_and(|value| value.eq_ignore_ascii_case("brew"))
-    {
-        // Homebrew explicitly rejects root execution, so macOS package installs must stay direct.
-        HostCommandSudoMode::Never
-    } else {
-        HostCommandSudoMode::IfNonRootSystemCommand
-    };
+    let sudo_mode = sudo_mode_for_program(program);
     let output = run_host_command(&HostCommandRequest {
         program,
         args,
@@ -57,6 +49,20 @@ pub(crate) fn run_recipe_with_env_in_dir(
         output.status, stderr, stdout
     );
     Err(OperationError::install(combined))
+}
+
+fn sudo_mode_for_program(program: &OsStr) -> HostCommandSudoMode {
+    let Some(program) = program.to_str() else {
+        return HostCommandSudoMode::Never;
+    };
+    match program {
+        // Homebrew explicitly rejects root execution, so macOS package installs must stay direct.
+        "brew" => HostCommandSudoMode::Never,
+        "apt-get" | "dnf" | "yum" | "apk" | "pacman" | "zypper" => {
+            HostCommandSudoMode::IfNonRootSystemCommand
+        }
+        _ => HostCommandSudoMode::Never,
+    }
 }
 
 pub(crate) fn command_exists(command: &str) -> bool {
@@ -101,4 +107,45 @@ pub(crate) fn resolve_command_path(command: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use omne_process_primitives::HostCommandSudoMode;
+
+    use super::sudo_mode_for_program;
+
+    #[test]
+    fn system_package_managers_may_use_auto_sudo() {
+        assert_eq!(
+            sudo_mode_for_program(OsStr::new("apt-get")),
+            HostCommandSudoMode::IfNonRootSystemCommand
+        );
+        assert_eq!(
+            sudo_mode_for_program(OsStr::new("dnf")),
+            HostCommandSudoMode::IfNonRootSystemCommand
+        );
+    }
+
+    #[test]
+    fn user_space_install_commands_stay_direct() {
+        assert_eq!(
+            sudo_mode_for_program(OsStr::new("cargo")),
+            HostCommandSudoMode::Never
+        );
+        assert_eq!(
+            sudo_mode_for_program(OsStr::new("go")),
+            HostCommandSudoMode::Never
+        );
+        assert_eq!(
+            sudo_mode_for_program(OsStr::new("npm")),
+            HostCommandSudoMode::Never
+        );
+        assert_eq!(
+            sudo_mode_for_program(OsStr::new("rustup")),
+            HostCommandSudoMode::Never
+        );
+    }
 }
