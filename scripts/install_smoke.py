@@ -1251,6 +1251,8 @@ def phase_go_install(binary: Path, workspace: Path) -> None:
             "id": "gopls",
             "package": "golang.org/x/tools/gopls",
             "binary_name": "gopls",
+            # gopls v0.20.0+ requires Go 1.24+, while CI intentionally exercises Go 1.23.
+            "version": "v0.18.1",
             "version_args": ["version"],
             "expected_fragment": "gopls",
         },
@@ -1258,28 +1260,29 @@ def phase_go_install(binary: Path, workspace: Path) -> None:
             "id": "golangci-lint",
             "package": "github.com/golangci/golangci-lint/cmd/golangci-lint",
             "binary_name": "golangci-lint",
+            "version": "v1.64.8",
             "version_args": ["--version"],
             "expected_fragment": "golangci-lint",
         },
     ]
     for spec in go_specs:
-        result = run_installer_json(
-            binary,
-            [
-                "--json",
-                "--managed-dir",
-                str(managed_dir),
-                "--method",
-                GO_INSTALL_PHASE,
-                "--id",
-                spec["id"],
-                "--package",
-                spec["package"],
-                "--binary-name",
-                spec["binary_name"],
-            ],
-            attempts=HOST_INSTALL_ATTEMPTS,
-        )
+        args = [
+            "--json",
+            "--managed-dir",
+            str(managed_dir),
+            "--method",
+            GO_INSTALL_PHASE,
+            "--id",
+            spec["id"],
+            "--package",
+            spec["package"],
+            "--binary-name",
+            spec["binary_name"],
+        ]
+        version = spec.get("version")
+        if version:
+            args.extend(["--tool-version", version])
+        result = run_installer_json(binary, args, attempts=HOST_INSTALL_ATTEMPTS)
         item = single_item(result)
         destination = require_installed(item, phase=GO_INSTALL_PHASE)
         if spec["version_args"]:
