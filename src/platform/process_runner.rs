@@ -77,6 +77,12 @@ pub(crate) fn command_available(command: &str) -> bool {
     runtime_command_available(command)
 }
 
+pub(crate) fn resolve_command_for_execution(command: &str) -> String {
+    resolve_command_path(command)
+        .and_then(|path| path.into_os_string().into_string().ok())
+        .unwrap_or_else(|| command.to_string())
+}
+
 pub(crate) fn resolve_command_path(command: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH")?;
     #[cfg(windows)]

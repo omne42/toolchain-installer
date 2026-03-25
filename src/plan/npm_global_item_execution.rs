@@ -4,7 +4,9 @@ use omne_host_info_primitives::executable_suffix_for_target;
 
 use crate::contracts::{BootstrapItem, BootstrapStatus, InstallPlanItem};
 use crate::error::{OperationError, OperationResult};
-use crate::platform::process_runner::{command_path_exists, run_recipe_with_env};
+use crate::platform::process_runner::{
+    command_path_exists, resolve_command_for_execution, run_recipe_with_env,
+};
 
 #[derive(Clone, Copy)]
 enum NpmManager {
@@ -122,7 +124,7 @@ fn build_npm_global_recipe(
                 prefix_root.join("bin").join(binary_name)
             };
             Ok(NpmGlobalRecipe {
-                program: "npm".to_string(),
+                program: resolve_command_for_execution("npm"),
                 args: vec![
                     "install".to_string(),
                     "--global".to_string(),
@@ -141,7 +143,7 @@ fn build_npm_global_recipe(
         NpmManager::Pnpm => {
             let binary_path = managed_dir.join(format!("{binary_name}{ext}"));
             Ok(NpmGlobalRecipe {
-                program: "pnpm".to_string(),
+                program: resolve_command_for_execution("pnpm"),
                 args: vec!["add".to_string(), "--global".to_string(), package],
                 env: vec![("PNPM_HOME".to_string(), managed_dir.display().to_string())],
                 binary_path,
@@ -152,7 +154,7 @@ fn build_npm_global_recipe(
             let install_root = managed_dir.parent().unwrap_or(managed_dir);
             let binary_path = managed_dir.join(binary_name);
             Ok(NpmGlobalRecipe {
-                program: "bun".to_string(),
+                program: resolve_command_for_execution("bun"),
                 args: vec!["add".to_string(), "--global".to_string(), package],
                 env: vec![(
                     "BUN_INSTALL".to_string(),

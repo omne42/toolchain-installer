@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::contracts::{BootstrapItem, BootstrapStatus, InstallPlanItem};
 use crate::error::{OperationError, OperationResult};
-use crate::platform::process_runner::run_recipe;
+use crate::platform::process_runner::{resolve_command_for_execution, run_recipe};
 
 use super::item_destination_resolution::effective_destination_for_item;
 
@@ -71,7 +71,8 @@ pub(crate) fn execute_workspace_package_item(
             )));
         }
     };
-    run_recipe(manager, &args)?;
+    let program = resolve_command_for_execution(manager);
+    run_recipe(&program, &args)?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
