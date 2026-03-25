@@ -123,7 +123,13 @@ fn build_npm_global_recipe(
             };
             Ok(NpmGlobalRecipe {
                 program: "npm".to_string(),
-                args: vec!["install".to_string(), "--global".to_string(), package],
+                args: vec![
+                    "install".to_string(),
+                    "--global".to_string(),
+                    "--prefix".to_string(),
+                    prefix_root.display().to_string(),
+                    package,
+                ],
                 env: vec![(
                     "npm_config_prefix".to_string(),
                     prefix_root.display().to_string(),
