@@ -244,6 +244,74 @@ async fn install_gh_from_public_release_mock_api() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn install_gh_from_public_release_windows_zip_uses_bin_hint() -> anyhow::Result<()> {
+    let archive_name = "gh_9.9.9_windows_amd64.zip";
+    let archive_bytes = make_zip_archive(&[("bin/gh.exe", b"MZ".as_slice(), 0o755)])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "v9.9.9",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": format!("{base}/asset/{archive_name}"),
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/cli/cli/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_api_bases: vec![format!("{base}/api")],
+        mirror_prefixes: Vec::new(),
+        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
+        python_install_mirrors: Vec::new(),
+        gateway_base: None,
+        country: None,
+        http_timeout: Duration::from_secs(5),
+        max_download_bytes: None,
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("gh.exe");
+
+    let source = install_gh_from_public_release(
+        "x86_64-pc-windows-msvc",
+        ".exe",
+        &destination,
+        &cfg,
+        &client,
+    )
+    .await?;
+    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
+    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
+    assert_eq!(
+        source
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::Zip, "bin/gh.exe"))
+    );
+    let installed = std::fs::read(&destination)?;
+    assert_eq!(installed, b"MZ");
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
 async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     let archive_name = "uv-x86_64-unknown-linux-gnu.tar.gz";
     let archive_bytes = make_tar_gz_archive(&[(
@@ -788,6 +856,7 @@ fn validate_plan_rejects_apt_with_non_apt_manager() {
     assert_eq!(err.exit_code(), ExitCode::Usage);
 }
 
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
 async fn execute_uv_python_item_falls_back_to_python_mirror() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
@@ -872,6 +941,7 @@ exit 2
     Ok(())
 }
 
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
 async fn execute_uv_tool_item_prefers_reachable_backup_index() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
@@ -993,6 +1063,28 @@ fn make_tar_xz_archive(entries: &[(&str, &[u8], u32)]) -> anyhow::Result<Vec<u8>
     let encoder = builder.into_inner().context("finalize tar.xz builder")?;
     let archive = encoder.finish().context("finalize xz stream")?;
     Ok(archive)
+}
+
+fn make_zip_archive(entries: &[(&str, &[u8], u32)]) -> anyhow::Result<Vec<u8>> {
+    use std::io::Write;
+
+    let mut writer = Cursor::new(Vec::new());
+    {
+        let mut archive = zip::ZipWriter::new(&mut writer);
+        for (path, body, mode) in entries {
+            let options = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .unix_permissions(*mode);
+            archive
+                .start_file(*path, options)
+                .with_context(|| format!("start zip entry {path}"))?;
+            archive
+                .write_all(body)
+                .with_context(|| format!("write zip entry {path}"))?;
+        }
+        archive.finish().context("finish zip archive")?;
+    }
+    Ok(writer.into_inner())
 }
 
 fn write_executable(path: &Path, body: &str) -> anyhow::Result<()> {

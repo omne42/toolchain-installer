@@ -302,6 +302,8 @@ def phase_release_gh(binary: Path, target_triple: str, workspace: Path) -> None:
         "--destination",
         str(destination),
     ]
+    if "windows" in target_triple:
+        args.extend(["--archive-binary", f"bin/gh{executable_suffix(target_triple)}"])
     digest = asset.get("digest")
     if isinstance(digest, str) and digest.strip():
         args.extend(["--sha256", digest.split(":", 1)[-1]])

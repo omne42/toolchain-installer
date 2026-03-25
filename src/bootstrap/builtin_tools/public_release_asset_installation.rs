@@ -46,7 +46,7 @@ pub(crate) async fn install_gh_from_public_release(
         &asset.name,
         &format!("gh{binary_ext}"),
         "gh",
-        None,
+        Some(&format!("bin/gh{binary_ext}")),
         Some(&expected_sha),
         cfg.max_download_bytes,
     )
