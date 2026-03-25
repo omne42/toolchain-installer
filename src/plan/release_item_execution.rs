@@ -118,6 +118,7 @@ pub(crate) async fn execute_release_item(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn download_release_binary_to_destination(
     client: &reqwest::Client,
     canonical_url: &str,

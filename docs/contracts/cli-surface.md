@@ -56,6 +56,8 @@
   - 逗号分隔的 `uv_tool` 备用索引列表。
 - `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`
   - 逗号分隔的 `uv_python` 备用镜像列表。
+- `TOOLCHAIN_INSTALLER_GITHUB_TOKEN`
+  - 可选 GitHub token；用于请求 GitHub release metadata API，避免 CI / 共享出口上的匿名限额。若未设置，installer 会回退读取 `GITHUB_TOKEN`。
 - `TOOLCHAIN_INSTALLER_MANAGED_DIR`
   - 直接覆盖默认托管目录。
 - `TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES`

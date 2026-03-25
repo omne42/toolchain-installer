@@ -186,7 +186,7 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
 
     let mut errors = Vec::new();
     for recipe in recipes {
-        match run_recipe(&recipe.program, &recipe.args) {
+        match run_recipe(recipe.program, &recipe.args) {
             Ok(_) => {
                 if command_available("git") {
                     return Ok(InstallSource::new(

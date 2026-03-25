@@ -146,13 +146,19 @@ def run_installer_json(
 
 def fetch_json(url: str, *, attempts: int = DOWNLOAD_ATTEMPTS) -> dict:
     last_error: Exception | None = None
+    github_token = os.environ.get("GITHUB_TOKEN") or os.environ.get(
+        "TOOLCHAIN_INSTALLER_GITHUB_TOKEN"
+    )
     for attempt in range(1, attempts + 1):
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "toolchain-installer-install-smoke",
+        }
+        if github_token:
+            headers["Authorization"] = f"Bearer {github_token}"
         request = urllib.request.Request(
             url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "toolchain-installer-install-smoke",
-            },
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:

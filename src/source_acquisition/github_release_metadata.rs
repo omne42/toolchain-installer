@@ -25,12 +25,14 @@ pub(crate) async fn fetch_latest_github_release(
             continue;
         }
         let url = format!("{trimmed}/repos/{repo}/releases/latest");
-        match client
+        let mut request = client
             .get(&url)
             .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .send()
-            .await
-        {
+            .header(reqwest::header::USER_AGENT, "toolchain-installer");
+        if let Some(token) = github_api_token() {
+            request = request.bearer_auth(token);
+        }
+        match request.send().await {
             Ok(resp) => {
                 if !resp.status().is_success() {
                     errors.push(format!("{url} -> HTTP {}", resp.status()));
@@ -49,4 +51,15 @@ pub(crate) async fn fetch_latest_github_release(
         "failed to fetch latest release metadata for {repo}: {}",
         errors.join(" | ")
     ))
+}
+
+fn github_api_token() -> Option<String> {
+    std::env::var("TOOLCHAIN_INSTALLER_GITHUB_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("GITHUB_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
 }

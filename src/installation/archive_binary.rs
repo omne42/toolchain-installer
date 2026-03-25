@@ -95,6 +95,7 @@ pub(crate) fn write_binary_from_reader(
         .map_err(|err| OperationError::install(err.to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_and_install_binary_from_archive(
     client: &reqwest::Client,
     canonical_url: &str,

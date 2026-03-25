@@ -35,7 +35,7 @@ pub(crate) fn execute_system_package_item(
 
     let mut errors = Vec::new();
     for recipe in recipes {
-        match run_recipe(&recipe.program, &recipe.args) {
+        match run_recipe(recipe.program, &recipe.args) {
             Ok(_) => {
                 return Ok(BootstrapItem {
                     tool: item.id.clone(),
