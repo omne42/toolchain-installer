@@ -271,12 +271,10 @@ fn max_download_bytes_flag_limits_release_downloads() {
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
     assert_eq!(json["items"][0]["error_code"], "download_failed");
-    assert!(
-        json["items"][0]["detail"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("configured max download size 4")
-    );
+    assert!(json["items"][0]["detail"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("configured max download size 4"));
 
     handle.join().expect("mock server thread join");
 }
@@ -508,6 +506,69 @@ fn archive_tree_release_extracts_directory_tree() {
     );
     assert!(destination.join("demo-tree/bin/demo").exists());
     assert!(destination.join("demo-tree/LICENSE").exists());
+
+    handle.join().expect("mock server thread join");
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_tree_release_extracts_tar_symlinks() {
+    let archive_name = "demo-tree-symlink.tar.gz";
+    let archive_bytes = make_tar_gz_archive_with_symlinks(
+        &[
+            (
+                "demo-tree/lib/node_modules/npm/bin/npm-cli.js",
+                b"console.log('npm')\n".as_slice(),
+                0o755,
+            ),
+            ("demo-tree/LICENSE", b"demo-license\n".as_slice(), 0o644),
+        ],
+        &[(
+            "demo-tree/bin/npm",
+            "../lib/node_modules/npm/bin/npm-cli.js",
+            0o755,
+        )],
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    let destination = temp.path().join("tree");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "archive_tree_release",
+            "--id",
+            "demo-tree-symlink",
+            "--url",
+            &format!("http://{addr}/{archive_name}"),
+            "--destination",
+        ])
+        .arg(&destination)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    let symlink_path = destination.join("demo-tree/bin/npm");
+    assert!(symlink_path.exists());
+    let metadata = std::fs::symlink_metadata(&symlink_path).expect("symlink metadata");
+    assert!(metadata.file_type().is_symlink());
+    assert_eq!(
+        std::fs::read_link(&symlink_path).expect("read symlink"),
+        Path::new("../lib/node_modules/npm/bin/npm-cli.js")
+    );
 
     handle.join().expect("mock server thread join");
 }
@@ -905,6 +966,36 @@ fn make_tar_gz_archive(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
         builder
             .append_data(&mut header, *path, &mut Cursor::new(*body))
             .expect("append tar entry");
+    }
+    let encoder = builder.into_inner().expect("finalize tar builder");
+    encoder.finish().expect("finalize gzip stream")
+}
+
+fn make_tar_gz_archive_with_symlinks(
+    file_entries: &[(&str, &[u8], u32)],
+    symlink_entries: &[(&str, &str, u32)],
+) -> Vec<u8> {
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut builder = tar::Builder::new(encoder);
+    for (path, body, mode) in file_entries {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_mode(*mode);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, *path, &mut Cursor::new(*body))
+            .expect("append tar file entry");
+    }
+    for (path, target, mode) in symlink_entries {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(*mode);
+        header.set_link_name(*target).expect("set symlink target");
+        header.set_cksum();
+        builder
+            .append_data(&mut header, *path, std::io::empty())
+            .expect("append tar symlink entry");
     }
     let encoder = builder.into_inner().expect("finalize tar builder");
     encoder.finish().expect("finalize gzip stream")

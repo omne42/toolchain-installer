@@ -95,28 +95,168 @@ where
         let mut entry = entry.map_err(|err| OperationError::install(err.to_string()))?;
         let path = entry
             .path()
-            .map_err(|err| OperationError::install(err.to_string()))?;
+            .map_err(|err| OperationError::install(err.to_string()))?
+            .into_owned();
         let sanitized = sanitize_archive_path(&path)?;
         let output_path = destination.join(sanitized);
-        if entry.header().entry_type().is_dir() {
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() {
             fs::create_dir_all(&output_path)
                 .map_err(|err| OperationError::install(err.to_string()))?;
             continue;
         }
-        if !entry.header().entry_type().is_file() {
-            return Err(OperationError::install(format!(
-                "unsupported tar entry type for {}",
-                path.display()
-            )));
+        if entry_type.is_file() {
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|err| OperationError::install(err.to_string()))?;
+            }
+            entry
+                .unpack(&output_path)
+                .map_err(|err| OperationError::install(err.to_string()))?;
+            continue;
         }
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| OperationError::install(err.to_string()))?;
+        if entry_type.is_symlink() {
+            let link_target = entry
+                .link_name()
+                .map_err(|err| OperationError::install(err.to_string()))?
+                .ok_or_else(|| {
+                    OperationError::install(format!(
+                        "missing symlink target for tar entry {}",
+                        path.display()
+                    ))
+                })?;
+            create_tar_symlink(&path, &output_path, &link_target, destination)?;
+            continue;
         }
-        entry
-            .unpack(&output_path)
-            .map_err(|err| OperationError::install(err.to_string()))?;
+        if entry_type.is_hard_link() {
+            let link_target = entry
+                .link_name()
+                .map_err(|err| OperationError::install(err.to_string()))?
+                .ok_or_else(|| {
+                    OperationError::install(format!(
+                        "missing hard link target for tar entry {}",
+                        path.display()
+                    ))
+                })?;
+            create_tar_hard_link(&path, &output_path, &link_target, destination)?;
+            continue;
+        }
+        return Err(OperationError::install(format!(
+            "unsupported tar entry type for {}",
+            path.display()
+        )));
     }
     Ok(())
+}
+
+fn create_tar_symlink(
+    entry_path: &Path,
+    output_path: &Path,
+    link_target: &Path,
+    destination: &Path,
+) -> OperationResult<()> {
+    let parent = output_path.parent().ok_or_else(|| {
+        OperationError::install(format!(
+            "cannot determine symlink parent for tar entry {}",
+            entry_path.display()
+        ))
+    })?;
+    fs::create_dir_all(parent).map_err(|err| OperationError::install(err.to_string()))?;
+    validate_archive_link_target(entry_path, parent, link_target, destination)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        symlink(link_target, output_path)
+            .map_err(|err| OperationError::install(err.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = entry_path;
+        let _ = link_target;
+        let _ = destination;
+        return Err(OperationError::install(format!(
+            "unsupported tar symlink entry for {} on this platform",
+            output_path.display()
+        )));
+    }
+}
+
+fn create_tar_hard_link(
+    entry_path: &Path,
+    output_path: &Path,
+    link_target: &Path,
+    destination: &Path,
+) -> OperationResult<()> {
+    let parent = output_path.parent().ok_or_else(|| {
+        OperationError::install(format!(
+            "cannot determine hard link parent for tar entry {}",
+            entry_path.display()
+        ))
+    })?;
+    fs::create_dir_all(parent).map_err(|err| OperationError::install(err.to_string()))?;
+    let resolved_target =
+        validate_archive_link_target(entry_path, parent, link_target, destination)?;
+    if !resolved_target.exists() {
+        return Err(OperationError::install(format!(
+            "hard link target does not exist for tar entry {}",
+            entry_path.display()
+        )));
+    }
+    fs::hard_link(&resolved_target, output_path)
+        .map_err(|err| OperationError::install(err.to_string()))?;
+    Ok(())
+}
+
+fn validate_archive_link_target(
+    entry_path: &Path,
+    parent: &Path,
+    link_target: &Path,
+    destination: &Path,
+) -> OperationResult<PathBuf> {
+    if link_target.is_absolute() {
+        return Err(OperationError::install(format!(
+            "absolute archive link target is not allowed for {}",
+            entry_path.display()
+        )));
+    }
+
+    let mut resolved = parent.to_path_buf();
+    for component in link_target.components() {
+        match component {
+            Component::Normal(part) => resolved.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !resolved.pop() || !resolved.starts_with(destination) {
+                    return Err(OperationError::install(format!(
+                        "unsafe archive link target `{}` for {}",
+                        link_target.display(),
+                        entry_path.display()
+                    )));
+                }
+            }
+            _ => {
+                return Err(OperationError::install(format!(
+                    "unsafe archive link target `{}` for {}",
+                    link_target.display(),
+                    entry_path.display()
+                )));
+            }
+        }
+    }
+
+    if !resolved.starts_with(destination) {
+        return Err(OperationError::install(format!(
+            "unsafe archive link target `{}` for {}",
+            link_target.display(),
+            entry_path.display()
+        )));
+    }
+
+    Ok(resolved)
 }
 
 fn sanitize_archive_path(path: &Path) -> OperationResult<PathBuf> {
