@@ -18,11 +18,20 @@ pub(crate) fn run_recipe_with_env(
     args: &[String],
     env: &[(String, String)],
 ) -> OperationResult<()> {
+    let sudo_mode = if program
+        .to_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case("brew"))
+    {
+        // Homebrew explicitly rejects root execution, so macOS package installs must stay direct.
+        HostCommandSudoMode::Never
+    } else {
+        HostCommandSudoMode::IfNonRootSystemCommand
+    };
     let output = run_host_command(&HostCommandRequest {
         program,
         args,
         env,
-        sudo_mode: HostCommandSudoMode::IfNonRootSystemCommand,
+        sudo_mode,
     })
     .map_err(|err| OperationError::install(err.to_string()))?
     .output;

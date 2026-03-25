@@ -281,13 +281,39 @@ fn max_download_bytes_flag_limits_release_downloads() {
     handle.join().expect("mock server thread join");
 }
 
+fn non_host_target_triple() -> String {
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .args(["--json", "--method", "unknown", "--id", "host-probe"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let host = json["host_triple"].as_str().expect("host triple");
+    [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+    ]
+    .into_iter()
+    .find(|candidate| *candidate != host)
+    .expect("non-host target triple candidate")
+    .to_string()
+}
+
 #[test]
 fn cross_target_host_bound_method_returns_usage_exit_code() {
+    let target = non_host_target_triple();
     let mut cmd = cargo_bin_cmd!("toolchain-installer");
     cmd.args([
         "--json",
         "--target-triple",
-        "aarch64-apple-darwin",
+        &target,
         "--method",
         "pip",
         "--id",
@@ -301,11 +327,12 @@ fn cross_target_host_bound_method_returns_usage_exit_code() {
 
 #[test]
 fn bootstrap_rejects_cross_target_override() {
+    let target = non_host_target_triple();
     let mut cmd = cargo_bin_cmd!("toolchain-installer");
     cmd.args([
         "bootstrap",
         "--target-triple",
-        "aarch64-apple-darwin",
+        &target,
         "--tool",
         "git",
     ])
