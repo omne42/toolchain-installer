@@ -453,7 +453,7 @@ fn find_binary_at_path(binary_path: &Path, binary_name: &str) -> Option<PathBuf>
     let parent = binary_path.parent()?;
     for candidate_name in candidate_binary_names(binary_name) {
         let candidate = parent.join(candidate_name);
-        if command_path_exists(&candidate) {
+        if candidate.is_file() && command_path_exists(&candidate) {
             return Some(candidate);
         }
     }
