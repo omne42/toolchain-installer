@@ -446,7 +446,7 @@ fn global_binary_filename(binary_name: &str, manager: NpmManager, target_triple:
 }
 
 fn find_binary_at_path(binary_path: &Path, binary_name: &str) -> Option<PathBuf> {
-    if command_path_exists(binary_path) {
+    if binary_path.is_file() && command_path_exists(binary_path) {
         return Some(binary_path.to_path_buf());
     }
 
@@ -485,11 +485,13 @@ fn binary_name_matches(candidate: &str, binary_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use serde_json::json;
 
-    use super::{NpmManager, build_npm_global_recipe, package_bin_relative_path};
+    use super::{
+        NpmManager, build_npm_global_recipe, find_binary_at_path, package_bin_relative_path,
+    };
 
     #[test]
     fn pnpm_recipe_prepends_pnpm_home_to_path() {
@@ -583,6 +585,29 @@ mod tests {
         let path = package_bin_relative_path(&manifest, "@scope/http-server@14.1.1", "http-server")
             .expect("bin path");
         assert_eq!(path, PathBuf::from("dist/http-server.js"));
+    }
+
+    #[test]
+    fn find_binary_at_path_rejects_missing_explicit_path() {
+        let cargo = std::env::var_os("CARGO").expect("cargo path");
+        let cargo_path = PathBuf::from(cargo);
+        let binary_name = cargo_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .expect("cargo filename")
+            .to_string();
+        let missing_path = std::env::temp_dir()
+            .join("ti-missing-explicit-command")
+            .join(cargo_path.file_name().expect("cargo basename"));
+
+        if let Some(parent) = missing_path.parent() {
+            std::fs::create_dir_all(parent).expect("create temp parent");
+        }
+        if Path::new(&missing_path).exists() {
+            std::fs::remove_file(&missing_path).expect("remove stale file");
+        }
+
+        assert!(find_binary_at_path(&missing_path, &binary_name).is_none());
     }
 
     fn host_target_triple() -> &'static str {
