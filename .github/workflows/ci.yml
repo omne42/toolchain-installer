@@ -89,6 +89,35 @@ jobs:
       - name: Live install smoke
         run: python scripts/install_smoke.py --binary target/release/toolchain-installer
 
+  release-catalog-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      TOOLCHAIN_INSTALLER_GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Live release catalog smoke
+        run: python scripts/install_smoke.py --binary target/release/toolchain-installer --phase release_catalog
+
   cli-smoke:
     runs-on: ubuntu-latest
     steps:

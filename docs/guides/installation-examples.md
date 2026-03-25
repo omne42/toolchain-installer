@@ -20,12 +20,13 @@ toolchain-installer bootstrap --json \
 ```bash
 GO_VER="$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq -r '[.[] | select(.stable == true)][0].version')"
 GO_URL="https://go.dev/dl/${GO_VER}.linux-amd64.tar.gz"
-toolchain-installer bootstrap --json \
-  --method release \
+GO_JSON="$(toolchain-installer bootstrap --json \
+  --method archive_tree_release \
   --id go \
-  --url "${GO_URL}" \
-  --binary-name go \
-  --archive-binary "go/bin/go"
+  --url "${GO_URL}")"
+
+GO_ROOT="$(echo "${GO_JSON}" | jq -r '.items[0].destination')"
+"${GO_ROOT}/go/bin/go" version
 ```
 
 ## uv
@@ -44,7 +45,7 @@ toolchain-installer bootstrap --json \
 RUSTUP_JSON="$(toolchain-installer bootstrap --json \
   --method release \
   --id rustup-init \
-  --url "https://github.com/rust-lang/rustup/releases/latest/download/rustup-init-x86_64-unknown-linux-gnu" \
+  --url "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init" \
   --binary-name rustup-init)"
 
 RUSTUP_BIN="$(echo "${RUSTUP_JSON}" | jq -r '.items[0].destination')"

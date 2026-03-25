@@ -18,6 +18,7 @@ GH_RELEASE_REPO = "cli/cli"
 GH_BOOTSTRAP_PHASE = "bootstrap_gh"
 UV_BOOTSTRAP_PHASE = "bootstrap_uv"
 GH_RELEASE_PHASE = "release_gh"
+RELEASE_CATALOG_PHASE = "release_catalog"
 ARCHIVE_TREE_RELEASE_PHASE = "archive_tree_release"
 GIT_BOOTSTRAP_PHASE = "bootstrap_git"
 PIP_PHASE = "pip"
@@ -68,6 +69,7 @@ def parse_args() -> argparse.Namespace:
                 GH_BOOTSTRAP_PHASE,
                 UV_BOOTSTRAP_PHASE,
                 GH_RELEASE_PHASE,
+                RELEASE_CATALOG_PHASE,
                 ARCHIVE_TREE_RELEASE_PHASE,
                 GIT_BOOTSTRAP_PHASE,
                 PIP_PHASE,
@@ -247,6 +249,13 @@ def find_asset_for_suffix(release: dict, suffix: str) -> dict:
     raise SmokeError(f"cannot find release asset with suffix {suffix!r}")
 
 
+def find_asset_by_name(release: dict, name: str) -> dict:
+    for asset in release.get("assets", []):
+        if asset.get("name") == name:
+            return asset
+    raise SmokeError(f"cannot find release asset named {name!r}")
+
+
 def masked_path_env() -> dict[str, str]:
     env = os.environ.copy()
     hidden_dir = tempfile.mkdtemp(prefix="ti-hidden-path-")
@@ -355,6 +364,280 @@ def default_phases_for_target(target_triple: str) -> list[str]:
         if platform_id == "linux":
             phases.append(APT_PHASE)
     return phases
+
+
+def ripgrep_asset_suffix_for_target(target_triple: str) -> str:
+    mapping = {
+        "x86_64-unknown-linux-gnu": "x86_64-unknown-linux-musl.tar.gz",
+        "aarch64-unknown-linux-gnu": "aarch64-unknown-linux-gnu.tar.gz",
+        "x86_64-apple-darwin": "x86_64-apple-darwin.tar.gz",
+        "aarch64-apple-darwin": "aarch64-apple-darwin.tar.gz",
+        "x86_64-pc-windows-msvc": "x86_64-pc-windows-msvc.zip",
+        "aarch64-pc-windows-msvc": "aarch64-pc-windows-msvc.zip",
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for ripgrep release smoke: {target_triple}") from err
+
+
+def fd_asset_suffix_for_target(target_triple: str) -> str | None:
+    mapping = {
+        "x86_64-unknown-linux-gnu": "x86_64-unknown-linux-gnu.tar.gz",
+        "aarch64-unknown-linux-gnu": "aarch64-unknown-linux-gnu.tar.gz",
+        "aarch64-apple-darwin": "aarch64-apple-darwin.tar.gz",
+        "x86_64-pc-windows-msvc": "x86_64-pc-windows-msvc.zip",
+        "aarch64-pc-windows-msvc": "aarch64-pc-windows-msvc.zip",
+    }
+    return mapping.get(target_triple)
+
+
+def bat_asset_suffix_for_target(target_triple: str) -> str:
+    mapping = {
+        "x86_64-unknown-linux-gnu": "x86_64-unknown-linux-gnu.tar.gz",
+        "aarch64-unknown-linux-gnu": "aarch64-unknown-linux-gnu.tar.gz",
+        "x86_64-apple-darwin": "x86_64-apple-darwin.tar.gz",
+        "aarch64-apple-darwin": "aarch64-apple-darwin.tar.gz",
+        "x86_64-pc-windows-msvc": "x86_64-pc-windows-msvc.zip",
+        "aarch64-pc-windows-msvc": "aarch64-pc-windows-msvc.zip",
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for bat release smoke: {target_triple}") from err
+
+
+def just_asset_suffix_for_target(target_triple: str) -> str:
+    mapping = {
+        "x86_64-unknown-linux-gnu": "x86_64-unknown-linux-musl.tar.gz",
+        "aarch64-unknown-linux-gnu": "aarch64-unknown-linux-musl.tar.gz",
+        "x86_64-apple-darwin": "x86_64-apple-darwin.tar.gz",
+        "aarch64-apple-darwin": "aarch64-apple-darwin.tar.gz",
+        "x86_64-pc-windows-msvc": "x86_64-pc-windows-msvc.zip",
+        "aarch64-pc-windows-msvc": "aarch64-pc-windows-msvc.zip",
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for just release smoke: {target_triple}") from err
+
+
+def jq_asset_name_for_target(target_triple: str) -> str:
+    mapping = {
+        "x86_64-unknown-linux-gnu": "jq-linux-amd64",
+        "aarch64-unknown-linux-gnu": "jq-linux-arm64",
+        "x86_64-apple-darwin": "jq-macos-amd64",
+        "aarch64-apple-darwin": "jq-macos-arm64",
+        "x86_64-pc-windows-msvc": "jq-windows-amd64.exe",
+        "aarch64-pc-windows-msvc": "jq-windows-arm64.exe",
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for jq release smoke: {target_triple}") from err
+
+
+def yq_asset_name_for_target(target_triple: str) -> str:
+    mapping = {
+        "x86_64-unknown-linux-gnu": "yq_linux_amd64",
+        "aarch64-unknown-linux-gnu": "yq_linux_arm64",
+        "x86_64-apple-darwin": "yq_darwin_amd64",
+        "aarch64-apple-darwin": "yq_darwin_arm64",
+        "x86_64-pc-windows-msvc": "yq_windows_amd64.exe",
+        "aarch64-pc-windows-msvc": "yq_windows_arm64.exe",
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for yq release smoke: {target_triple}") from err
+
+
+def seven_zip_asset_name_for_target(target_triple: str) -> str | None:
+    mapping = {
+        "x86_64-unknown-linux-gnu": "7z2600-linux-x64.tar.xz",
+        "x86_64-apple-darwin": "7z2600-mac.tar.xz",
+        "x86_64-pc-windows-msvc": "7z2600-x64.exe",
+    }
+    return mapping.get(target_triple)
+
+
+def rustup_init_url_for_target(target_triple: str) -> str:
+    executable = "rustup-init.exe" if "windows" in target_triple else "rustup-init"
+    return f"https://static.rust-lang.org/rustup/dist/{target_triple}/{executable}"
+
+
+def release_spec_sha256(asset: dict) -> str:
+    digest = asset.get("digest")
+    if not isinstance(digest, str) or not digest.strip():
+        return ""
+    return digest.split(":", 1)[-1]
+
+
+def install_release_spec(
+    binary: Path,
+    *,
+    phase: str,
+    managed_dir: Path,
+    workspace: Path,
+    spec: dict[str, object],
+    attempts: int,
+) -> None:
+    destination = workspace / str(spec["id"]) / str(spec["binary_name"])
+    args = [
+        "--json",
+        "--managed-dir",
+        str(managed_dir),
+        "--method",
+        "release",
+        "--id",
+        str(spec["id"]),
+        "--url",
+        str(spec["url"]),
+        "--binary-name",
+        str(spec["binary_name"]),
+        "--destination",
+        str(destination),
+    ]
+    archive_binary = spec.get("archive_binary")
+    if archive_binary:
+        args.extend(["--archive-binary", str(archive_binary)])
+    sha256 = str(spec.get("sha256") or "")
+    if sha256:
+        args.extend(["--sha256", sha256])
+    result = run_installer_json(binary, args, attempts=attempts)
+    item = single_item(result)
+    installed = require_installed(item, phase=phase)
+    verify_version_contains(
+        installed,
+        *spec["version_args"],
+        expected_fragment=str(spec["expected_fragment"]),
+    )
+    print(f"{phase}:{spec['id']}: ok -> {installed}", flush=True)
+
+
+def build_release_catalog_specs(target_triple: str) -> list[dict[str, object]]:
+    ext = executable_suffix(target_triple)
+    specs: list[dict[str, object]] = [
+        {
+            "id": "node-release",
+            "url": f"https://nodejs.org/dist/{NODE_ARCHIVE_VERSION}/{node_archive_filename(target_triple)}",
+            "sha256": "",
+            "binary_name": f"node{ext}",
+            "archive_binary": f"node{ext}" if "windows" in target_triple else "bin/node",
+            "version_args": ["--version"],
+            "expected_fragment": NODE_ARCHIVE_VERSION,
+        },
+        {
+            "id": "rustup-init-release",
+            "url": rustup_init_url_for_target(target_triple),
+            "sha256": "",
+            "binary_name": f"rustup-init{ext}",
+            "version_args": ["--version"],
+            "expected_fragment": "rustup",
+        },
+    ]
+
+    ripgrep_release = fetch_json("https://api.github.com/repos/BurntSushi/ripgrep/releases/latest")
+    ripgrep_asset = find_asset_for_suffix(ripgrep_release, ripgrep_asset_suffix_for_target(target_triple))
+    specs.append(
+        {
+            "id": "ripgrep-release",
+            "url": ripgrep_asset["browser_download_url"],
+            "sha256": release_spec_sha256(ripgrep_asset),
+            "binary_name": f"rg{ext}",
+            "archive_binary": f"rg{ext}",
+            "version_args": ["--version"],
+            "expected_fragment": ripgrep_release["tag_name"],
+        }
+    )
+
+    fd_suffix = fd_asset_suffix_for_target(target_triple)
+    if fd_suffix:
+        fd_release = fetch_json("https://api.github.com/repos/sharkdp/fd/releases/latest")
+        fd_asset = find_asset_for_suffix(fd_release, fd_suffix)
+        specs.append(
+            {
+                "id": "fd-release",
+                "url": fd_asset["browser_download_url"],
+                "sha256": release_spec_sha256(fd_asset),
+                "binary_name": f"fd{ext}",
+                "archive_binary": f"fd{ext}",
+                "version_args": ["--version"],
+                "expected_fragment": fd_release["tag_name"].lstrip("v"),
+            }
+        )
+
+    bat_release = fetch_json("https://api.github.com/repos/sharkdp/bat/releases/latest")
+    bat_asset = find_asset_for_suffix(bat_release, bat_asset_suffix_for_target(target_triple))
+    specs.append(
+        {
+            "id": "bat-release",
+            "url": bat_asset["browser_download_url"],
+            "sha256": release_spec_sha256(bat_asset),
+            "binary_name": f"bat{ext}",
+            "archive_binary": f"bat{ext}",
+            "version_args": ["--version"],
+            "expected_fragment": bat_release["tag_name"].lstrip("v"),
+        }
+    )
+
+    just_release = fetch_json("https://api.github.com/repos/casey/just/releases/latest")
+    just_asset = find_asset_for_suffix(just_release, just_asset_suffix_for_target(target_triple))
+    specs.append(
+        {
+            "id": "just-release",
+            "url": just_asset["browser_download_url"],
+            "sha256": release_spec_sha256(just_asset),
+            "binary_name": f"just{ext}",
+            "archive_binary": f"just{ext}",
+            "version_args": ["--version"],
+            "expected_fragment": just_release["tag_name"].lstrip("v"),
+        }
+    )
+
+    jq_release = fetch_json("https://api.github.com/repos/jqlang/jq/releases/latest")
+    jq_asset = find_asset_by_name(jq_release, jq_asset_name_for_target(target_triple))
+    specs.append(
+        {
+            "id": "jq-release",
+            "url": jq_asset["browser_download_url"],
+            "sha256": release_spec_sha256(jq_asset),
+            "binary_name": f"jq{ext}",
+            "version_args": ["--version"],
+            "expected_fragment": jq_release["tag_name"],
+        }
+    )
+
+    yq_release = fetch_json("https://api.github.com/repos/mikefarah/yq/releases/latest")
+    yq_asset = find_asset_by_name(yq_release, yq_asset_name_for_target(target_triple))
+    specs.append(
+        {
+            "id": "yq-release",
+            "url": yq_asset["browser_download_url"],
+            "sha256": release_spec_sha256(yq_asset),
+            "binary_name": f"yq{ext}",
+            "version_args": ["--version"],
+            "expected_fragment": yq_release["tag_name"],
+        }
+    )
+
+    seven_zip_asset_name = seven_zip_asset_name_for_target(target_triple)
+    if seven_zip_asset_name:
+        seven_zip_release = fetch_json("https://api.github.com/repos/ip7z/7zip/releases/latest")
+        seven_zip_asset = find_asset_by_name(seven_zip_release, seven_zip_asset_name)
+        specs.append(
+            {
+                "id": "7zip-release",
+                "url": seven_zip_asset["browser_download_url"],
+                "sha256": release_spec_sha256(seven_zip_asset),
+                "binary_name": "7z.exe" if "windows" in target_triple else "7zz",
+                "archive_binary": None if "windows" in target_triple else "7zz",
+                "version_args": ["--help"],
+                "expected_fragment": "7-Zip",
+            }
+        )
+
+    return specs
 
 
 def node_archive_filename(target_triple: str) -> str:
@@ -469,6 +752,19 @@ def phase_release_gh(binary: Path, target_triple: str, workspace: Path) -> None:
     installed = require_installed(item, phase=GH_RELEASE_PHASE)
     verify_version_contains(installed, "--version", expected_fragment="gh version")
     print(f"{GH_RELEASE_PHASE}: ok -> {installed}", flush=True)
+
+
+def phase_release_catalog(binary: Path, target_triple: str, workspace: Path) -> None:
+    managed_dir = workspace / "release-catalog-managed"
+    for spec in build_release_catalog_specs(target_triple):
+        install_release_spec(
+            binary,
+            phase=RELEASE_CATALOG_PHASE,
+            managed_dir=managed_dir,
+            workspace=workspace,
+            spec=spec,
+            attempts=DOWNLOAD_ATTEMPTS,
+        )
 
 
 def strip_archive_suffix(asset_name: str) -> str:
@@ -1040,6 +1336,8 @@ def main() -> int:
                 phase_bootstrap_uv(binary, target_triple, workspace)
             elif phase == GH_RELEASE_PHASE:
                 phase_release_gh(binary, target_triple, workspace)
+            elif phase == RELEASE_CATALOG_PHASE:
+                phase_release_catalog(binary, target_triple, workspace)
             elif phase == ARCHIVE_TREE_RELEASE_PHASE:
                 phase_archive_tree_release(binary, target_triple, workspace)
             elif phase == GIT_BOOTSTRAP_PHASE:
