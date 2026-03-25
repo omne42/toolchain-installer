@@ -235,8 +235,8 @@ fn install_mingit_bundle_from_zip_bytes(
 
     let mut archive = ZipArchive::new(Cursor::new(archive_bytes))
         .map_err(|err| OperationError::install(err.to_string()))?;
-    let mut extracted_git: Option<PathBuf> = None;
-    let mut matched_archive_path: Option<String> = None;
+    let mut extracted_git: Option<(usize, PathBuf)> = None;
+    let mut matched_archive_path: Option<(usize, String)> = None;
 
     for index in 0..archive.len() {
         let mut entry = archive
@@ -263,22 +263,49 @@ fn install_mingit_bundle_from_zip_bytes(
             .map_err(|err| OperationError::install(err.to_string()))?;
 
         let normalized = enclosed.to_string_lossy().replace('\\', "/");
-        if normalized.ends_with("/cmd/git.exe") {
-            extracted_git = Some(output_path);
-            matched_archive_path = Some(normalized);
+        if let Some(priority) = mingit_git_entry_priority(&normalized) {
+            let should_replace = extracted_git
+                .as_ref()
+                .map(|(current_priority, _)| priority < *current_priority)
+                .unwrap_or(true);
+            if should_replace {
+                extracted_git = Some((priority, output_path));
+                matched_archive_path = Some((priority, normalized));
+            }
         }
     }
 
-    let extracted_git = extracted_git.ok_or_else(|| {
-        OperationError::install("git executable `cmd/git.exe` not found in MinGit archive")
+    let (_, extracted_git) = extracted_git.ok_or_else(|| {
+        OperationError::install(format!(
+            "git executable not found in MinGit archive; expected one of: {}",
+            MINGIT_GIT_ENTRY_SUFFIXES
+                .iter()
+                .map(|path| format!("`{}`", path.trim_start_matches('/')))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     })?;
-    let matched_archive_path = matched_archive_path.expect("matched path set with extracted git");
+    let (_, matched_archive_path) =
+        matched_archive_path.expect("matched path set with extracted git");
     write_mingit_launcher(destination, managed_dir, &extracted_git)?;
 
     Ok(BootstrapArchiveMatch {
         format: BootstrapArchiveFormat::Zip,
         path: matched_archive_path,
     })
+}
+
+const MINGIT_GIT_ENTRY_SUFFIXES: [&str; 4] = [
+    "/cmd/git.exe",
+    "/mingw64/bin/git.exe",
+    "/usr/bin/git.exe",
+    "/bin/git.exe",
+];
+
+fn mingit_git_entry_priority(path: &str) -> Option<usize> {
+    MINGIT_GIT_ENTRY_SUFFIXES
+        .iter()
+        .position(|suffix| path.ends_with(suffix))
 }
 
 fn write_mingit_launcher(
