@@ -10,9 +10,15 @@ pub(crate) enum ManagedToolchainMethod {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlanMethod {
     Release,
+    ArchiveTreeRelease,
     SystemPackage,
     Apt,
     Pip,
+    NpmGlobal,
+    WorkspacePackage,
+    CargoInstall,
+    RustupComponent,
+    GoInstall,
     ManagedToolchain(ManagedToolchainMethod),
     Unknown,
 }
@@ -26,9 +32,15 @@ impl PlanMethod {
     pub(crate) fn from_normalized(normalized: &str) -> Self {
         match normalized {
             "release" => Self::Release,
+            "archive_tree_release" => Self::ArchiveTreeRelease,
             "system_package" => Self::SystemPackage,
             "apt" => Self::Apt,
             "pip" => Self::Pip,
+            "npm_global" => Self::NpmGlobal,
+            "workspace_package" => Self::WorkspacePackage,
+            "cargo_install" => Self::CargoInstall,
+            "rustup_component" => Self::RustupComponent,
+            "go_install" => Self::GoInstall,
             "uv" => Self::ManagedToolchain(ManagedToolchainMethod::Uv),
             "uv_python" => Self::ManagedToolchain(ManagedToolchainMethod::UvPython),
             "uv_tool" => Self::ManagedToolchain(ManagedToolchainMethod::UvTool),
@@ -39,7 +51,15 @@ impl PlanMethod {
     pub(crate) fn is_host_bound(self) -> bool {
         matches!(
             self,
-            Self::SystemPackage | Self::Apt | Self::Pip | Self::ManagedToolchain(_)
+            Self::SystemPackage
+                | Self::Apt
+                | Self::Pip
+                | Self::NpmGlobal
+                | Self::WorkspacePackage
+                | Self::CargoInstall
+                | Self::RustupComponent
+                | Self::GoInstall
+                | Self::ManagedToolchain(_)
         )
     }
 }

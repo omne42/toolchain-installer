@@ -1,8 +1,14 @@
+pub(crate) mod archive_tree_release_item_execution;
+pub(crate) mod cargo_install_item_execution;
+pub(crate) mod go_install_item_execution;
 pub(crate) mod install_plan_execution;
 pub(crate) mod install_plan_validation;
 pub(crate) mod item_destination_resolution;
 pub(crate) mod item_method_dispatch;
+pub(crate) mod npm_global_item_execution;
 pub(crate) mod pip_item_execution;
 pub(crate) mod plan_method;
 pub(crate) mod release_item_execution;
+pub(crate) mod rustup_component_item_execution;
 pub(crate) mod system_package_item_execution;
+pub(crate) mod workspace_package_item_execution;

@@ -102,6 +102,41 @@ fn validate_plan_item(
                 )));
             }
         }
+        PlanMethod::ArchiveTreeRelease => {
+            reject_unset_fields(
+                &item.id,
+                &[
+                    ("version", item.version.as_deref()),
+                    ("archive_binary", item.archive_binary.as_deref()),
+                    ("binary_name", item.binary_name.as_deref()),
+                    ("package", item.package.as_deref()),
+                    ("manager", item.manager.as_deref()),
+                    ("python", item.python.as_deref()),
+                ],
+            )?;
+            validate_release_url(&item.id, item.url.as_deref())?;
+            validate_destination_input(&item.id, item.destination.as_deref())?;
+            if item
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{}` with method `archive_tree_release` requires `url`",
+                    item.id
+                )));
+            }
+            if let Some(raw_sha256) = item.sha256.as_deref()
+                && parse_sha256_user_input(raw_sha256).is_none()
+            {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{}` has invalid `sha256` value",
+                    item.id
+                )));
+            }
+        }
         PlanMethod::Apt | PlanMethod::SystemPackage => {
             reject_unset_fields(
                 &item.id,
@@ -178,6 +213,90 @@ fn validate_plan_item(
                     item.id
                 )));
             }
+        }
+        PlanMethod::NpmGlobal => {
+            reject_unset_fields(
+                &item.id,
+                &[
+                    ("url", item.url.as_deref()),
+                    ("sha256", item.sha256.as_deref()),
+                    ("archive_binary", item.archive_binary.as_deref()),
+                    ("destination", item.destination.as_deref()),
+                    ("python", item.python.as_deref()),
+                ],
+            )?;
+            require_package_field(item, "npm_global")?;
+            validate_optional_manager(item, &["npm", "pnpm", "bun"], "npm_global")?;
+        }
+        PlanMethod::WorkspacePackage => {
+            reject_unset_fields(
+                &item.id,
+                &[
+                    ("url", item.url.as_deref()),
+                    ("sha256", item.sha256.as_deref()),
+                    ("archive_binary", item.archive_binary.as_deref()),
+                    ("binary_name", item.binary_name.as_deref()),
+                    ("python", item.python.as_deref()),
+                ],
+            )?;
+            require_package_field(item, "workspace_package")?;
+            if item
+                .destination
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{}` with method `workspace_package` requires `destination`",
+                    item.id
+                )));
+            }
+            validate_destination_input(&item.id, item.destination.as_deref())?;
+            validate_optional_manager(item, &["npm", "pnpm", "bun"], "workspace_package")?;
+        }
+        PlanMethod::CargoInstall => {
+            reject_unset_fields(
+                &item.id,
+                &[
+                    ("url", item.url.as_deref()),
+                    ("sha256", item.sha256.as_deref()),
+                    ("archive_binary", item.archive_binary.as_deref()),
+                    ("destination", item.destination.as_deref()),
+                    ("manager", item.manager.as_deref()),
+                    ("python", item.python.as_deref()),
+                ],
+            )?;
+            require_package_field(item, "cargo_install")?;
+        }
+        PlanMethod::RustupComponent => {
+            reject_unset_fields(
+                &item.id,
+                &[
+                    ("version", item.version.as_deref()),
+                    ("url", item.url.as_deref()),
+                    ("sha256", item.sha256.as_deref()),
+                    ("archive_binary", item.archive_binary.as_deref()),
+                    ("destination", item.destination.as_deref()),
+                    ("manager", item.manager.as_deref()),
+                    ("python", item.python.as_deref()),
+                ],
+            )?;
+            require_package_field(item, "rustup_component")?;
+        }
+        PlanMethod::GoInstall => {
+            reject_unset_fields(
+                &item.id,
+                &[
+                    ("url", item.url.as_deref()),
+                    ("sha256", item.sha256.as_deref()),
+                    ("archive_binary", item.archive_binary.as_deref()),
+                    ("destination", item.destination.as_deref()),
+                    ("manager", item.manager.as_deref()),
+                    ("python", item.python.as_deref()),
+                ],
+            )?;
+            require_package_field(item, "go_install")?;
         }
         PlanMethod::ManagedToolchain(managed_method) => {
             validate_managed_toolchain_plan_item(managed_method, item)?
@@ -264,6 +383,44 @@ fn validate_managed_toolchain_plan_item(
         }
     }
 
+    Ok(())
+}
+
+fn require_package_field(item: &InstallPlanItem, method: &str) -> InstallerResult<()> {
+    if item
+        .package
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(InstallerError::usage(format!(
+            "plan item `{}` with method `{method}` requires `package`",
+            item.id
+        )));
+    }
+    Ok(())
+}
+
+fn validate_optional_manager(
+    item: &InstallPlanItem,
+    supported: &[&str],
+    method: &str,
+) -> InstallerResult<()> {
+    if let Some(manager) = item
+        .manager
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let normalized = manager.to_ascii_lowercase();
+        if !supported.contains(&normalized.as_str()) {
+            return Err(InstallerError::usage(format!(
+                "plan item `{}` uses unsupported {method} manager `{manager}`",
+                item.id
+            )));
+        }
+    }
     Ok(())
 }
 

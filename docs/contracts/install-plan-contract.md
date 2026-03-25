@@ -28,12 +28,24 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 - `release`
   - 下载 release 资产并安装到目标路径。
+- `archive_tree_release`
+  - 下载 archive 资产并把完整目录树解到目标路径。
 - `system_package`
   - 通过宿主系统包管理器安装。
 - `apt`
   - 显式通过 `apt` 或 `apt-get` 安装。
 - `pip`
   - 通过 `python -m pip install` 安装。
+- `npm_global`
+  - 通过 `npm`、`pnpm` 或 `bun` 安装宿主机全局 JS CLI。
+- `workspace_package`
+  - 在目标工作区目录里安装前端或 Node workspace 依赖。
+- `cargo_install`
+  - 通过 `cargo install` 安装 Rust CLI。
+- `rustup_component`
+  - 通过 `rustup component add` 安装 Rust 官方组件。
+- `go_install`
+  - 通过 `go install` 安装 Go CLI。
 - `uv`
   - 下载并安装宿主平台对应的官方 `uv` 独立二进制。
 - `uv_python`
@@ -44,11 +56,20 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 ## 方法归位
 
 - `release`
+  - `archive_tree_release`
   - 归属于 release 安装域。
 - `system_package`、`apt`
   - 归属于宿主系统包安装域。
 - `pip`
   - 归属于 Python 包安装域。
+- `npm_global`
+  - 归属于 Node / JS 全局工具安装域。
+- `workspace_package`
+  - 归属于工作区依赖安装域。
+- `cargo_install`、`rustup_component`
+  - 归属于 Rust 宿主工具安装域。
+- `go_install`
+  - 归属于 Go 宿主工具安装域。
 - `uv`、`uv_python`、`uv_tool`
   - 归属于托管工具链环境域。
   - 执行前会先把原始 `method` 字符串归位成显式托管工具链方法，再进入对应领域分发。
@@ -57,12 +78,24 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 - `release`
   - 允许 `url`、`sha256`、`archive_binary`、`binary_name`、`destination`。
+- `archive_tree_release`
+  - 允许 `url`、`sha256`、`destination`。
 - `system_package`
   - 允许 `package`、可选 `manager`。
 - `apt`
   - 允许 `package`、可选 `manager=apt|apt-get`。
 - `pip`
   - 允许 `package`、可选 `python`。
+- `npm_global`
+  - 允许 `package`、可选 `manager=npm|pnpm|bun`、可选 `binary_name`。
+- `workspace_package`
+  - 允许 `package`、`destination`、可选 `manager=npm|pnpm|bun`。
+- `cargo_install`
+  - 允许 `package`、可选 `version`、可选 `binary_name`。
+- `rustup_component`
+  - 允许 `package`、可选 `binary_name`。
+- `go_install`
+  - 允许 `package`、可选 `version`、可选 `binary_name`。
 - `uv`
   - 不接受额外字段。
 - `uv_python`
@@ -74,15 +107,20 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 - `bootstrap` 仅支持当前宿主机，即 `target_triple` 必须等于自动探测到的 `host_triple`。
 - `method=release` 支持显式跨目标平台下载与落盘。
-- `method=system_package|apt|pip|uv|uv_python|uv_tool` 仅作用于当前宿主机。
+- `method=archive_tree_release` 支持显式跨目标平台下载与解包。
+- `method=system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool` 仅作用于当前宿主机。
 - 若宿主机方法出现 `target_triple != host_triple`，执行前直接返回退出码 `2`。
 
 ## 路径与 URL 约束
 
 - `release.url` 仅允许 `http` 或 `https`。
+- `archive_tree_release.url` 仅允许 `http` 或 `https`，且资产名必须是受支持的 `.tar.gz`、`.tar.xz` 或 `.zip`。
 - `destination` 若为相对路径，会解析到 `managed_dir` 下。
 - 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
+- `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
+- `workspace_package` 必须显式给出 `destination`，不会默认写入 `managed_dir`。
+- `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 
 ## 来源探测与回退
 

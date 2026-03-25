@@ -5,7 +5,7 @@
 ## 仓库提供什么
 
 - 稳定 CLI：`toolchain-installer bootstrap [options]`
-- 通用安装 plan 执行能力：`release`、`system_package`、`apt`、`pip`、`uv`、`uv_python`、`uv_tool`
+- 通用安装 plan 执行能力：`release`、`archive_tree_release`、`system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool`
 - 调用方无关的 JSON 输出契约
 - 官方来源优先、镜像回退和可达性探测
 - 可选外部固定路由网关集成接口：`--gateway-base`
@@ -13,8 +13,8 @@
 ## 关键约束
 
 - `bootstrap` 只解决当前宿主机的工具链补齐，不支持跨目标平台安装。
-- 只有 `release` 方法支持显式跨目标平台落盘。
-- `system_package`、`apt`、`pip`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
+- 只有 `release` 与 `archive_tree_release` 支持显式跨目标平台下载。
+- `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
 - 未显式传 `--managed-dir` 时，默认托管目录是 `~/.omne_data/toolchain/<target>/bin`。
 - `release` 的相对 `destination` 解析到 `managed_dir` 下，并拒绝 `..` 路径逃逸。
 - 失败项除了 `detail` 外，还会返回机器可读的 `error_code`。
@@ -40,6 +40,7 @@
 cargo fmt --all
 cargo check --all-targets
 cargo test --all-targets
+python3 scripts/install_smoke.py
 ```
 
 若同时修改外部网关项目，再额外执行：

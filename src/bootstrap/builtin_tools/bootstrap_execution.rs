@@ -34,6 +34,8 @@ pub async fn bootstrap(request: &BootstrapRequest) -> InstallerResult<BootstrapR
         .ok_or_else(|| InstallerError::install("cannot resolve managed toolchain directory"))?;
     let cfg = InstallerRuntimeConfig::from_request(request);
     let client = reqwest::Client::builder()
+        // GitHub release asset transfers are more reliable via HTTP/1.1 in our CI/runtime mix.
+        .http1_only()
         .timeout(cfg.http_timeout)
         .user_agent("toolchain-installer")
         .build()

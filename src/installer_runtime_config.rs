@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::contracts::BootstrapRequest;
 
 pub(crate) const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
-pub(crate) const DEFAULT_HTTP_TIMEOUT_SECONDS: u64 = 20;
+pub(crate) const DEFAULT_HTTP_TIMEOUT_SECONDS: u64 = 120;
 pub(crate) const DEFAULT_PYPI_INDEX: &str = "https://pypi.org/simple";
 
 #[derive(Debug, Clone)]

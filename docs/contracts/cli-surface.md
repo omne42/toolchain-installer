@@ -29,16 +29,16 @@
   - 限制单次 release / bootstrap 下载的最大响应体大小，必须为正整数。
 - `--plan-file <path>`
   - 执行 plan 文件。
-- `--method <release|system_package|apt|pip|uv|uv_python|uv_tool>`
+- `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
   - 单个安装项标识。
 - `--tool-version <value>`
   - `uv_python` 直接参数模式下的 Python 版本。
 - `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
-  - `release` 模式字段。
+  - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
 - `--package`、`--manager`
-  - `system_package` 或 `apt` 模式字段。
+  - `system_package`、`apt`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component` 或 `go_install` 模式字段。
 - `--python`
   - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
 - `--json`
@@ -62,6 +62,8 @@
   - 直接覆盖默认托管目录。
 - `TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES`
   - 限制单次下载的最大响应体大小；未设置时不启用额外大小上限。
+- `TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS`
+  - 覆盖 HTTP 总超时；默认是 `120` 秒。
 - `OMNE_DATA_DIR`
   - 当未指定 `--managed-dir` 且未设置 `TOOLCHAIN_INSTALLER_MANAGED_DIR` 时，默认托管目录会解析到 `OMNE_DATA_DIR/toolchain/<target>/bin`。
 

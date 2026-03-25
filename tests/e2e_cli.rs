@@ -460,6 +460,78 @@ fn archive_release_json_includes_archive_match() {
 }
 
 #[test]
+fn archive_tree_release_extracts_directory_tree() {
+    let archive_name = "demo-tree.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[
+        (
+            "demo-tree/bin/demo",
+            b"#!/bin/sh\necho archive-tree-demo\n".as_slice(),
+            0o755,
+        ),
+        ("demo-tree/LICENSE", b"demo-license\n".as_slice(), 0o644),
+    ]);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    let destination = temp.path().join("tree");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "archive_tree_release",
+            "--id",
+            "demo-tree",
+            "--url",
+            &format!("http://{addr}/{archive_name}"),
+            "--destination",
+        ])
+        .arg(&destination)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        destination.display().to_string()
+    );
+    assert!(destination.join("demo-tree/bin/demo").exists());
+    assert!(destination.join("demo-tree/LICENSE").exists());
+
+    handle.join().expect("mock server thread join");
+}
+
+#[test]
+fn archive_tree_release_allows_cross_target() {
+    let target = non_host_target_triple();
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    cmd.args([
+        "--json",
+        "--target-triple",
+        &target,
+        "--method",
+        "archive_tree_release",
+        "--id",
+        "cross-target-tree",
+        "--url",
+        "http://127.0.0.1:9/demo-tree.tar.gz",
+    ])
+    .assert()
+    .code(3);
+}
+
+#[test]
 fn pip_rejects_destination_field() {
     let mut cmd = cargo_bin_cmd!("toolchain-installer");
     cmd.args([
@@ -474,6 +546,98 @@ fn pip_rejects_destination_field() {
     ])
     .assert()
     .code(2);
+}
+
+#[test]
+fn workspace_package_requires_destination_field() {
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    cmd.args([
+        "--method",
+        "workspace_package",
+        "--id",
+        "react",
+        "--package",
+        "react@18.3.1",
+    ])
+    .assert()
+    .code(2);
+}
+
+#[test]
+fn npm_global_rejects_destination_field() {
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    cmd.args([
+        "--method",
+        "npm_global",
+        "--id",
+        "http-server",
+        "--package",
+        "http-server@14.1.1",
+        "--destination",
+        "tmp/http-server",
+    ])
+    .assert()
+    .code(2);
+}
+
+#[cfg(unix)]
+#[test]
+fn cargo_install_reports_root_bin_destination_for_custom_managed_dir() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_cargo = fake_bin_dir.join("cargo");
+    write_executable(
+        &fake_cargo,
+        r#"#!/bin/sh
+root=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--root" ]; then
+    root="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+[ -n "$root" ] || exit 9
+/bin/mkdir -p "$root/bin"
+/bin/cat > "$root/bin/demo-cargo" <<'EOF'
+#!/bin/sh
+echo "demo-cargo 0.1.0"
+EOF
+/bin/chmod +x "$root/bin/demo-cargo"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-managed");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "cargo_install",
+            "--id",
+            "demo-cargo",
+            "--package",
+            "demo-cargo-crate",
+            "--binary-name",
+            "demo-cargo",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = temp.path().join("bin").join("demo-cargo");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+    assert!(expected.exists());
 }
 
 #[test]
