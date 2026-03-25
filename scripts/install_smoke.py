@@ -24,6 +24,8 @@ APT_PHASE = "apt"
 UV_PHASE = "uv"
 UV_PYTHON_PHASE = "uv_python"
 UV_TOOL_PHASE = "uv_tool"
+DOWNLOAD_ATTEMPTS = 5
+HOST_INSTALL_ATTEMPTS = 3
 
 PIP_PACKAGE = "boltons==24.0.0"
 PIP_IMPORT = "boltons"
@@ -142,7 +144,7 @@ def run_installer_json(
     raise last_error
 
 
-def fetch_json(url: str, *, attempts: int = 3) -> dict:
+def fetch_json(url: str, *, attempts: int = DOWNLOAD_ATTEMPTS) -> dict:
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         request = urllib.request.Request(
@@ -266,7 +268,7 @@ def phase_bootstrap_gh(binary: Path, target_triple: str, workspace: Path) -> Non
         binary,
         ["bootstrap", "--json", "--managed-dir", str(managed_dir), "--tool", "gh"],
         env=masked_path_env(),
-        attempts=3,
+        attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
     destination = require_installed(item, phase=GH_BOOTSTRAP_PHASE)
@@ -297,7 +299,7 @@ def phase_release_gh(binary: Path, target_triple: str, workspace: Path) -> None:
     digest = asset.get("digest")
     if isinstance(digest, str) and digest.strip():
         args.extend(["--sha256", digest.split(":", 1)[-1]])
-    result = run_installer_json(binary, args, attempts=3)
+    result = run_installer_json(binary, args, attempts=DOWNLOAD_ATTEMPTS)
     item = single_item(result)
     installed = require_installed(item, phase=GH_RELEASE_PHASE)
     verify_version_contains(installed, "--version", expected_fragment="gh version")
@@ -310,7 +312,7 @@ def phase_bootstrap_git(binary: Path, workspace: Path) -> None:
         binary,
         ["bootstrap", "--json", "--managed-dir", str(managed_dir), "--tool", "git"],
         env=masked_path_env(),
-        attempts=3,
+        attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
     destination = require_installed(item, phase=GIT_BOOTSTRAP_PHASE)
@@ -330,6 +332,7 @@ def phase_pip(binary: Path) -> None:
             "--package",
             PIP_PACKAGE,
         ],
+        attempts=HOST_INSTALL_ATTEMPTS,
     )
     item = single_item(result)
     if item.get("status") != "installed":
@@ -356,6 +359,7 @@ def phase_system_package(binary: Path) -> None:
             "--package",
             "jq",
         ],
+        attempts=HOST_INSTALL_ATTEMPTS,
     )
     item = single_item(result)
     if item.get("status") != "installed":
@@ -376,6 +380,7 @@ def phase_apt(binary: Path) -> None:
             "--package",
             "jq",
         ],
+        attempts=HOST_INSTALL_ATTEMPTS,
     )
     item = single_item(result)
     if item.get("status") != "installed":
@@ -388,7 +393,7 @@ def phase_uv(binary: Path, managed_dir: Path) -> None:
     result = run_installer_json(
         binary,
         ["--json", "--managed-dir", str(managed_dir), "--method", "uv", "--id", "uv"],
-        attempts=3,
+        attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
     destination = require_installed(item, phase=UV_PHASE)
@@ -425,7 +430,7 @@ def phase_uv_python(binary: Path, target_triple: str, managed_dir: Path) -> None
             "--tool-version",
             UV_PYTHON_VERSION,
         ],
-        attempts=3,
+        attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
     destination = require_installed(item, phase=UV_PYTHON_PHASE)
@@ -450,7 +455,7 @@ def phase_uv_tool(binary: Path, target_triple: str, managed_dir: Path) -> None:
             "--python",
             UV_PYTHON_VERSION,
         ],
-        attempts=3,
+        attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
     destination = require_installed(item, phase=UV_TOOL_PHASE)

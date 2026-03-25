@@ -27,7 +27,7 @@
   这里通过 `plan_method.rs` 把原始 `method` 字符串归位到更明确的领域方法分类，并把 `install_plan_validation.rs`、`install_plan_execution.rs`、`item_destination_resolution.rs`、`item_method_dispatch.rs`、`release_item_execution.rs`、`system_package_item_execution.rs`、`pip_item_execution.rs` 拆开承载。
 - `src/platform/`：进程执行与系统包适配。
   这里的进程执行是适配层；低层命令探测与执行原语在 runtime。
-  系统包管理器枚举、别名与默认安装 recipe 已下沉到 `../omne-runtime/crates/omne-system-package-primitives/`。
+  系统包管理器枚举、别名与默认安装 recipe 已下沉到 vendored runtime snapshot：`vendor/omne-runtime/crates/omne-system-package-primitives/`。
 - `src/installation/`：安装域适配层，调用共享 archive/runtime 能力提取目标二进制，并调用共享文件原语完成原子落盘。
 - `src/managed_toolchain/`：围绕 `managed_dir` 的托管工具链环境领域，负责 `uv`、`uv python install`、`uv tool install` 的环境布局与编排。
   这里进一步拆成 `managed_root_dir.rs`、`managed_environment_layout.rs`、`managed_uv_installation.rs`、`managed_python_executable_discovery.rs`、`uv_python_installation.rs`、`uv_tool_installation.rs`、`uv_installation_source_candidates.rs`、`source_candidate_attempts.rs`、`bootstrap_item_construction.rs`。
@@ -36,12 +36,12 @@
 - `src/contracts/`：稳定输入/输出契约，进一步拆成 bootstrap request/result、install plan contract 与内部 source model。
 - `src/error.rs`：错误类型与退出码。
 - `src/installer_runtime_config.rs`：installer 运行期配置与环境变量收敛。
-- `../omne_foundation/crates/http-kit/`：通用 HTTP 探测与基础 client 能力；不承载 installer 自己的 GitHub release schema 与来源候选策略。
-- `../omne-runtime/crates/omne-host-info-primitives/`：宿主平台识别、target triple 映射、target override 归一化、home 目录解析与目标可执行后缀原语。
-- `../omne-runtime/crates/omne-integrity-primitives/`：通用 `sha256` 解析、内容摘要与校验原语。
-- `../omne-runtime/crates/omne-archive-primitives/`：archive/compression 格式识别、归档条目遍历与目标二进制提取原语。
-- `../omne-runtime/crates/omne-fs-primitives/`：低层目录创建、临时文件写入、权限校验与原子替换原语。
-- `../omne-runtime/crates/omne-process-primitives/`：宿主机命令探测、带输出捕获的命令执行与 Unix `sudo -n` 试探原语。
+- `vendor/http-kit/`：从 shared foundation vendored 的 HTTP 通用能力快照；不承载 installer 自己的 GitHub release schema 与来源候选策略。
+- `vendor/omne-runtime/crates/omne-host-info-primitives/`：从 shared runtime vendored 的宿主平台识别、target triple 映射、target override 归一化、home 目录解析与目标可执行后缀原语。
+- `vendor/omne-runtime/crates/omne-integrity-primitives/`：从 shared runtime vendored 的通用 `sha256` 解析、内容摘要与校验原语。
+- `vendor/omne-runtime/crates/omne-archive-primitives/`：从 shared runtime vendored 的 archive/compression 格式识别、归档条目遍历与目标二进制提取原语。
+- `vendor/omne-runtime/crates/omne-fs-primitives/`：从 shared runtime vendored 的低层目录创建、临时文件写入、权限校验与原子替换原语。
+- `vendor/omne-runtime/crates/omne-process-primitives/`：从 shared runtime vendored 的宿主机命令探测、带输出捕获的命令执行与 Unix `sudo -n` 试探原语。
 - `../toolchain-edge-gateway/`：外部边缘网关项目；installer 只通过 `--gateway-base` 与其集成。
 
 ## 修改规则

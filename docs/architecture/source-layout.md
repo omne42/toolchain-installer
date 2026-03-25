@@ -55,28 +55,28 @@
   - `download_source_kind_mapping.rs`：下载候选来源种类到 installer 输出种类的映射。
   - `mod.rs`：来源获取领域汇总。
 
-## 外部基础依赖
+## Vendored Shared Dependencies
 
-- `../omne_foundation/crates/http-kit/`
-  - 通用 HTTP client、bounded body read / preview、URL 校验 / 脱敏、untrusted outbound policy 与 endpoint 探测。
-  - `toolchain-installer` 不再在 `http-kit` 内部放 GitHub release DTO 或下载来源策略；这些逻辑留在 installer 自身。
-- `../omne-runtime/crates/omne-integrity-primitives/`
-  - 通用 `sha256` 解析、内容摘要与校验原语。
+- `vendor/http-kit/`
+  - 从 shared foundation vendored 的 HTTP client、bounded body read / preview、URL 校验 / 脱敏、untrusted outbound policy 与 endpoint 探测快照。
+  - `toolchain-installer` 不在 `http-kit` 内部放 GitHub release DTO 或下载来源策略；这些逻辑留在 installer 自身。
+- `vendor/omne-runtime/crates/omne-integrity-primitives/`
+  - 从 shared runtime vendored 的通用 `sha256` 解析、内容摘要与校验原语。
   - `toolchain-installer` 不再自己维护摘要解析和校验逻辑。
-- `../omne-runtime/crates/omne-host-info-primitives/`
-  - 通用宿主平台识别、目标三元组映射、target override 归一化、home 目录解析与目标可执行后缀原语。
+- `vendor/omne-runtime/crates/omne-host-info-primitives/`
+  - 从 shared runtime vendored 的宿主平台识别、目标三元组映射、target override 归一化、home 目录解析与目标可执行后缀原语。
   - `toolchain-installer` 不再自己维护宿主 OS/arch 到 target triple 的映射，也不再维护独立的 target override 解析壳。
-- `../omne-runtime/crates/omne-archive-primitives/`
-  - 通用 archive/compression 能力：`.tar.gz`、`.tar.xz`、`.zip` 识别，归档条目遍历，按二进制名/工具名/hint 匹配并提取目标条目。
+- `vendor/omne-runtime/crates/omne-archive-primitives/`
+  - 从 shared runtime vendored 的 archive/compression 能力：`.tar.gz`、`.tar.xz`、`.zip` 识别，归档条目遍历，按二进制名/工具名/hint 匹配并提取目标条目。
   - `toolchain-installer` 不再维护自己的归档格式识别和条目匹配逻辑。
-- `../omne-runtime/crates/omne-fs-primitives/`
-  - 通用目录创建、临时文件写入、flush/sync、Unix chmod、非空/可执行校验与原子替换原语。
+- `vendor/omne-runtime/crates/omne-fs-primitives/`
+  - 从 shared runtime vendored 的通用目录创建、临时文件写入、flush/sync、Unix chmod、非空/可执行校验与原子替换原语。
   - `toolchain-installer` 不再维护自己的临时文件命名与目标替换细节。
-- `../omne-runtime/crates/omne-process-primitives/`
-  - 通用命令探测、带输出捕获的宿主机命令执行，以及 Unix 下针对系统命令的 `sudo -n` 试探原语。
+- `vendor/omne-runtime/crates/omne-process-primitives/`
+  - 从 shared runtime vendored 的通用命令探测、带输出捕获的宿主机命令执行，以及 Unix 下针对系统命令的 `sudo -n` 试探原语。
   - `toolchain-installer` 不再维护自己的命令探测与提权执行细节。
-- `../omne-runtime/crates/omne-system-package-primitives/`
-  - 通用系统包管理器枚举、别名解析、安装 recipe 建模，以及按 OS / 当前宿主机生成默认系统包安装配方的原语。
+- `vendor/omne-runtime/crates/omne-system-package-primitives/`
+  - 从 shared runtime vendored 的通用系统包管理器枚举、别名解析、安装 recipe 建模，以及按 OS / 当前宿主机生成默认系统包安装配方的原语。
   - `toolchain-installer` 不再维护自己的 system package manager 类型和默认包管理器顺序。
 - `../toolchain-edge-gateway/`
   - 外部可选边缘网关项目，负责 Cloudflare Worker 固定路由、国家限制与限流。
@@ -105,6 +105,8 @@
   - 文档系统入口与关键路径存在性检查。
 - `scripts/install_smoke.py`
   - GitHub-hosted Linux、macOS、Windows 上的真实安装 smoke 脚本；由 workflow 调用，也可本地按 phase 复用。
+- `vendor/`
+  - 为了让 CI 在单仓库 checkout 下也能构建，仓库内 vendored 的 foundation/runtime 共享依赖快照。
 - `examples/`
   - 可执行的 plan 示例。
 

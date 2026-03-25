@@ -3,7 +3,7 @@
 ## 当前已落地能力
 
 - Rust CLI 与库入口已经分离，`main.rs` 只做进程入口。
-- 安装能力已按领域拆分为 `bootstrap`、`plan`、`platform`、`installation`、`uv`；共享 HTTP foundation 已下沉到 `../omne_foundation/crates/http-kit/`，而 GitHub release 元数据与下载来源策略保留在 installer 自身；摘要解析与校验已下沉到 `../omne-runtime/crates/omne-integrity-primitives/`，archive/compression 提取能力已下沉到 `../omne-runtime/crates/omne-archive-primitives/`，低层文件原子写入原语已下沉到 `../omne-runtime/crates/omne-fs-primitives/`，宿主机命令探测与执行原语已下沉到 `../omne-runtime/crates/omne-process-primitives/`。
+- 安装能力已按领域拆分为 `bootstrap`、`plan`、`platform`、`installation`、`uv`；共享 HTTP foundation/runtime 原语以 vendored snapshot 形式落在 `vendor/http-kit/` 与 `vendor/omne-runtime/crates/`，而 GitHub release 元数据与下载来源策略保留在 installer 自身，因此 GitHub Actions 在单仓库 checkout 下也能完整构建并执行安装验证。
 - `release`、`system_package|apt`、`pip`、`uv`、`uv_python`、`uv_tool` 六类安装基建已纳入统一 plan 执行面。
 - `examples/python-plan.json` 已覆盖 `uv + Python 3.13.12 + ruff + mypy` 的组合安装。
 - 外部边缘网关已拆分到 `../toolchain-edge-gateway/`，installer 仓库只保留集成边界与来源规则。

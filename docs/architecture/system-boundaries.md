@@ -16,19 +16,19 @@
   - 负责对 runtime 进程执行原语的安装域适配。
 - 契约域：`src/contracts/`、`src/error.rs`、`src/installer_runtime_config.rs`
   - 负责外部输入/输出、退出码、环境变量和运行期配置边界。
-- Foundation 依赖：`../omne_foundation/crates/http-kit/`
+- Vendored foundation 依赖：`vendor/http-kit/`
   - 提供通用 HTTP client、bounded body read / preview、URL 校验 / 脱敏、untrusted outbound policy 与 endpoint 探测。
-- Runtime 依赖：`../omne-runtime/crates/omne-integrity-primitives/`
+- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-integrity-primitives/`
   - 提供 `sha256` 解析、内容摘要计算与校验原语。
-- Runtime 依赖：`../omne-runtime/crates/omne-host-info-primitives/`
+- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-host-info-primitives/`
   - 提供宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀原语。
-- Runtime 依赖：`../omne-runtime/crates/omne-archive-primitives/`
+- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-archive-primitives/`
   - 提供 archive/compression 格式识别、归档条目遍历和目标二进制提取原语。
-- Runtime 依赖：`../omne-runtime/crates/omne-fs-primitives/`
+- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-fs-primitives/`
   - 提供底层目录创建、暂存文件写入、权限设置、文件校验与原子替换原语。
-- Runtime 依赖：`../omne-runtime/crates/omne-process-primitives/`
+- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-process-primitives/`
   - 提供宿主机命令探测、带输出捕获的命令执行，以及 Unix 下对系统命令的 `sudo -n` 试探原语。
-- Runtime 依赖：`../omne-runtime/crates/omne-system-package-primitives/`
+- Vendored runtime 依赖：`vendor/omne-runtime/crates/omne-system-package-primitives/`
   - 提供系统包管理器枚举、别名解析、安装 recipe 建模，以及按 OS / 当前宿主机生成默认系统包安装配方的原语。
 - 外部网关项目：`../toolchain-edge-gateway/`
   - 可选固定路由层，用于网络优化与反滥用；installer 只通过 `--gateway-base` 与其集成，不在本仓库内持有实现。
