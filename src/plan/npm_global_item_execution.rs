@@ -44,18 +44,27 @@ pub(crate) fn execute_npm_global_item(
     )?;
     run_recipe_with_env(recipe.program.as_ref(), &recipe.args, &recipe.env)?;
 
-    let destination = resolve_npm_global_destination(
+    let destination = match resolve_npm_global_destination(
         &recipe.binary_path,
         &package,
         binary_name,
         Some(managed_dir),
-    )
-    .ok_or_else(|| {
-        OperationError::install(format!(
-            "expected npm_global binary at {}",
-            recipe.binary_path.display()
-        ))
-    })?;
+    ) {
+        Some(destination) => destination,
+        None => create_windows_bun_global_launcher(
+            manager,
+            &recipe.program,
+            managed_dir,
+            &package,
+            binary_name,
+        )?
+        .ok_or_else(|| {
+            OperationError::install(format!(
+                "expected npm_global binary at {}",
+                recipe.binary_path.display()
+            ))
+        })?,
+    };
 
     if !command_path_exists(&destination) {
         return Err(OperationError::install(format!(
@@ -221,6 +230,161 @@ fn resolve_npm_global_destination(
     search_root.and_then(|root| find_named_binary_under_dir(root, binary_name))
 }
 
+#[cfg(windows)]
+fn create_windows_bun_global_launcher(
+    manager: NpmManager,
+    bun_program: &str,
+    managed_dir: &Path,
+    package: &str,
+    binary_name: &str,
+) -> OperationResult<Option<PathBuf>> {
+    if !matches!(manager, NpmManager::Bun) {
+        return Ok(None);
+    }
+
+    let global_dir = bun_global_dir(managed_dir);
+    let package_dir = resolve_bun_package_dir(&global_dir, package).ok_or_else(|| {
+        OperationError::install(format!(
+            "cannot locate bun global package `{}` under {}",
+            npm_package_name(package),
+            global_dir.display()
+        ))
+    })?;
+    let script_path = resolve_bun_package_bin_script(&package_dir, package, binary_name)
+        .ok_or_else(|| {
+            OperationError::install(format!(
+                "cannot resolve bun global binary `{binary_name}` for package `{}`",
+                npm_package_name(package)
+            ))
+        })?;
+    if !script_path.exists() {
+        return Err(OperationError::install(format!(
+            "bun global binary script does not exist at {}",
+            script_path.display()
+        )));
+    }
+
+    let launcher_path = managed_dir.join("bin").join(format!("{binary_name}.cmd"));
+    if let Some(parent) = launcher_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| OperationError::install(err.to_string()))?;
+    }
+    let launcher_body = format!(
+        "@echo off\r\n\"{}\" \"{}\" %*\r\n",
+        bun_program,
+        script_path.display()
+    );
+    std::fs::write(&launcher_path, launcher_body)
+        .map_err(|err| OperationError::install(err.to_string()))?;
+    Ok(Some(launcher_path))
+}
+
+#[cfg(not(windows))]
+fn create_windows_bun_global_launcher(
+    _manager: NpmManager,
+    _bun_program: &str,
+    _managed_dir: &Path,
+    _package: &str,
+    _binary_name: &str,
+) -> OperationResult<Option<PathBuf>> {
+    Ok(None)
+}
+
+#[cfg(windows)]
+fn bun_global_dir(managed_dir: &Path) -> PathBuf {
+    managed_dir.join("install").join("global")
+}
+
+#[cfg(windows)]
+fn resolve_bun_package_dir(global_dir: &Path, package: &str) -> Option<PathBuf> {
+    let mut direct = global_dir.join("node_modules");
+    for segment in npm_package_name(package).split('/') {
+        direct.push(segment);
+    }
+    if direct.exists() {
+        return Some(direct);
+    }
+    find_package_dir_under_root(global_dir, npm_package_name(package))
+}
+
+#[cfg(windows)]
+fn find_package_dir_under_root(root: &Path, package_name: &str) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let manifest_path = dir.join("package.json");
+        if manifest_path.is_file() {
+            let manifest = std::fs::read_to_string(&manifest_path).ok()?;
+            if package_name_from_manifest(&manifest).is_some_and(|name| name == package_name) {
+                return Some(dir);
+            }
+        }
+
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn resolve_bun_package_bin_script(
+    package_dir: &Path,
+    package: &str,
+    binary_name: &str,
+) -> Option<PathBuf> {
+    let manifest_path = package_dir.join("package.json");
+    let manifest = std::fs::read_to_string(&manifest_path).ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).ok()?;
+    let relative = package_bin_relative_path(&manifest, package, binary_name)?;
+    Some(package_dir.join(relative))
+}
+
+#[cfg(any(windows, test))]
+fn package_bin_relative_path(
+    manifest: &serde_json::Value,
+    package: &str,
+    binary_name: &str,
+) -> Option<PathBuf> {
+    let package_name = npm_package_name(package);
+    let package_basename = package_name.rsplit('/').next().unwrap_or(package_name);
+    let bin = manifest.get("bin")?;
+    match bin {
+        serde_json::Value::String(path) => Some(PathBuf::from(path)),
+        serde_json::Value::Object(entries) => {
+            if let Some(path) = entries
+                .get(binary_name)
+                .or_else(|| entries.get(package_basename))
+                .and_then(|value| value.as_str())
+            {
+                return Some(PathBuf::from(path));
+            }
+
+            if entries.len() == 1 {
+                return entries
+                    .values()
+                    .next()
+                    .and_then(|value| value.as_str())
+                    .map(PathBuf::from);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn package_name_from_manifest(manifest: &str) -> Option<String> {
+    let manifest: serde_json::Value = serde_json::from_str(manifest).ok()?;
+    manifest
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+}
+
 fn npm_package_name(package: &str) -> &str {
     let package = package.trim();
     if package.starts_with('@') {
@@ -321,7 +485,11 @@ fn binary_name_matches(candidate: &str, binary_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{NpmManager, build_npm_global_recipe};
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::{NpmManager, build_npm_global_recipe, package_bin_relative_path};
 
     #[test]
     fn pnpm_recipe_prepends_pnpm_home_to_path() {
@@ -388,6 +556,33 @@ mod tests {
             .next()
             .expect("first PATH entry");
         assert_eq!(first, expected_binary_dir);
+    }
+
+    #[test]
+    fn package_bin_relative_path_supports_string_bin_field() {
+        let manifest = json!({
+            "name": "http-server",
+            "bin": "bin/http-server"
+        });
+
+        let path = package_bin_relative_path(&manifest, "http-server@14.1.1", "http-server")
+            .expect("bin path");
+        assert_eq!(path, PathBuf::from("bin/http-server"));
+    }
+
+    #[test]
+    fn package_bin_relative_path_supports_object_bin_field() {
+        let manifest = json!({
+            "name": "@scope/http-server",
+            "bin": {
+                "http-server": "dist/http-server.js",
+                "other": "dist/other.js"
+            }
+        });
+
+        let path = package_bin_relative_path(&manifest, "@scope/http-server@14.1.1", "http-server")
+            .expect("bin path");
+        assert_eq!(path, PathBuf::from("dist/http-server.js"));
     }
 
     fn host_target_triple() -> &'static str {
