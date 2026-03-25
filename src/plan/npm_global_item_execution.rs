@@ -152,6 +152,7 @@ fn build_npm_global_recipe(
             })
         }
         NpmManager::Bun => {
+            let global_dir = managed_dir.join("install").join("global");
             let binary_dir = managed_dir.join("bin");
             let binary_path =
                 binary_dir.join(global_binary_filename(binary_name, manager, target_triple));
@@ -159,7 +160,14 @@ fn build_npm_global_recipe(
                 program: resolve_command_for_execution("bun"),
                 args: vec!["add".to_string(), "--global".to_string(), package],
                 env: vec![
-                    ("BUN_INSTALL".to_string(), managed_dir.display().to_string()),
+                    (
+                        "BUN_INSTALL_GLOBAL_DIR".to_string(),
+                        global_dir.display().to_string(),
+                    ),
+                    (
+                        "BUN_INSTALL_BIN".to_string(),
+                        binary_dir.display().to_string(),
+                    ),
                     ("PATH".to_string(), prepend_path_env(&binary_dir)?),
                 ],
                 binary_path,
@@ -333,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn bun_recipe_uses_managed_dir_as_install_root() {
+    fn bun_recipe_configures_global_and_bin_dirs() {
         let managed_dir = std::env::temp_dir().join("ti-bun-root");
         let recipe = build_npm_global_recipe(
             NpmManager::Bun,
@@ -344,11 +352,18 @@ mod tests {
         )
         .expect("build bun recipe");
 
-        assert!(
-            recipe.env.iter().any(|(name, value)| name == "BUN_INSTALL"
-                && value == &managed_dir.display().to_string())
-        );
+        let expected_global_dir = managed_dir.join("install").join("global");
+        assert!(recipe.env.iter().any(|(name, value)| {
+            name == "BUN_INSTALL_GLOBAL_DIR" && value == &expected_global_dir.display().to_string()
+        }));
         let expected_binary_dir = managed_dir.join("bin");
+        assert!(
+            recipe
+                .env
+                .iter()
+                .any(|(name, value)| name == "BUN_INSTALL_BIN"
+                    && value == &expected_binary_dir.display().to_string())
+        );
         assert_eq!(
             recipe.binary_path.parent(),
             Some(expected_binary_dir.as_path())

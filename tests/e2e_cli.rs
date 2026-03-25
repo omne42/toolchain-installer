@@ -865,17 +865,19 @@ fn npm_global_bun_uses_managed_dir_bin_subdirectory() {
     write_executable(
         &fake_bun,
         r#"#!/bin/sh
-[ -n "$BUN_INSTALL" ] || exit 9
+[ -n "$BUN_INSTALL_GLOBAL_DIR" ] || exit 9
+[ -n "$BUN_INSTALL_BIN" ] || exit 10
 case ":$PATH:" in
-  *":$BUN_INSTALL/bin:"*) ;;
-  *) exit 10 ;;
+  *":$BUN_INSTALL_BIN:"*) ;;
+  *) exit 11 ;;
 esac
-/bin/mkdir -p "$BUN_INSTALL/bin"
-/bin/cat > "$BUN_INSTALL/bin/http-server" <<'EOF'
+/bin/mkdir -p "$BUN_INSTALL_GLOBAL_DIR"
+/bin/mkdir -p "$BUN_INSTALL_BIN"
+/bin/cat > "$BUN_INSTALL_BIN/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
 EOF
-/bin/chmod +x "$BUN_INSTALL/bin/http-server"
+/bin/chmod +x "$BUN_INSTALL_BIN/http-server"
 "#,
     );
 
