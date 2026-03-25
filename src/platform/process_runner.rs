@@ -2,9 +2,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use omne_process_primitives::{
-    command_available as runtime_command_available, command_exists as runtime_command_exists,
-    command_path_exists as runtime_command_path_exists, run_host_command, HostCommandRequest,
-    HostCommandSudoMode,
+    HostCommandRequest, HostCommandSudoMode, command_available as runtime_command_available,
+    command_exists as runtime_command_exists, command_path_exists as runtime_command_path_exists,
+    run_host_command,
 };
 
 use crate::error::{OperationError, OperationResult};
