@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use omne_host_info_primitives::{
     detect_host_target_triple, executable_suffix_for_target, resolve_target_triple,
 };
-use omne_system_package_primitives::default_system_package_install_recipes_for_current_host;
 
 use crate::contracts::{
     BootstrapItem, BootstrapRequest, BootstrapResult, BootstrapSourceKind, BootstrapStatus,
@@ -12,7 +11,10 @@ use crate::contracts::{
 use crate::error::{InstallerError, InstallerResult, OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
-use crate::platform::process_runner::{command_available, run_recipe};
+use crate::platform::{
+    process_runner::{command_available, resolve_command_path_or_standard_location, run_recipe},
+    system_package_recipes::default_current_host_system_package_install_recipes,
+};
 use crate::uv::release_installation::install_uv_from_public;
 
 use super::builtin_tool_selection::{is_supported_builtin_tool, normalize_requested_tools};
@@ -110,13 +112,14 @@ async fn bootstrap_builtin_tool(
                 source_kind,
                 archive_match,
             } = source;
+            let destination = resolved_bootstrap_destination(tool, &destination, source_kind);
             BootstrapItem {
                 tool: tool.to_string(),
                 status: BootstrapStatus::Installed,
                 source: Some(locator),
                 source_kind: Some(source_kind),
                 archive_match,
-                destination: Some(destination.display().to_string()),
+                destination,
                 detail: None,
                 error_code: None,
                 failure_code: None,
@@ -156,6 +159,19 @@ fn bootstrap_destination(
     managed_dir.join(format!("{tool}{binary_ext}"))
 }
 
+fn resolved_bootstrap_destination(
+    tool: &str,
+    preferred_destination: &Path,
+    source_kind: BootstrapSourceKind,
+) -> Option<String> {
+    if source_kind == BootstrapSourceKind::SystemPackage {
+        return resolve_command_path_or_standard_location(tool)
+            .map(|path| path.display().to_string())
+            .or_else(|| Some(preferred_destination.display().to_string()));
+    }
+    Some(preferred_destination.display().to_string())
+}
+
 async fn install_builtin_tool(
     tool: &str,
     target_triple: &str,
@@ -191,7 +207,7 @@ async fn install_git_for_bootstrap(
 }
 
 fn install_git_via_system_package_manager(target_triple: &str) -> OperationResult<InstallSource> {
-    let recipes = default_system_package_install_recipes_for_current_host("git");
+    let recipes = default_current_host_system_package_install_recipes("git");
     if recipes.is_empty() {
         return Err(OperationError::install(format!(
             "git install for target `{target_triple}` requires package manager but none is supported on this OS"
@@ -202,7 +218,9 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
     for recipe in recipes {
         match run_recipe(recipe.program, &recipe.args) {
             Ok(_) => {
-                if command_available("git") {
+                if resolve_command_path_or_standard_location("git").is_some()
+                    || command_available("git")
+                {
                     return Ok(InstallSource::new(
                         format!("system:{}", recipe.program),
                         BootstrapSourceKind::SystemPackage,

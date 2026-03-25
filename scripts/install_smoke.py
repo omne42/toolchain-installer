@@ -16,6 +16,7 @@ from pathlib import Path
 
 GH_RELEASE_REPO = "cli/cli"
 GH_BOOTSTRAP_PHASE = "bootstrap_gh"
+UV_BOOTSTRAP_PHASE = "bootstrap_uv"
 GH_RELEASE_PHASE = "release_gh"
 ARCHIVE_TREE_RELEASE_PHASE = "archive_tree_release"
 GIT_BOOTSTRAP_PHASE = "bootstrap_git"
@@ -33,16 +34,14 @@ GO_INSTALL_PHASE = "go_install"
 DOWNLOAD_ATTEMPTS = 5
 HOST_INSTALL_ATTEMPTS = 3
 
+NODE_ARCHIVE_VERSION = "v22.14.0"
+GO_ARCHIVE_VERSION = "1.23.7"
+TEMURIN_JDK_MAJOR = "21"
 PIP_PACKAGE = "boltons==24.0.0"
 PIP_IMPORT = "boltons"
 UV_PYTHON_VERSION = "3.13.12"
-UV_TOOL_PACKAGE = "ruff"
-UV_TOOL_ID = "ruff"
 NPM_GLOBAL_PACKAGE = "http-server@14.1.1"
 NPM_GLOBAL_BINARY = "http-server"
-WORKSPACE_PACKAGE = "react@18.3.1"
-WORKSPACE_PACKAGE_NAME = "react"
-RUSTUP_COMPONENT = "rustfmt"
 GO_INSTALL_BINARY = "hello"
 CARGO_FIXTURE_BINARY = "ti-cargo-fixture"
 
@@ -67,6 +66,7 @@ def parse_args() -> argparse.Namespace:
         choices=sorted(
             {
                 GH_BOOTSTRAP_PHASE,
+                UV_BOOTSTRAP_PHASE,
                 GH_RELEASE_PHASE,
                 ARCHIVE_TREE_RELEASE_PHASE,
                 GIT_BOOTSTRAP_PHASE,
@@ -163,14 +163,19 @@ def run_installer_json(
     raise last_error
 
 
-def fetch_json(url: str, *, attempts: int = DOWNLOAD_ATTEMPTS) -> dict:
+def fetch_json(
+    url: str,
+    *,
+    attempts: int = DOWNLOAD_ATTEMPTS,
+    accept: str = "application/json",
+) -> object:
     last_error: Exception | None = None
     github_token = os.environ.get("GITHUB_TOKEN") or os.environ.get(
         "TOOLCHAIN_INSTALLER_GITHUB_TOKEN"
     )
     for attempt in range(1, attempts + 1):
         headers = {
-            "Accept": "application/vnd.github+json",
+            "Accept": accept,
             "User-Agent": "toolchain-installer-install-smoke",
         }
         if github_token:
@@ -249,6 +254,74 @@ def masked_path_env() -> dict[str, str]:
     return env
 
 
+def filtered_path_env(*, hidden_commands: set[str]) -> dict[str, str]:
+    if os.name == "nt":
+        return masked_path_env()
+
+    env = os.environ.copy()
+    visible_dir = Path(tempfile.mkdtemp(prefix="ti-filtered-path-"))
+    hidden = {value.lower() for value in hidden_commands}
+
+    for raw_dir in os.environ.get("PATH", "").split(os.pathsep):
+        if not raw_dir:
+            continue
+        path_dir = Path(raw_dir)
+        if not path_dir.is_dir():
+            continue
+        for entry in path_dir.iterdir():
+            try:
+                is_executable = (
+                    (entry.is_file() or entry.is_symlink()) and os.access(entry, os.X_OK)
+                )
+            except OSError:
+                continue
+            if not is_executable or entry.name.lower() in hidden:
+                continue
+            link = visible_dir / entry.name
+            if link.exists():
+                continue
+            try:
+                os.symlink(entry, link)
+            except OSError:
+                continue
+
+    env["PATH"] = str(visible_dir)
+    return env
+
+
+def find_relative_path_under(root: Path, relative_path: str) -> Path:
+    relative = Path(relative_path)
+    direct_candidate = root / relative
+    if direct_candidate.exists():
+        return direct_candidate
+
+    needle = relative.parts[-1]
+    suffix_parts = relative.parts
+    for candidate in root.rglob(needle):
+        try:
+            rel = candidate.relative_to(root)
+        except ValueError:
+            continue
+        if len(rel.parts) >= len(suffix_parts) and rel.parts[-len(suffix_parts) :] == suffix_parts:
+            return candidate
+
+    raise SmokeError(f"cannot locate `{relative_path}` under extracted root {root}")
+
+
+def relative_root(match_path: Path, relative_path: str) -> Path:
+    root = match_path
+    for _ in Path(relative_path).parts:
+        root = root.parent
+    return root
+
+
+def package_json_path(workspace_dir: Path, package_name: str) -> Path:
+    package_dir = workspace_dir / "node_modules"
+    for segment in package_name.split("/"):
+        package_dir /= segment
+    return package_dir / "package.json"
+
+
 def platform_name(target_triple: str) -> str:
     if "windows" in target_triple:
         return "windows"
@@ -262,6 +335,7 @@ def platform_name(target_triple: str) -> str:
 def default_phases_for_target(target_triple: str) -> list[str]:
     phases = [
         GH_BOOTSTRAP_PHASE,
+        UV_BOOTSTRAP_PHASE,
         GH_RELEASE_PHASE,
         ARCHIVE_TREE_RELEASE_PHASE,
         PIP_PHASE,
@@ -275,13 +349,57 @@ def default_phases_for_target(target_triple: str) -> list[str]:
         GO_INSTALL_PHASE,
     ]
     platform_id = platform_name(target_triple)
-    if platform_id == "windows":
-        phases.append(GIT_BOOTSTRAP_PHASE)
-    else:
+    phases.append(GIT_BOOTSTRAP_PHASE)
+    if platform_id != "windows":
         phases.append(SYSTEM_PACKAGE_PHASE)
         if platform_id == "linux":
             phases.append(APT_PHASE)
     return phases
+
+
+def node_archive_filename(target_triple: str) -> str:
+    mapping = {
+        "x86_64-unknown-linux-gnu": f"node-{NODE_ARCHIVE_VERSION}-linux-x64.tar.xz",
+        "aarch64-unknown-linux-gnu": f"node-{NODE_ARCHIVE_VERSION}-linux-arm64.tar.xz",
+        "x86_64-apple-darwin": f"node-{NODE_ARCHIVE_VERSION}-darwin-x64.tar.gz",
+        "aarch64-apple-darwin": f"node-{NODE_ARCHIVE_VERSION}-darwin-arm64.tar.gz",
+        "x86_64-pc-windows-msvc": f"node-{NODE_ARCHIVE_VERSION}-win-x64.zip",
+        "aarch64-pc-windows-msvc": f"node-{NODE_ARCHIVE_VERSION}-win-arm64.zip",
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for node archive smoke: {target_triple}") from err
+
+
+def go_archive_filename(target_triple: str) -> str:
+    mapping = {
+        "x86_64-unknown-linux-gnu": f"go{GO_ARCHIVE_VERSION}.linux-amd64.tar.gz",
+        "aarch64-unknown-linux-gnu": f"go{GO_ARCHIVE_VERSION}.linux-arm64.tar.gz",
+        "x86_64-apple-darwin": f"go{GO_ARCHIVE_VERSION}.darwin-amd64.tar.gz",
+        "aarch64-apple-darwin": f"go{GO_ARCHIVE_VERSION}.darwin-arm64.tar.gz",
+        "x86_64-pc-windows-msvc": f"go{GO_ARCHIVE_VERSION}.windows-amd64.zip",
+        "aarch64-pc-windows-msvc": f"go{GO_ARCHIVE_VERSION}.windows-arm64.zip",
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for go archive smoke: {target_triple}") from err
+
+
+def temurin_api_target(target_triple: str) -> tuple[str, str]:
+    mapping = {
+        "x86_64-unknown-linux-gnu": ("linux", "x64"),
+        "aarch64-unknown-linux-gnu": ("linux", "aarch64"),
+        "x86_64-apple-darwin": ("mac", "x64"),
+        "aarch64-apple-darwin": ("mac", "aarch64"),
+        "x86_64-pc-windows-msvc": ("windows", "x64"),
+        "aarch64-pc-windows-msvc": ("windows", "aarch64"),
+    }
+    try:
+        return mapping[target_triple]
+    except KeyError as err:
+        raise SmokeError(f"unsupported target triple for temurin archive smoke: {target_triple}") from err
 
 
 def verify_version_contains(binary: Path, *args: str, expected_fragment: str) -> None:
@@ -305,6 +423,20 @@ def phase_bootstrap_gh(binary: Path, target_triple: str, workspace: Path) -> Non
     destination = require_installed(item, phase=GH_BOOTSTRAP_PHASE)
     verify_version_contains(destination, "--version", expected_fragment="gh version")
     print(f"{GH_BOOTSTRAP_PHASE}: ok -> {destination}", flush=True)
+
+
+def phase_bootstrap_uv(binary: Path, target_triple: str, workspace: Path) -> None:
+    managed_dir = workspace / "bootstrap-uv"
+    result = run_installer_json(
+        binary,
+        ["bootstrap", "--json", "--managed-dir", str(managed_dir), "--tool", "uv"],
+        env=masked_path_env(),
+        attempts=DOWNLOAD_ATTEMPTS,
+    )
+    item = single_item(result)
+    destination = require_installed(item, phase=UV_BOOTSTRAP_PHASE)
+    verify_version_contains(destination, "--version", expected_fragment="uv ")
+    print(f"{UV_BOOTSTRAP_PHASE}: ok -> {destination}", flush=True)
 
 
 def phase_release_gh(binary: Path, target_triple: str, workspace: Path) -> None:
@@ -346,73 +478,127 @@ def strip_archive_suffix(asset_name: str) -> str:
     raise SmokeError(f"unsupported archive suffix: {asset_name}")
 
 
-def resolve_archive_tree_root(extracted_root: Path, asset_name: str, binary_name: str) -> Path:
-    expected_root = extracted_root / strip_archive_suffix(asset_name)
-    candidates = [expected_root, extracted_root]
-    for candidate in candidates:
-        binary_path = candidate / "bin" / binary_name
-        license_path = candidate / "LICENSE"
-        if binary_path.exists() and license_path.exists():
-            return candidate
-    raise SmokeError(
-        "archive_tree_release missing extracted tree root; checked: "
-        + ", ".join(str(candidate) for candidate in candidates)
-    )
-
-
 def phase_archive_tree_release(binary: Path, target_triple: str, workspace: Path) -> None:
     managed_dir = workspace / "archive-tree-managed"
-    destination = workspace / "archive-tree"
-    release = fetch_json(f"https://api.github.com/repos/{GH_RELEASE_REPO}/releases/latest")
-    asset = find_asset_for_suffix(release, gh_asset_suffix_for_target(target_triple))
-    args = [
-        "--json",
-        "--managed-dir",
-        str(managed_dir),
-        "--method",
-        ARCHIVE_TREE_RELEASE_PHASE,
-        "--id",
-        "gh-tree",
-        "--url",
-        asset["browser_download_url"],
-        "--destination",
-        str(destination),
-    ]
-    digest = asset.get("digest")
-    if isinstance(digest, str) and digest.strip():
-        args.extend(["--sha256", digest.split(":", 1)[-1]])
-    result = run_installer_json(binary, args, attempts=DOWNLOAD_ATTEMPTS)
-    item = single_item(result)
-    extracted_root = require_installed(item, phase=ARCHIVE_TREE_RELEASE_PHASE)
-    root_dir = resolve_archive_tree_root(
-        extracted_root,
-        asset["name"],
-        f"gh{executable_suffix(target_triple)}",
+    release = fetch_json(
+        f"https://api.github.com/repos/{GH_RELEASE_REPO}/releases/latest",
+        accept="application/vnd.github+json",
     )
-    gh_binary = root_dir / "bin" / f"gh{executable_suffix(target_triple)}"
-    license_file = root_dir / "LICENSE"
-    if not gh_binary.exists():
-        raise SmokeError(f"{ARCHIVE_TREE_RELEASE_PHASE} missing extracted gh binary: {gh_binary}")
-    if not license_file.exists():
-        raise SmokeError(
-            f"{ARCHIVE_TREE_RELEASE_PHASE} missing extracted license file: {license_file}"
+    if not isinstance(release, dict):
+        raise SmokeError(f"unexpected GitHub release payload: {release!r}")
+    asset = find_asset_for_suffix(release, gh_asset_suffix_for_target(target_triple))
+
+    temurin_os, temurin_arch = temurin_api_target(target_triple)
+    temurin_assets = fetch_json(
+        "https://api.adoptium.net/v3/assets/latest/"
+        f"{TEMURIN_JDK_MAJOR}/hotspot?architecture={temurin_arch}"
+        f"&image_type=jdk&os={temurin_os}&vendor=eclipse"
+    )
+    if not isinstance(temurin_assets, list) or not temurin_assets:
+        raise SmokeError(f"unexpected temurin payload: {temurin_assets!r}")
+    temurin_asset = temurin_assets[0]
+    temurin_package = temurin_asset["binary"]["package"]
+
+    node_filename = node_archive_filename(target_triple)
+    go_filename = go_archive_filename(target_triple)
+    ext = executable_suffix(target_triple)
+    archive_specs = [
+        {
+            "id": "gh-tree",
+            "url": asset["browser_download_url"],
+            "sha256": asset.get("digest", "").split(":", 1)[-1] if asset.get("digest") else "",
+            "binary_relative": f"bin/gh{ext}",
+            "support_relative": "LICENSE",
+            "version_args": ["--version"],
+            "expected_fragment": "gh version",
+        },
+        {
+            "id": "node-tree",
+            "url": f"https://nodejs.org/dist/{NODE_ARCHIVE_VERSION}/{node_filename}",
+            "sha256": "",
+            "binary_relative": f"node{ext}" if "windows" in target_triple else "bin/node",
+            "support_relative": (
+                "node_modules/npm/package.json"
+                if "windows" in target_triple
+                else "lib/node_modules/npm/package.json"
+            ),
+            "version_args": ["--version"],
+            "expected_fragment": NODE_ARCHIVE_VERSION,
+        },
+        {
+            "id": "go-sdk-tree",
+            "url": f"https://dl.google.com/go/{go_filename}",
+            "sha256": "",
+            "binary_relative": f"go/bin/go{ext}",
+            "support_relative": "go/src/go.mod",
+            "version_args": ["version"],
+            "expected_fragment": f"go{GO_ARCHIVE_VERSION}",
+        },
+        {
+            "id": "temurin-jdk-tree",
+            "url": temurin_package["link"],
+            "sha256": temurin_package["checksum"],
+            "binary_relative": f"bin/java{ext}",
+            "support_relative": "lib/modules",
+            "version_args": ["-version"],
+            "expected_fragment": temurin_asset["version"]["openjdk_version"].split("+", 1)[0],
+        },
+    ]
+
+    for spec in archive_specs:
+        destination = workspace / spec["id"]
+        args = [
+            "--json",
+            "--managed-dir",
+            str(managed_dir),
+            "--method",
+            ARCHIVE_TREE_RELEASE_PHASE,
+            "--id",
+            spec["id"],
+            "--url",
+            spec["url"],
+            "--destination",
+            str(destination),
+        ]
+        if spec["sha256"]:
+            args.extend(["--sha256", spec["sha256"]])
+        result = run_installer_json(binary, args, attempts=DOWNLOAD_ATTEMPTS)
+        item = single_item(result)
+        extracted_root = require_installed(item, phase=ARCHIVE_TREE_RELEASE_PHASE)
+        installed_binary = find_relative_path_under(extracted_root, spec["binary_relative"])
+        find_relative_path_under(extracted_root, spec["support_relative"])
+        verify_version_contains(
+            installed_binary,
+            *spec["version_args"],
+            expected_fragment=spec["expected_fragment"],
         )
-    verify_version_contains(gh_binary, "--version", expected_fragment="gh version")
-    print(f"{ARCHIVE_TREE_RELEASE_PHASE}: ok -> {root_dir}", flush=True)
+        root_dir = relative_root(installed_binary, spec["binary_relative"])
+        print(f"{ARCHIVE_TREE_RELEASE_PHASE}:{spec['id']}: ok -> {root_dir}", flush=True)
 
 
-def phase_bootstrap_git(binary: Path, workspace: Path) -> None:
+def phase_bootstrap_git(binary: Path, target_triple: str, workspace: Path) -> None:
     managed_dir = workspace / "bootstrap-git"
+    env = masked_path_env() if "windows" in target_triple else filtered_path_env(hidden_commands={"git"})
     result = run_installer_json(
         binary,
         ["bootstrap", "--json", "--managed-dir", str(managed_dir), "--tool", "git"],
-        env=masked_path_env(),
+        env=env,
         attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
-    destination = require_installed(item, phase=GIT_BOOTSTRAP_PHASE)
-    verify_version_contains(destination, "--version", expected_fragment="git version")
-    print(f"{GIT_BOOTSTRAP_PHASE}: ok -> {destination}", flush=True)
+    if item.get("status") != "installed":
+        raise SmokeError(f"{GIT_BOOTSTRAP_PHASE} expected installed status, got: {item}")
+    if "windows" in target_triple:
+        destination = require_installed(item, phase=GIT_BOOTSTRAP_PHASE)
+        verify_version_contains(destination, "--version", expected_fragment="git version")
+        print(f"{GIT_BOOTSTRAP_PHASE}: ok -> {destination}", flush=True)
+        return
+
+    source = item.get("source")
+    if not isinstance(source, str) or not source.startswith("system:"):
+        raise SmokeError(f"{GIT_BOOTSTRAP_PHASE} expected system package source, got: {item}")
+    verify_version_contains(Path(shutil.which("git") or "git"), "--version", expected_fragment="git version")
+    print(f"{GIT_BOOTSTRAP_PHASE}: ok -> {source}", flush=True)
 
 
 def phase_pip(binary: Path) -> None:
@@ -537,86 +723,127 @@ def phase_uv_python(binary: Path, target_triple: str, managed_dir: Path) -> None
 
 
 def phase_uv_tool(binary: Path, target_triple: str, managed_dir: Path) -> None:
-    result = run_installer_json(
-        binary,
-        [
-            "--json",
-            "--managed-dir",
-            str(managed_dir),
-            "--method",
-            UV_TOOL_PHASE,
-            "--id",
-            UV_TOOL_ID,
-            "--package",
-            UV_TOOL_PACKAGE,
-            "--python",
-            UV_PYTHON_VERSION,
-        ],
-        attempts=DOWNLOAD_ATTEMPTS,
-    )
-    item = single_item(result)
-    destination = require_installed(item, phase=UV_TOOL_PHASE)
-    verify_version_contains(destination, "--version", expected_fragment="ruff ")
-    print(f"{UV_TOOL_PHASE}: ok -> {destination}", flush=True)
+    tool_specs = [
+        {"id": "ruff", "package": "ruff", "expected_fragment": "ruff "},
+        {"id": "mypy", "package": "mypy", "expected_fragment": "mypy "},
+        {"id": "pytest", "package": "pytest", "expected_fragment": "pytest "},
+    ]
+    for spec in tool_specs:
+        result = run_installer_json(
+            binary,
+            [
+                "--json",
+                "--managed-dir",
+                str(managed_dir),
+                "--method",
+                UV_TOOL_PHASE,
+                "--id",
+                spec["id"],
+                "--package",
+                spec["package"],
+                "--python",
+                UV_PYTHON_VERSION,
+            ],
+            attempts=DOWNLOAD_ATTEMPTS,
+        )
+        item = single_item(result)
+        destination = require_installed(item, phase=UV_TOOL_PHASE)
+        verify_version_contains(destination, "--version", expected_fragment=spec["expected_fragment"])
+        print(f"{UV_TOOL_PHASE}:{spec['id']}: ok -> {destination}", flush=True)
 
 
 def phase_npm_global(binary: Path, target_triple: str, workspace: Path) -> None:
-    managed_dir = workspace / "npm-global-managed"
-    result = run_installer_json(
-        binary,
-        [
-            "--json",
-            "--managed-dir",
-            str(managed_dir),
-            "--method",
-            NPM_GLOBAL_PHASE,
-            "--id",
-            NPM_GLOBAL_BINARY,
-            "--package",
-            NPM_GLOBAL_PACKAGE,
-            "--binary-name",
-            NPM_GLOBAL_BINARY,
-        ],
-        attempts=HOST_INSTALL_ATTEMPTS,
-    )
-    item = single_item(result)
-    destination = require_installed(item, phase=NPM_GLOBAL_PHASE)
-    verify_version_contains(destination, "--version", expected_fragment="14.1.1")
-    print(f"{NPM_GLOBAL_PHASE}: ok -> {destination}", flush=True)
+    manager_specs = ["npm", "pnpm", "bun"]
+    for manager in manager_specs:
+        managed_dir = workspace / f"npm-global-{manager}"
+        result = run_installer_json(
+            binary,
+            [
+                "--json",
+                "--managed-dir",
+                str(managed_dir),
+                "--method",
+                NPM_GLOBAL_PHASE,
+                "--id",
+                f"{NPM_GLOBAL_BINARY}-{manager}",
+                "--package",
+                NPM_GLOBAL_PACKAGE,
+                "--binary-name",
+                NPM_GLOBAL_BINARY,
+                "--manager",
+                manager,
+            ],
+            attempts=HOST_INSTALL_ATTEMPTS,
+        )
+        item = single_item(result)
+        destination = require_installed(item, phase=NPM_GLOBAL_PHASE)
+        verify_version_contains(destination, "--version", expected_fragment="14.1.1")
+        print(f"{NPM_GLOBAL_PHASE}:{manager}: ok -> {destination}", flush=True)
 
 
 def phase_workspace_package(binary: Path, workspace: Path) -> None:
-    workspace_dir = workspace / "workspace-package"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    (workspace_dir / "package.json").write_text(
-        json.dumps({"name": "ti-workspace", "private": True}, indent=2),
-        encoding="utf-8",
-    )
-    result = run_installer_json(
-        binary,
-        [
-            "--json",
-            "--method",
-            WORKSPACE_PACKAGE_PHASE,
-            "--id",
-            WORKSPACE_PACKAGE_NAME,
-            "--package",
-            WORKSPACE_PACKAGE,
-            "--destination",
-            str(workspace_dir),
-            "--manager",
-            "npm",
-        ],
-        attempts=HOST_INSTALL_ATTEMPTS,
-    )
-    item = single_item(result)
-    installed_dir = require_installed(item, phase=WORKSPACE_PACKAGE_PHASE)
-    package_json = installed_dir / "node_modules" / WORKSPACE_PACKAGE_NAME / "package.json"
-    if not package_json.exists():
-        raise SmokeError(
-            f"{WORKSPACE_PACKAGE_PHASE} missing installed package metadata: {package_json}"
+    package_specs = [
+        {"id": "react", "package": "react@19.2.4", "package_name": "react", "manager": "npm"},
+        {"id": "nextjs", "package": "next@16.2.1", "package_name": "next", "manager": "npm"},
+        {"id": "vite", "package": "vite@8.0.2", "package_name": "vite", "manager": "npm"},
+        {
+            "id": "react-router",
+            "package": "react-router@7.13.2",
+            "package_name": "react-router",
+            "manager": "npm",
+        },
+        {
+            "id": "heroui",
+            "package": "@heroui/react@3.0.1",
+            "package_name": "@heroui/react",
+            "manager": "pnpm",
+        },
+        {
+            "id": "spectrum",
+            "package": "@adobe/react-spectrum@3.46.2",
+            "package_name": "@adobe/react-spectrum",
+            "manager": "pnpm",
+        },
+        {
+            "id": "shadcn",
+            "package": "shadcn@4.1.0",
+            "package_name": "shadcn",
+            "manager": "bun",
+        },
+    ]
+
+    for spec in package_specs:
+        workspace_dir = workspace / f"workspace-package-{spec['id']}"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        (workspace_dir / "package.json").write_text(
+            json.dumps({"name": f"ti-{spec['id']}", "private": True}, indent=2),
+            encoding="utf-8",
         )
-    print(f"{WORKSPACE_PACKAGE_PHASE}: ok -> {package_json}", flush=True)
+        result = run_installer_json(
+            binary,
+            [
+                "--json",
+                "--method",
+                WORKSPACE_PACKAGE_PHASE,
+                "--id",
+                spec["id"],
+                "--package",
+                spec["package"],
+                "--destination",
+                str(workspace_dir),
+                "--manager",
+                spec["manager"],
+            ],
+            attempts=HOST_INSTALL_ATTEMPTS,
+        )
+        item = single_item(result)
+        installed_dir = require_installed(item, phase=WORKSPACE_PACKAGE_PHASE)
+        installed_package_json = package_json_path(installed_dir, spec["package_name"])
+        if not installed_package_json.exists():
+            raise SmokeError(
+                f"{WORKSPACE_PACKAGE_PHASE} missing installed package metadata: {installed_package_json}"
+            )
+        print(f"{WORKSPACE_PACKAGE_PHASE}:{spec['id']}: ok -> {installed_package_json}", flush=True)
 
 
 def cargo_fixture_dir() -> Path:
@@ -635,77 +862,139 @@ def go_fixture_dir() -> Path:
 
 def phase_cargo_install(binary: Path, workspace: Path) -> None:
     managed_dir = workspace / "cargo-install-managed"
-    result = run_installer_json(
-        binary,
-        [
+    cargo_specs = [
+        {
+            "id": CARGO_FIXTURE_BINARY,
+            "package": str(cargo_fixture_dir()),
+            "binary_name": CARGO_FIXTURE_BINARY,
+            "expected_fragment": "0.1.0",
+        },
+        {
+            "id": "cargo-nextest",
+            "package": "cargo-nextest",
+            "binary_name": "cargo-nextest",
+            "version": "0.9.132",
+            "expected_fragment": "cargo-nextest 0.9.132",
+        },
+    ]
+    for spec in cargo_specs:
+        args = [
             "--json",
             "--managed-dir",
             str(managed_dir),
             "--method",
             CARGO_INSTALL_PHASE,
             "--id",
-            CARGO_FIXTURE_BINARY,
+            spec["id"],
             "--package",
-            str(cargo_fixture_dir()),
+            spec["package"],
             "--binary-name",
-            CARGO_FIXTURE_BINARY,
-        ],
-        attempts=HOST_INSTALL_ATTEMPTS,
-    )
-    item = single_item(result)
-    destination = require_installed(item, phase=CARGO_INSTALL_PHASE)
-    verify_version_contains(destination, "--version", expected_fragment="0.1.0")
-    print(f"{CARGO_INSTALL_PHASE}: ok -> {destination}", flush=True)
+            spec["binary_name"],
+        ]
+        version = spec.get("version")
+        if version:
+            args.extend(["--tool-version", version])
+        result = run_installer_json(binary, args, attempts=HOST_INSTALL_ATTEMPTS)
+        item = single_item(result)
+        destination = require_installed(item, phase=CARGO_INSTALL_PHASE)
+        verify_version_contains(destination, "--version", expected_fragment=spec["expected_fragment"])
+        print(f"{CARGO_INSTALL_PHASE}:{spec['id']}: ok -> {destination}", flush=True)
 
 
 def phase_rustup_component(binary: Path) -> None:
-    result = run_installer_json(
-        binary,
-        [
-            "--json",
-            "--method",
-            RUSTUP_COMPONENT_PHASE,
-            "--id",
-            RUSTUP_COMPONENT,
-            "--package",
-            RUSTUP_COMPONENT,
-            "--binary-name",
-            RUSTUP_COMPONENT,
-        ],
-        attempts=HOST_INSTALL_ATTEMPTS,
-    )
-    item = single_item(result)
-    destination = require_installed(item, phase=RUSTUP_COMPONENT_PHASE)
-    verify_version_contains(destination, "--version", expected_fragment="rustfmt")
-    print(f"{RUSTUP_COMPONENT_PHASE}: ok -> {destination}", flush=True)
+    component_specs = [
+        {
+            "id": "rustfmt",
+            "package": "rustfmt",
+            "binary_name": "rustfmt",
+            "expected_fragment": "rustfmt",
+        },
+        {
+            "id": "clippy",
+            "package": "clippy",
+            "binary_name": "cargo-clippy",
+            "expected_fragment": "clippy",
+        },
+    ]
+    for spec in component_specs:
+        result = run_installer_json(
+            binary,
+            [
+                "--json",
+                "--method",
+                RUSTUP_COMPONENT_PHASE,
+                "--id",
+                spec["id"],
+                "--package",
+                spec["package"],
+                "--binary-name",
+                spec["binary_name"],
+            ],
+            attempts=HOST_INSTALL_ATTEMPTS,
+        )
+        item = single_item(result)
+        destination = require_installed(item, phase=RUSTUP_COMPONENT_PHASE)
+        verify_version_contains(destination, "--version", expected_fragment=spec["expected_fragment"])
+        print(f"{RUSTUP_COMPONENT_PHASE}:{spec['id']}: ok -> {destination}", flush=True)
 
 
 def phase_go_install(binary: Path, workspace: Path) -> None:
     managed_dir = workspace / "go-install-managed"
-    result = run_installer_json(
-        binary,
-        [
-            "--json",
-            "--managed-dir",
-            str(managed_dir),
-            "--method",
-            GO_INSTALL_PHASE,
-            "--id",
-            GO_INSTALL_BINARY,
-            "--package",
-            str(go_fixture_dir()),
-            "--binary-name",
-            GO_INSTALL_BINARY,
-        ],
-        attempts=HOST_INSTALL_ATTEMPTS,
-    )
-    item = single_item(result)
-    destination = require_installed(item, phase=GO_INSTALL_PHASE)
-    completed = run_command([destination], expect_success=True)
-    combined = f"{completed.stdout}\n{completed.stderr}"
-    if "Hello, world!" not in combined:
-        raise SmokeError(f"{GO_INSTALL_PHASE} unexpected output:\n{combined}")
-    print(f"{GO_INSTALL_PHASE}: ok -> {destination}", flush=True)
+    go_specs = [
+        {
+            "id": GO_INSTALL_BINARY,
+            "package": str(go_fixture_dir()),
+            "binary_name": GO_INSTALL_BINARY,
+            "version_args": [],
+            "expected_fragment": "Hello, world!",
+        },
+        {
+            "id": "gopls",
+            "package": "golang.org/x/tools/gopls",
+            "binary_name": "gopls",
+            "version_args": ["version"],
+            "expected_fragment": "gopls",
+        },
+        {
+            "id": "golangci-lint",
+            "package": "github.com/golangci/golangci-lint/cmd/golangci-lint",
+            "binary_name": "golangci-lint",
+            "version_args": ["--version"],
+            "expected_fragment": "golangci-lint",
+        },
+    ]
+    for spec in go_specs:
+        result = run_installer_json(
+            binary,
+            [
+                "--json",
+                "--managed-dir",
+                str(managed_dir),
+                "--method",
+                GO_INSTALL_PHASE,
+                "--id",
+                spec["id"],
+                "--package",
+                spec["package"],
+                "--binary-name",
+                spec["binary_name"],
+            ],
+            attempts=HOST_INSTALL_ATTEMPTS,
+        )
+        item = single_item(result)
+        destination = require_installed(item, phase=GO_INSTALL_PHASE)
+        if spec["version_args"]:
+            verify_version_contains(
+                destination,
+                *spec["version_args"],
+                expected_fragment=spec["expected_fragment"],
+            )
+        else:
+            completed = run_command([destination], expect_success=True)
+            combined = f"{completed.stdout}\n{completed.stderr}"
+            if spec["expected_fragment"] not in combined:
+                raise SmokeError(f"{GO_INSTALL_PHASE} unexpected output:\n{combined}")
+        print(f"{GO_INSTALL_PHASE}:{spec['id']}: ok -> {destination}", flush=True)
 
 
 def detect_target_triple(binary: Path) -> str:
@@ -747,12 +1036,14 @@ def main() -> int:
         for phase in phases:
             if phase == GH_BOOTSTRAP_PHASE:
                 phase_bootstrap_gh(binary, target_triple, workspace)
+            elif phase == UV_BOOTSTRAP_PHASE:
+                phase_bootstrap_uv(binary, target_triple, workspace)
             elif phase == GH_RELEASE_PHASE:
                 phase_release_gh(binary, target_triple, workspace)
             elif phase == ARCHIVE_TREE_RELEASE_PHASE:
                 phase_archive_tree_release(binary, target_triple, workspace)
             elif phase == GIT_BOOTSTRAP_PHASE:
-                phase_bootstrap_git(binary, workspace)
+                phase_bootstrap_git(binary, target_triple, workspace)
             elif phase == PIP_PHASE:
                 phase_pip(binary)
             elif phase == SYSTEM_PACKAGE_PHASE:

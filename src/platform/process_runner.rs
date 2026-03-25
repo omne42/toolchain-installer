@@ -2,9 +2,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use omne_process_primitives::{
-    HostCommandRequest, HostCommandSudoMode, command_available as runtime_command_available,
-    command_exists as runtime_command_exists, command_path_exists as runtime_command_path_exists,
-    run_host_command,
+    command_available as runtime_command_available, command_exists as runtime_command_exists,
+    command_path_exists as runtime_command_path_exists, run_host_command, HostCommandRequest,
+    HostCommandSudoMode,
 };
 
 use crate::error::{OperationError, OperationResult};
@@ -83,6 +83,10 @@ pub(crate) fn resolve_command_for_execution(command: &str) -> String {
         .unwrap_or_else(|| command.to_string())
 }
 
+pub(crate) fn resolve_command_path_or_standard_location(command: &str) -> Option<PathBuf> {
+    resolve_command_path(command).or_else(|| resolve_command_path_from_standard_locations(command))
+}
+
 pub(crate) fn resolve_command_path(command: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH")?;
     #[cfg(windows)]
@@ -121,6 +125,62 @@ pub(crate) fn resolve_command_path(command: &str) -> Option<PathBuf> {
             }
         }
     }
+    None
+}
+
+fn resolve_command_path_from_standard_locations(command: &str) -> Option<PathBuf> {
+    if command.contains('/') || command.contains('\\') {
+        return None;
+    }
+
+    #[cfg(not(windows))]
+    let candidate_dirs = [
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/opt/homebrew/bin",
+        "/opt/local/bin",
+    ];
+    #[cfg(windows)]
+    let candidate_dirs: [&str; 0] = [];
+
+    #[cfg(windows)]
+    let pathexts: Vec<String> = std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .collect();
+
+    for dir in candidate_dirs {
+        let candidate = Path::new(dir).join(command);
+        #[cfg(windows)]
+        {
+            let has_ext = Path::new(command).extension().is_some();
+            if has_ext {
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+                continue;
+            }
+            for ext in &pathexts {
+                let ext_candidate = Path::new(dir).join(format!("{command}{ext}"));
+                if ext_candidate.is_file() {
+                    return Some(ext_candidate);
+                }
+            }
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
     None
 }
 

@@ -33,6 +33,7 @@ pub(crate) fn execute_cargo_install_item(
         args.push(package_path.display().to_string());
         format!("cargo:path:{}", package_path.display())
     } else {
+        args.push("--locked".to_string());
         args.push(package.to_string());
         if let Some(version) = item
             .version
