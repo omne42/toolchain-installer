@@ -329,15 +329,9 @@ fn cross_target_host_bound_method_returns_usage_exit_code() {
 fn bootstrap_rejects_cross_target_override() {
     let target = non_host_target_triple();
     let mut cmd = cargo_bin_cmd!("toolchain-installer");
-    cmd.args([
-        "bootstrap",
-        "--target-triple",
-        &target,
-        "--tool",
-        "git",
-    ])
-    .assert()
-    .code(2);
+    cmd.args(["bootstrap", "--target-triple", &target, "--tool", "git"])
+        .assert()
+        .code(2);
 }
 
 #[test]
