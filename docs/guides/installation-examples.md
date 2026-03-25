@@ -1,13 +1,13 @@
-# 安装示例（无需 JSON）
+# 安装示例
 
-以下示例都使用“直接参数模式”，调用方无需编写 JSON。
+以下示例覆盖直接参数模式与 plan 模式。更完整的 Python 3.13.12 工具链流程见 `python-toolchain-bootstrap.md`。
 
-## Node.js（最新 LTS 稳定版）
+## Node.js
 
 ```bash
 NODE_VER="$(curl -fsSL https://nodejs.org/dist/index.json | jq -r '[.[] | select(.lts != false)][0].version')"
 NODE_URL="https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-x64.tar.xz"
-toolchain-installer --json \
+toolchain-installer bootstrap --json \
   --method release \
   --id node \
   --url "${NODE_URL}" \
@@ -15,12 +15,12 @@ toolchain-installer --json \
   --archive-binary "node-${NODE_VER}-linux-x64/bin/node"
 ```
 
-## Go（最新稳定版）
+## Go
 
 ```bash
 GO_VER="$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq -r '[.[] | select(.stable == true)][0].version')"
 GO_URL="https://go.dev/dl/${GO_VER}.linux-amd64.tar.gz"
-toolchain-installer --json \
+toolchain-installer bootstrap --json \
   --method release \
   --id go \
   --url "${GO_URL}" \
@@ -28,29 +28,20 @@ toolchain-installer --json \
   --archive-binary "go/bin/go"
 ```
 
-## Python（3.13 最新稳定补丁）
+## uv
 
 ```bash
-toolchain-installer --json --method pip --id uv --package uv --python python3
-uv python install 3.13
+toolchain-installer bootstrap --json \
+  --method uv \
+  --id uv
 ```
 
-## ruff（最新稳定版）
+参考 plan：`../../examples/uv-plan.json`
+
+## Rust
 
 ```bash
-toolchain-installer --json --method pip --id ruff --package ruff --python python3
-```
-
-## uv（最新稳定版）
-
-```bash
-toolchain-installer --json --method pip --id uv --package uv --python python3
-```
-
-## Rust（最新稳定通道）
-
-```bash
-RUSTUP_JSON="$(toolchain-installer --json \
+RUSTUP_JSON="$(toolchain-installer bootstrap --json \
   --method release \
   --id rustup-init \
   --url "https://github.com/rust-lang/rustup/releases/latest/download/rustup-init-x86_64-unknown-linux-gnu" \
@@ -59,3 +50,12 @@ RUSTUP_JSON="$(toolchain-installer --json \
 RUSTUP_BIN="$(echo "${RUSTUP_JSON}" | jq -r '.items[0].destination')"
 "${RUSTUP_BIN}" -y --default-toolchain stable
 ```
+
+## 示例 plan 索引
+
+- `../../examples/nodejs-plan.json`
+- `../../examples/go-plan.json`
+- `../../examples/rust-plan.json`
+- `../../examples/python-plan.json`
+
+如果只是查 plan 文件职责，请看 `../references/example-plan-files.md`。

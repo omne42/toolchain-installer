@@ -1,50 +1,49 @@
 # toolchain-installer
 
-一个通用可复用的工具链安装器，用于在用户机器缺少开发工具链时，提供可验证、可观测、可集成的安装能力。  
-`omne-agent` 是调用方之一，但不是唯一调用方。
+一个通用、可复用的工具链安装器，用于在宿主机缺少开发工具链时提供稳定、可验证、可集成的安装能力。`omne-agent` 是调用方之一，但不是唯一调用方。
 
-## 最终目标
+## 仓库提供什么
 
-让任意 Agent/CLI/桌面端在“用户未预装 Git 工具链”的情况下，仍能完成基于 `git worktree` 的完整流程。
+- 稳定 CLI：`toolchain-installer bootstrap [options]`
+- 通用安装 plan 执行能力：`release`、`system_package`、`apt`、`pip`、`uv`、`uv_python`、`uv_tool`
+- 调用方无关的 JSON 输出契约
+- 官方来源优先、镜像回退和可达性探测
+- 可选外部固定路由网关集成接口：`--gateway-base`
 
-## 做什么
+## 关键约束
 
-- 提供稳定 CLI：探测、下载、校验、安装注册表中的工具（当前内置 `git` / `gh`）。
-- 提供通用 plan 执行能力：`release/system_package/pip` 三类安装基建由调用方组合。
-- 提供调用方无关 JSON 输出契约。
-- 提供公共来源优先的下载策略与镜像回退机制。
-- 提供可选 Cloudflare Worker 路由方案，解决网络可达性并控制滥用面。
+- `bootstrap` 只解决当前宿主机的工具链补齐，不支持跨目标平台安装。
+- 只有 `release` 方法支持显式跨目标平台落盘。
+- `system_package`、`apt`、`pip`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
+- 未显式传 `--managed-dir` 时，默认托管目录是 `~/.omne_data/toolchain/<target>/bin`。
+- `release` 的相对 `destination` 解析到 `managed_dir` 下，并拒绝 `..` 路径逃逸。
+- 失败项除了 `detail` 外，还会返回机器可读的 `error_code`。
 
-## 为什么做
+## 文档入口
 
-- 工具链安装是跨项目的公共能力，不应耦合在单一业务仓库。
-- 平台差异、网络不稳定、镜像策略、验签与重试逻辑需要独立演进。
-- 独立仓库便于版本化、测试矩阵和多调用方复用。
+这个仓库采用“短入口 + 分层事实文档”的文档系统。先看这些文件：
 
-## 怎么做
+- `AGENTS.md`：执行者地图
+- `docs/docs-system-map.md`：文档系统入口与维护规则
+- `docs/architecture/system-boundaries.md`：系统边界
+- `docs/architecture/source-layout.md`：源码布局
+- `docs/contracts/cli-surface.md`：CLI 契约
+- `docs/contracts/install-plan-contract.md`：plan 契约
+- `docs/guides/python-toolchain-bootstrap.md`：Python 3.13.12 + uv + ruff + mypy 引导
+- `docs/operations/security-boundaries.md`：安全边界
+- `docs/operations/external-gateway-integration.md`：外部网关集成边界
+- `docs/plans/delivery-roadmap.md`：当前路线图
 
-1. 先定义契约：输入参数、输出 JSON、退出码、错误码。  
-2. 再实现核心安装流程：平台识别、来源选择、完整性校验、落盘。  
-3. 最后实现调用集成与安全网关：`omne-agent` 接入、Worker 白名单路由。  
+## 最小验证
 
-## 非目标
+```bash
+cargo fmt --all
+cargo check --all-targets
+cargo test --all-targets
+```
 
-- 不实现业务线程/事件模型（由调用方负责）。
-- 不托管私有二进制文件服务器。
-- 不提供任意 URL 下载代理能力。
+若同时修改外部网关项目，再额外执行：
 
-## 验收标准
-
-- 在至少一个 Linux 环境可完成 `git` 与 `gh` 的可用性补齐。
-- CLI 输出稳定 JSON，调用方无需解析日志文本。
-- 安装失败给出结构化错误原因，便于自动回退或提示用户。
-- 网关模式不具备开放代理行为（固定路由 + 白名单域名）。
-- CI 需覆盖多端矩阵（Linux/macOS/Windows）与 Worker 测试。
-
-## 相关文档
-
-- `docs/architecture.md`：组件与边界。
-- `docs/contract.md`：CLI 契约与 JSON schema。
-- `docs/examples.md`：Node.js/Go/Rust/Python3.13/ruff/uv 的安装示例。
-- `docs/security.md`：威胁模型与反滥用策略。
-- `docs/roadmap.md`：分阶段推进与交接清单。
+```bash
+cd ../toolchain-edge-gateway && npm test
+```

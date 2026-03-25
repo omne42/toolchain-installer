@@ -2,11 +2,25 @@
   "schema_version": 1,
   "items": [
     {
-      "id": "python3.13",
-      "method": "release",
-      "url": "__LATEST_PYTHON_3_13_URL__",
-      "binary_name": "python3.13",
-      "archive_binary": "__LATEST_PYTHON_3_13_ARCHIVE_BINARY__"
+      "id": "uv",
+      "method": "uv"
+    },
+    {
+      "id": "python3.13.12",
+      "method": "uv_python",
+      "version": "3.13.12"
+    },
+    {
+      "id": "ruff",
+      "method": "uv_tool",
+      "package": "ruff",
+      "python": "3.13.12"
+    },
+    {
+      "id": "mypy",
+      "method": "uv_tool",
+      "package": "mypy",
+      "python": "3.13.12"
     }
   ]
 }

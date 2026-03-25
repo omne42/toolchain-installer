@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use omne_host_info_primitives::{detect_host_target_triple, executable_suffix_for_target};
+use omne_host_info_primitives::{
+    detect_host_target_triple, executable_suffix_for_target, resolve_target_triple,
+};
 use omne_system_package_primitives::default_system_package_install_recipes_for_current_host;
 
 use crate::contracts::{
@@ -11,11 +13,12 @@ use crate::error::{InstallerError, InstallerResult, OperationError, OperationRes
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
 use crate::platform::process_runner::{command_available, run_recipe};
-use crate::platform::target_triple::resolve_target_triple;
 use crate::uv::release_installation::install_uv_from_public;
 
-use super::public_release_installation::{install_gh_from_public, install_git_from_public};
-use super::tool_catalog::{is_supported_tool, normalize_tools};
+use super::builtin_tool_selection::{is_supported_builtin_tool, normalize_requested_tools};
+use super::public_release_asset_installation::{
+    install_gh_from_public_release, install_git_from_public_release,
+};
 
 pub async fn bootstrap(request: &BootstrapRequest) -> InstallerResult<BootstrapResult> {
     let host_triple = detect_host_target_triple()
@@ -37,10 +40,10 @@ pub async fn bootstrap(request: &BootstrapRequest) -> InstallerResult<BootstrapR
         .map_err(|err| InstallerError::download(format!("build http client failed: {err}")))?;
     let binary_ext = executable_suffix_for_target(&target_triple);
 
-    let tools = normalize_tools(&request.tools);
+    let tools = normalize_requested_tools(&request.tools);
     let mut items = Vec::new();
     for tool in tools {
-        let item = bootstrap_one_tool(
+        let item = bootstrap_builtin_tool(
             tool.as_str(),
             &target_triple,
             binary_ext,
@@ -61,7 +64,7 @@ pub async fn bootstrap(request: &BootstrapRequest) -> InstallerResult<BootstrapR
     })
 }
 
-async fn bootstrap_one_tool(
+async fn bootstrap_builtin_tool(
     tool: &str,
     target_triple: &str,
     binary_ext: &str,
@@ -98,18 +101,18 @@ async fn bootstrap_one_tool(
         };
     }
 
-    match install_tool(tool, target_triple, binary_ext, &destination, cfg, client).await {
+    match install_builtin_tool(tool, target_triple, binary_ext, &destination, cfg, client).await {
         Ok(source) => {
             let InstallSource {
-                value,
-                kind,
+                locator,
+                source_kind,
                 archive_match,
             } = source;
             BootstrapItem {
                 tool: tool.to_string(),
                 status: BootstrapStatus::Installed,
-                source: Some(value),
-                source_kind: Some(kind),
+                source: Some(locator),
+                source_kind: Some(source_kind),
                 archive_match,
                 destination: Some(destination.display().to_string()),
                 detail: None,
@@ -118,7 +121,7 @@ async fn bootstrap_one_tool(
             }
         }
         Err(err) => {
-            let status = if is_supported_tool(tool) {
+            let status = if is_supported_builtin_tool(tool) {
                 BootstrapStatus::Failed
             } else {
                 BootstrapStatus::Unsupported
@@ -139,7 +142,7 @@ async fn bootstrap_one_tool(
     }
 }
 
-async fn install_tool(
+async fn install_builtin_tool(
     tool: &str,
     target_triple: &str,
     binary_ext: &str,
@@ -148,8 +151,11 @@ async fn install_tool(
     client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
     match tool {
-        "gh" => install_gh_from_public(target_triple, binary_ext, destination, cfg, client).await,
-        "git" => install_git(target_triple, destination, cfg, client).await,
+        "gh" => {
+            install_gh_from_public_release(target_triple, binary_ext, destination, cfg, client)
+                .await
+        }
+        "git" => install_git_for_bootstrap(target_triple, destination, cfg, client).await,
         "uv" => install_uv_from_public(target_triple, destination, cfg, client).await,
         _ => Err(OperationError::install(format!(
             "unsupported tool `{tool}`"
@@ -157,20 +163,20 @@ async fn install_tool(
     }
 }
 
-async fn install_git(
+async fn install_git_for_bootstrap(
     target_triple: &str,
     destination: &Path,
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
     if target_triple == "x86_64-pc-windows-msvc" || target_triple == "aarch64-pc-windows-msvc" {
-        return install_git_from_public(target_triple, destination, cfg, client).await;
+        return install_git_from_public_release(target_triple, destination, cfg, client).await;
     }
 
-    install_git_from_system_package_manager(target_triple)
+    install_git_via_system_package_manager(target_triple)
 }
 
-fn install_git_from_system_package_manager(target_triple: &str) -> OperationResult<InstallSource> {
+fn install_git_via_system_package_manager(target_triple: &str) -> OperationResult<InstallSource> {
     let recipes = default_system_package_install_recipes_for_current_host("git");
     if recipes.is_empty() {
         return Err(OperationError::install(format!(

@@ -20,23 +20,14 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Rust fmt
         run: cargo fmt --all -- --check
 
       - name: Rust check
-        run: cargo check --all-targets
+        run: cargo check --locked --all-targets
 
       - name: Rust test
-        run: cargo test --all-targets
-
-      - name: Worker test
-        working-directory: worker
-        run: npm test
+        run: cargo test --locked --all-targets
 
   rust-clippy:
     runs-on: ubuntu-latest
@@ -48,28 +39,35 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
-  worker-node-matrix:
+  install-smoke:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: ["20", "22"]
+
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Worker test
-        working-directory: worker
-        run: npm test
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Live install smoke
+        run: python scripts/install_smoke.py --binary target/release/toolchain-installer
 
   cli-smoke:
     runs-on: ubuntu-latest
@@ -81,7 +79,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build binary
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Smoke bootstrap output
         run: |

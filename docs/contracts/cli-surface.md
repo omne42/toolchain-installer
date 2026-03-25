@@ -1,0 +1,123 @@
+# CLI 表面契约
+
+## 命令形态
+
+- 主命令：`toolchain-installer bootstrap [options]`
+- 兼容简写：`toolchain-installer [options]`
+
+推荐对外文档统一使用 `bootstrap` 子命令；简写只为兼容保留。
+
+## 主要参数
+
+- `--tool <name>`
+  - 可重复；`bootstrap` 默认安装 `git` 和 `gh`。
+- `--target-triple <triple>`
+  - 覆盖自动探测目标平台。
+- `--managed-dir <path>`
+  - 安装输出目录；未指定时默认使用 `~/.omne_data/toolchain/<target>/bin`。
+- `--mirror-prefix <prefix>`
+  - 追加 release 下载候选前缀。
+- `--package-index <url>`
+  - 追加 `uv_tool` 的备用 Python 包索引；官方 PyPI 隐式存在。
+- `--python-mirror <url>`
+  - 追加 `uv_python` 的备用 Python 下载镜像；官方来源隐式存在。
+- `--gateway-base <url>`
+  - 外部固定网关入口；installer 本身不包含网关实现。
+- `--country <ISO2>`
+  - 调用方传入地区码。
+- `--max-download-bytes <bytes>`
+  - 限制单次 release / bootstrap 下载的最大响应体大小，必须为正整数。
+- `--plan-file <path>`
+  - 执行 plan 文件。
+- `--method <release|system_package|apt|pip|uv|uv_python|uv_tool>`
+  - 直接参数模式下执行单个安装项。
+- `--id <name>`
+  - 单个安装项标识。
+- `--tool-version <value>`
+  - `uv_python` 直接参数模式下的 Python 版本。
+- `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
+  - `release` 模式字段。
+- `--package`、`--manager`
+  - `system_package` 或 `apt` 模式字段。
+- `--python`
+  - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
+- `--json`
+  - 输出机器可读 JSON。
+- `--strict`
+  - 任一安装项失败时返回整体非 0。
+
+## 直接参数模式
+
+当调用方只执行一个安装项时，可直接传 `--method` 与对应字段，不必写 JSON plan。
+
+环境变量补充：
+
+- `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`
+  - 逗号分隔的 `uv_tool` 备用索引列表。
+- `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`
+  - 逗号分隔的 `uv_python` 备用镜像列表。
+- `TOOLCHAIN_INSTALLER_MANAGED_DIR`
+  - 直接覆盖默认托管目录。
+- `TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES`
+  - 限制单次下载的最大响应体大小；未设置时不启用额外大小上限。
+- `OMNE_DATA_DIR`
+  - 当未指定 `--managed-dir` 且未设置 `TOOLCHAIN_INSTALLER_MANAGED_DIR` 时，默认托管目录会解析到 `OMNE_DATA_DIR/toolchain/<target>/bin`。
+
+## JSON 输出
+
+```json
+{
+  "schema_version": 1,
+  "host_triple": "x86_64-unknown-linux-gnu",
+  "target_triple": "x86_64-unknown-linux-gnu",
+  "managed_dir": "/home/user/.omne_data/toolchain/x86_64-unknown-linux-gnu/bin",
+  "items": [
+    {
+      "tool": "git",
+      "status": "present|installed|failed|unsupported",
+      "source": "https://...",
+      "source_kind": "gateway|canonical|mirror|managed|system_package|pip|python_mirror|package_index",
+      "archive_match": {
+        "format": "tar_gz|tar_xz|zip",
+        "path": "archive/entry/path"
+      },
+      "destination": "/.../git",
+      "detail": "optional detail",
+      "error_code": "optional machine-readable failure code"
+    }
+  ]
+}
+```
+
+`error_code` 当前取值：
+
+- `download_failed`
+- `install_failed`
+- `usage_error`
+
+## 退出码
+
+- `0`
+  - 执行成功；若未开启 `--strict`，允许部分工具失败。
+- `2`
+  - 参数错误或不支持的参数组合。
+- `3`
+  - 单项调用中的下载或校验失败。
+- `4`
+  - 单项调用中的安装、解压、落盘或宿主安装失败。
+- `5`
+  - `--strict` 模式下存在失败项。
+
+## 稳定性规则
+
+- `schema_version` 升级前必须保持向后兼容。
+- 已有输出字段只能追加，不能重命名或删除。
+- 调用方应依赖 `status`、`detail` 与 `error_code`，不要解析 stderr 文本。
+- `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
+- `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
+- `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
+
+## 继续阅读
+
+- plan schema 与方法矩阵：`install-plan-contract.md`
+- 来源选择规则：`../references/source-selection-rules.md`

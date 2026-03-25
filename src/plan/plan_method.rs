@@ -1,0 +1,82 @@
+use crate::contracts::InstallPlanItem;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManagedToolchainMethod {
+    Uv,
+    UvPython,
+    UvTool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanMethod {
+    Release,
+    SystemPackage,
+    Apt,
+    Pip,
+    ManagedToolchain(ManagedToolchainMethod),
+    Unknown,
+}
+
+impl PlanMethod {
+    pub(crate) fn classify(item: &InstallPlanItem) -> Option<Self> {
+        let normalized = normalize_plan_method(&item.method)?;
+        Some(Self::from_normalized(&normalized))
+    }
+
+    pub(crate) fn from_normalized(normalized: &str) -> Self {
+        match normalized {
+            "release" => Self::Release,
+            "system_package" => Self::SystemPackage,
+            "apt" => Self::Apt,
+            "pip" => Self::Pip,
+            "uv" => Self::ManagedToolchain(ManagedToolchainMethod::Uv),
+            "uv_python" => Self::ManagedToolchain(ManagedToolchainMethod::UvPython),
+            "uv_tool" => Self::ManagedToolchain(ManagedToolchainMethod::UvTool),
+            _ => Self::Unknown,
+        }
+    }
+
+    pub(crate) fn is_host_bound(self) -> bool {
+        matches!(
+            self,
+            Self::SystemPackage | Self::Apt | Self::Pip | Self::ManagedToolchain(_)
+        )
+    }
+}
+
+pub(crate) fn normalize_plan_method(raw_method: &str) -> Option<String> {
+    let normalized = raw_method.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_plan_method_rejects_empty_values() {
+        assert!(normalize_plan_method("").is_none());
+        assert!(normalize_plan_method("   ").is_none());
+    }
+
+    #[test]
+    fn classify_managed_toolchain_methods() {
+        assert_eq!(
+            PlanMethod::from_normalized("uv_python"),
+            PlanMethod::ManagedToolchain(ManagedToolchainMethod::UvPython)
+        );
+        assert_eq!(
+            PlanMethod::from_normalized("uv_tool"),
+            PlanMethod::ManagedToolchain(ManagedToolchainMethod::UvTool)
+        );
+    }
+
+    #[test]
+    fn host_bound_methods_include_managed_toolchain() {
+        assert!(PlanMethod::ManagedToolchain(ManagedToolchainMethod::Uv).is_host_bound());
+        assert!(!PlanMethod::Release.is_host_bound());
+    }
+}

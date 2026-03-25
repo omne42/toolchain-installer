@@ -1,14 +1,12 @@
 use std::path::Path;
 
-use omne_host_info_primitives::detect_host_target_triple;
+use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 use omne_integrity_primitives::parse_sha256_user_input;
 use omne_system_package_primitives::SystemPackageManager;
 
 use crate::contracts::{InstallPlan, InstallPlanItem, PLAN_SCHEMA_VERSION};
 use crate::error::{InstallerError, InstallerResult};
 use crate::plan::plan_method::{ManagedToolchainMethod, PlanMethod, normalize_plan_method};
-use crate::platform::target_triple::resolve_target_triple;
-
 pub fn validate_install_plan(
     plan: &InstallPlan,
     requested_target_triple: Option<&str>,

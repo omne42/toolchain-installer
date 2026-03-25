@@ -13,7 +13,7 @@
 - 安装域：`src/bootstrap/`、`src/plan/`、`src/installation/`、`src/managed_toolchain/`、`src/uv/`、`src/source_acquisition/`
   - 共同覆盖“确定装什么、从哪下载、如何安装、如何输出结果”。
 - 平台域：`src/platform/`
-  - 负责目标三元组覆写与进程执行适配。
+  - 负责对 runtime 进程执行原语的安装域适配。
 - 契约域：`src/contracts/`、`src/error.rs`、`src/installer_runtime_config.rs`
   - 负责外部输入/输出、退出码、环境变量和运行期配置边界。
 - Foundation 依赖：`../omne_foundation/crates/http-kit/`
@@ -21,7 +21,7 @@
 - Runtime 依赖：`../omne-runtime/crates/omne-integrity-primitives/`
   - 提供 `sha256` 解析、内容摘要计算与校验原语。
 - Runtime 依赖：`../omne-runtime/crates/omne-host-info-primitives/`
-  - 提供宿主 OS/arch 识别、canonical target triple 映射、home 目录解析与目标可执行后缀原语。
+  - 提供宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀原语。
 - Runtime 依赖：`../omne-runtime/crates/omne-archive-primitives/`
   - 提供 archive/compression 格式识别、归档条目遍历和目标二进制提取原语。
 - Runtime 依赖：`../omne-runtime/crates/omne-fs-primitives/`
@@ -56,10 +56,10 @@
   - 通过 installer 自己的 `source_acquisition` 模块消费 GitHub release 元数据和下载来源策略。
   - 不拥有 `managed_dir` 布局、Python mirror/index 策略或 plan 输出模型。
 - `platform`
-  - 负责目标三元组覆写，以及对 runtime 进程执行原语的安装域适配。
+  - 负责对 runtime 进程执行原语的安装域适配。
   - 不关心上层 CLI 参数如何组织。
 - `omne-host-info-primitives`
-  - 负责宿主 OS/arch 识别、canonical target triple 映射、home 目录解析与目标可执行后缀推断。
+  - 负责宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀推断。
   - 不负责 `OMNE_DATA_DIR`、`TOOLCHAIN_INSTALLER_MANAGED_DIR`、`managed_dir` 布局或 installer plan 语义。
 - `http-kit`
   - 负责通用 HTTP client、bounded body read / preview、URL 校验 / 脱敏、untrusted outbound policy 与 HTTP 可达性探测。

@@ -1,0 +1,13 @@
+mod bootstrap_execution;
+mod builtin_tool_selection;
+mod public_release_asset_installation;
+
+pub use bootstrap_execution::bootstrap;
+
+#[cfg(test)]
+pub(crate) use builtin_tool_selection::normalize_requested_tools;
+#[cfg(test)]
+pub(crate) use public_release_asset_installation::{
+    gh_release_asset_suffix_for_target, install_gh_from_public_release,
+    select_mingit_release_asset_for_target,
+};

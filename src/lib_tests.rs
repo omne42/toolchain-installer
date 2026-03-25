@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
-use omne_host_info_primitives::executable_suffix_for_target;
+use omne_host_info_primitives::{executable_suffix_for_target, resolve_target_triple};
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
     SystemPackageManager, default_system_package_install_recipes_for_current_host,
@@ -14,8 +14,8 @@ use omne_system_package_primitives::{
 };
 
 use crate::bootstrap::builtin_tools::{
-    gh_asset_suffix_for_target, install_gh_from_public, normalize_tools,
-    select_mingit_asset_for_target,
+    gh_release_asset_suffix_for_target, install_gh_from_public_release, normalize_requested_tools,
+    select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
     BootstrapArchiveFormat, BootstrapSourceKind, BootstrapStatus, InstallPlan, InstallPlanItem,
@@ -30,8 +30,7 @@ use crate::managed_toolchain::managed_root_dir::{
     default_managed_dir_under_data_root, resolve_managed_toolchain_dir,
 };
 use crate::managed_toolchain::{execute_uv_python_item, execute_uv_tool_item};
-use crate::plan::validation::validate_plan;
-use crate::platform::target_triple::resolve_target_triple;
+use crate::plan::install_plan_validation::validate_plan;
 use crate::source_acquisition::{
     GithubReleaseAsset, infer_gateway_candidate_for_git_release, make_download_candidates,
     make_gateway_asset_candidate,
@@ -124,7 +123,7 @@ fn infer_gateway_candidate_for_git_release_parses_release_url() {
 }
 
 #[test]
-fn select_mingit_prefers_busybox_on_x64() {
+fn select_mingit_release_asset_prefers_busybox_on_x64() {
     let assets = vec![
         GithubReleaseAsset {
             name: "MinGit-2.53.0-64-bit.zip".to_string(),
@@ -143,8 +142,8 @@ fn select_mingit_prefers_busybox_on_x64() {
             ),
         },
     ];
-    let selected =
-        select_mingit_asset_for_target(&assets, "x86_64-pc-windows-msvc").expect("selected asset");
+    let selected = select_mingit_release_asset_for_target(&assets, "x86_64-pc-windows-msvc")
+        .expect("selected asset");
     assert_eq!(selected.name, "MinGit-2.53.0-busybox-64-bit.zip");
 }
 
@@ -178,7 +177,7 @@ fn system_package_manager_normalizes_apt_aliases() {
 }
 
 #[tokio::test]
-async fn install_gh_from_mock_release_api() -> anyhow::Result<()> {
+async fn install_gh_from_public_release_mock_api() -> anyhow::Result<()> {
     let archive_name = "gh_9.9.9_linux_amd64.tar.gz";
     let archive_bytes = make_tar_gz_archive(&[(
         "gh_9.9.9_linux_amd64/bin/gh",
@@ -226,9 +225,10 @@ async fn install_gh_from_mock_release_api() -> anyhow::Result<()> {
     let destination = tmp.path().join("gh");
 
     let source =
-        install_gh_from_public("x86_64-unknown-linux-gnu", "", &destination, &cfg, &client).await?;
-    assert_eq!(source.value, format!("{base}/asset/{archive_name}"));
-    assert_eq!(source.kind, BootstrapSourceKind::Canonical);
+        install_gh_from_public_release("x86_64-unknown-linux-gnu", "", &destination, &cfg, &client)
+            .await?;
+    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
+    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
     assert_eq!(
         source
             .archive_match
@@ -293,8 +293,8 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
 
     let source =
         install_uv_from_public("x86_64-unknown-linux-gnu", &destination, &cfg, &client).await?;
-    assert_eq!(source.value, format!("{base}/asset/{archive_name}"));
-    assert_eq!(source.kind, BootstrapSourceKind::Canonical);
+    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
+    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
     assert_eq!(
         source
             .archive_match
@@ -498,8 +498,8 @@ fn install_binary_from_tar_xz_uses_hint() -> anyhow::Result<()> {
 }
 
 #[test]
-fn normalize_tools_dedups_and_trims() {
-    let tools = normalize_tools(&[
+fn normalize_requested_tools_dedups_and_trims() {
+    let tools = normalize_requested_tools(&[
         " git ".to_string(),
         "gh".to_string(),
         "git".to_string(),
@@ -1052,7 +1052,7 @@ fn spawn_mock_http_server(
 #[test]
 fn gh_asset_suffix_matches_current_targets() {
     assert_eq!(
-        gh_asset_suffix_for_target("x86_64-unknown-linux-gnu"),
+        gh_release_asset_suffix_for_target("x86_64-unknown-linux-gnu"),
         Some("_linux_amd64.tar.gz")
     );
 }

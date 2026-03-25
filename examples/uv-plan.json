@@ -3,9 +3,7 @@
   "items": [
     {
       "id": "uv",
-      "method": "pip",
-      "package": "uv",
-      "python": "python3"
+      "method": "uv"
     }
   ]
 }
