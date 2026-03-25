@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use omne_host_info_primitives::{
     detect_host_target_triple, executable_suffix_for_target, resolve_target_triple,
@@ -86,7 +86,7 @@ async fn bootstrap_builtin_tool(
         };
     }
 
-    let destination = managed_dir.join(format!("{tool}{binary_ext}"));
+    let destination = bootstrap_destination(tool, target_triple, binary_ext, managed_dir);
     if destination.exists() {
         return BootstrapItem {
             tool: tool.to_string(),
@@ -140,6 +140,18 @@ async fn bootstrap_builtin_tool(
             }
         }
     }
+}
+
+fn bootstrap_destination(
+    tool: &str,
+    target_triple: &str,
+    binary_ext: &str,
+    managed_dir: &Path,
+) -> PathBuf {
+    if tool == "git" && target_triple.contains("windows") {
+        return managed_dir.join("git.cmd");
+    }
+    managed_dir.join(format!("{tool}{binary_ext}"))
 }
 
 async fn install_builtin_tool(

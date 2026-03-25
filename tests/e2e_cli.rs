@@ -493,6 +493,10 @@ fn apt_rejects_non_apt_manager() {
     .code(2);
 }
 
+#[cfg_attr(
+    windows,
+    ignore = "windows uses the real uv installer here, so mirror fallback is not deterministic"
+)]
 #[test]
 fn uv_python_method_accepts_tool_version_and_python_mirror() {
     let temp = tempfile::tempdir().expect("tempdir");

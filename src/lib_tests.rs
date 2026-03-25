@@ -14,7 +14,8 @@ use omne_system_package_primitives::{
 };
 
 use crate::bootstrap::builtin_tools::{
-    gh_release_asset_suffix_for_target, install_gh_from_public_release, normalize_requested_tools,
+    gh_release_asset_suffix_for_target, install_gh_from_public_release,
+    install_git_from_public_release, normalize_requested_tools,
     select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
@@ -306,6 +307,85 @@ async fn install_gh_from_public_release_windows_zip_uses_bin_hint() -> anyhow::R
     );
     let installed = std::fs::read(&destination)?;
     assert_eq!(installed, b"MZ");
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_git_from_public_release_windows_zip_builds_cmd_launcher() -> anyhow::Result<()> {
+    let archive_name = "MinGit-2.53.0-busybox-64-bit.zip";
+    let archive_bytes = make_zip_archive(&[
+        ("PortableGit/cmd/git.exe", b"MZ".as_slice(), 0o755),
+        (
+            "PortableGit/mingw64/bin/msys-2.0.dll",
+            b"dll".as_slice(),
+            0o644,
+        ),
+    ])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "v2.53.0.windows.1",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": format!("{base}/asset/{archive_name}"),
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/git-for-windows/git/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_api_bases: vec![format!("{base}/api")],
+        mirror_prefixes: Vec::new(),
+        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
+        python_install_mirrors: Vec::new(),
+        gateway_base: None,
+        country: None,
+        http_timeout: Duration::from_secs(5),
+        max_download_bytes: None,
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("git.cmd");
+
+    let source =
+        install_git_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+            .await?;
+    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
+    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
+    assert_eq!(
+        source
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::Zip, "PortableGit/cmd/git.exe"))
+    );
+    let launcher = std::fs::read_to_string(&destination)?;
+    assert!(launcher.contains("git-portable\\PortableGit\\cmd\\git.exe"));
+    assert!(
+        tmp.path()
+            .join("git-portable")
+            .join("PortableGit")
+            .join("mingw64")
+            .join("bin")
+            .join("msys-2.0.dll")
+            .exists()
+    );
 
     handle.join().expect("mock server thread join");
     Ok(())
