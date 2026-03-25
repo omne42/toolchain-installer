@@ -170,7 +170,7 @@ fn create_tar_symlink(
 
         symlink(link_target, output_path)
             .map_err(|err| OperationError::install(err.to_string()))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]

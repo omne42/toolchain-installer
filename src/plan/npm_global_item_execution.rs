@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use omne_host_info_primitives::executable_suffix_for_target;
-
 use crate::contracts::{BootstrapItem, BootstrapStatus, InstallPlanItem};
 use crate::error::{OperationError, OperationResult};
 use crate::platform::process_runner::{
@@ -114,12 +112,11 @@ fn build_npm_global_recipe(
     target_triple: &str,
     managed_dir: &Path,
 ) -> OperationResult<NpmGlobalRecipe> {
-    let ext = executable_suffix_for_target(target_triple);
     match manager {
         NpmManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
             let binary_path = if target_triple.contains("windows") {
-                prefix_root.join(format!("{binary_name}.cmd"))
+                prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
             } else {
                 prefix_root.join("bin").join(binary_name)
             };
@@ -141,25 +138,30 @@ fn build_npm_global_recipe(
             })
         }
         NpmManager::Pnpm => {
-            let binary_path = managed_dir.join(format!("{binary_name}{ext}"));
+            let binary_path =
+                managed_dir.join(global_binary_filename(binary_name, manager, target_triple));
             Ok(NpmGlobalRecipe {
                 program: resolve_command_for_execution("pnpm"),
                 args: vec!["add".to_string(), "--global".to_string(), package],
-                env: vec![("PNPM_HOME".to_string(), managed_dir.display().to_string())],
+                env: vec![
+                    ("PNPM_HOME".to_string(), managed_dir.display().to_string()),
+                    ("PATH".to_string(), prepend_path_env(managed_dir)?),
+                ],
                 binary_path,
                 source: "npm:pnpm".to_string(),
             })
         }
         NpmManager::Bun => {
-            let install_root = managed_dir.parent().unwrap_or(managed_dir);
-            let binary_path = managed_dir.join(binary_name);
+            let binary_dir = managed_dir.join("bin");
+            let binary_path =
+                binary_dir.join(global_binary_filename(binary_name, manager, target_triple));
             Ok(NpmGlobalRecipe {
                 program: resolve_command_for_execution("bun"),
                 args: vec!["add".to_string(), "--global".to_string(), package],
-                env: vec![(
-                    "BUN_INSTALL".to_string(),
-                    install_root.display().to_string(),
-                )],
+                env: vec![
+                    ("BUN_INSTALL".to_string(), managed_dir.display().to_string()),
+                    ("PATH".to_string(), prepend_path_env(&binary_dir)?),
+                ],
                 binary_path,
                 source: "npm:bun".to_string(),
             })
@@ -189,8 +191,8 @@ fn resolve_npm_global_destination(
     package: &str,
     binary_name: &str,
 ) -> Option<PathBuf> {
-    if command_path_exists(binary_path) {
-        return Some(binary_path.to_path_buf());
+    if let Some(destination) = find_binary_at_path(binary_path, binary_name) {
+        return Some(destination);
     }
 
     let prefix_root = binary_path.parent()?.parent()?;
@@ -231,7 +233,7 @@ fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf
             if path
                 .file_name()
                 .and_then(|value| value.to_str())
-                .is_some_and(|value| value == binary_name)
+                .is_some_and(|value| binary_name_matches(value, binary_name))
                 && command_path_exists(&path)
             {
                 return Some(path);
@@ -239,4 +241,142 @@ fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf
         }
     }
     None
+}
+
+fn prepend_path_env(path: &Path) -> OperationResult<String> {
+    let mut entries = vec![path.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        entries.extend(std::env::split_paths(&existing));
+    }
+    let joined = std::env::join_paths(entries)
+        .map_err(|err| OperationError::install(format!("cannot compose PATH: {err}")))?;
+    Ok(joined.to_string_lossy().into_owned())
+}
+
+fn global_binary_filename(binary_name: &str, manager: NpmManager, target_triple: &str) -> String {
+    if target_triple.contains("windows") {
+        let extension = match manager {
+            NpmManager::Npm | NpmManager::Pnpm | NpmManager::Bun => ".cmd",
+        };
+        return format!("{binary_name}{extension}");
+    }
+    binary_name.to_string()
+}
+
+fn find_binary_at_path(binary_path: &Path, binary_name: &str) -> Option<PathBuf> {
+    if command_path_exists(binary_path) {
+        return Some(binary_path.to_path_buf());
+    }
+
+    let parent = binary_path.parent()?;
+    for candidate_name in candidate_binary_names(binary_name) {
+        let candidate = parent.join(candidate_name);
+        if command_path_exists(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn candidate_binary_names(binary_name: &str) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        vec![
+            binary_name.to_string(),
+            format!("{binary_name}.cmd"),
+            format!("{binary_name}.exe"),
+            format!("{binary_name}.bat"),
+            format!("{binary_name}.ps1"),
+        ]
+    }
+    #[cfg(not(windows))]
+    {
+        vec![binary_name.to_string()]
+    }
+}
+
+fn binary_name_matches(candidate: &str, binary_name: &str) -> bool {
+    candidate_binary_names(binary_name)
+        .iter()
+        .any(|value| value == candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NpmManager, build_npm_global_recipe};
+
+    #[test]
+    fn pnpm_recipe_prepends_pnpm_home_to_path() {
+        let managed_dir = std::env::temp_dir().join("ti-pnpm-home");
+        let recipe = build_npm_global_recipe(
+            NpmManager::Pnpm,
+            "http-server@14.1.1".to_string(),
+            "http-server",
+            host_target_triple(),
+            &managed_dir,
+        )
+        .expect("build pnpm recipe");
+
+        assert!(recipe.env.iter().any(
+            |(name, value)| name == "PNPM_HOME" && value == &managed_dir.display().to_string()
+        ));
+        let path = recipe
+            .env
+            .iter()
+            .find(|(name, _)| name == "PATH")
+            .map(|(_, value)| value.as_str())
+            .expect("PATH env");
+        let first = std::env::split_paths(std::ffi::OsStr::new(path))
+            .next()
+            .expect("first PATH entry");
+        assert_eq!(first, managed_dir);
+    }
+
+    #[test]
+    fn bun_recipe_uses_managed_dir_as_install_root() {
+        let managed_dir = std::env::temp_dir().join("ti-bun-root");
+        let recipe = build_npm_global_recipe(
+            NpmManager::Bun,
+            "http-server@14.1.1".to_string(),
+            "http-server",
+            host_target_triple(),
+            &managed_dir,
+        )
+        .expect("build bun recipe");
+
+        assert!(
+            recipe.env.iter().any(|(name, value)| name == "BUN_INSTALL"
+                && value == &managed_dir.display().to_string())
+        );
+        let expected_binary_dir = managed_dir.join("bin");
+        assert_eq!(
+            recipe.binary_path.parent(),
+            Some(expected_binary_dir.as_path())
+        );
+        let path = recipe
+            .env
+            .iter()
+            .find(|(name, _)| name == "PATH")
+            .map(|(_, value)| value.as_str())
+            .expect("PATH env");
+        let first = std::env::split_paths(std::ffi::OsStr::new(path))
+            .next()
+            .expect("first PATH entry");
+        assert_eq!(first, expected_binary_dir);
+    }
+
+    fn host_target_triple() -> &'static str {
+        #[cfg(windows)]
+        {
+            "x86_64-pc-windows-msvc"
+        }
+        #[cfg(target_os = "macos")]
+        {
+            "x86_64-apple-darwin"
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            "x86_64-unknown-linux-gnu"
+        }
+    }
 }

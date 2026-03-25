@@ -801,6 +801,120 @@ EOF
 
 #[cfg(unix)]
 #[test]
+fn npm_global_pnpm_prepends_pnpm_home_to_path() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_pnpm = fake_bin_dir.join("pnpm");
+    write_executable(
+        &fake_pnpm,
+        r#"#!/bin/sh
+[ -n "$PNPM_HOME" ] || exit 9
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) exit 10 ;;
+esac
+/bin/mkdir -p "$PNPM_HOME"
+/bin/cat > "$PNPM_HOME/http-server" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+/bin/chmod +x "$PNPM_HOME/http-server"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-pnpm-home");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-pnpm",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+            "--manager",
+            "pnpm",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = managed_dir.join("http-server");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+    assert!(expected.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_global_bun_uses_managed_dir_bin_subdirectory() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_bun = fake_bin_dir.join("bun");
+    write_executable(
+        &fake_bun,
+        r#"#!/bin/sh
+[ -n "$BUN_INSTALL" ] || exit 9
+case ":$PATH:" in
+  *":$BUN_INSTALL/bin:"*) ;;
+  *) exit 10 ;;
+esac
+/bin/mkdir -p "$BUN_INSTALL/bin"
+/bin/cat > "$BUN_INSTALL/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+/bin/chmod +x "$BUN_INSTALL/bin/http-server"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-bun-root");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-bun",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+            "--manager",
+            "bun",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = managed_dir.join("bin").join("http-server");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+    assert!(expected.exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn cargo_install_reports_root_bin_destination_for_custom_managed_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
