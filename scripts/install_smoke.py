@@ -456,7 +456,6 @@ def seven_zip_asset_name_for_target(target_triple: str) -> str | None:
     mapping = {
         "x86_64-unknown-linux-gnu": "7z2600-linux-x64.tar.xz",
         "x86_64-apple-darwin": "7z2600-mac.tar.xz",
-        "x86_64-pc-windows-msvc": "7z2600-x64.exe",
     }
     return mapping.get(target_triple)
 
