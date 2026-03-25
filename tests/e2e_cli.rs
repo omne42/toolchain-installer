@@ -271,10 +271,12 @@ fn max_download_bytes_flag_limits_release_downloads() {
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
     assert_eq!(json["items"][0]["error_code"], "download_failed");
-    assert!(json["items"][0]["detail"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("configured max download size 4"));
+    assert!(
+        json["items"][0]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("configured max download size 4")
+    );
 
     handle.join().expect("mock server thread join");
 }
