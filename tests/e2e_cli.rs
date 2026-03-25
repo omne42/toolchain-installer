@@ -513,6 +513,55 @@ fn archive_tree_release_extracts_directory_tree() {
 }
 
 #[test]
+fn archive_tree_release_extracts_zip_tree_without_top_level_directory() {
+    let archive_name = "demo-tree.zip";
+    let archive_bytes = make_zip_archive(&[
+        ("bin/demo.exe", b"MZ".as_slice(), 0o755),
+        ("LICENSE", b"demo-license\n".as_slice(), 0o644),
+    ]);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    let destination = temp.path().join("tree");
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let output = cmd
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "archive_tree_release",
+            "--id",
+            "demo-tree-zip",
+            "--url",
+            &format!("http://{addr}/{archive_name}"),
+            "--destination",
+        ])
+        .arg(&destination)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        destination.display().to_string()
+    );
+    assert!(destination.join("bin/demo.exe").exists());
+    assert!(destination.join("LICENSE").exists());
+
+    handle.join().expect("mock server thread join");
+}
+
+#[test]
 fn archive_tree_release_allows_cross_target() {
     let target = non_host_target_triple();
     let mut cmd = cargo_bin_cmd!("toolchain-installer");
@@ -859,6 +908,22 @@ fn make_tar_gz_archive(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
     }
     let encoder = builder.into_inner().expect("finalize tar builder");
     encoder.finish().expect("finalize gzip stream")
+}
+
+fn make_zip_archive(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+    let mut writer = Cursor::new(Vec::new());
+    {
+        let mut archive = zip::ZipWriter::new(&mut writer);
+        for (path, body, mode) in entries {
+            let options = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .unix_permissions(*mode);
+            archive.start_file(*path, options).expect("start zip entry");
+            archive.write_all(body).expect("write zip entry");
+        }
+        archive.finish().expect("finish zip archive");
+    }
+    writer.into_inner()
 }
 
 fn spawn_mock_http_server(

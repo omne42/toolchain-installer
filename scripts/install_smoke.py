@@ -346,6 +346,20 @@ def strip_archive_suffix(asset_name: str) -> str:
     raise SmokeError(f"unsupported archive suffix: {asset_name}")
 
 
+def resolve_archive_tree_root(extracted_root: Path, asset_name: str, binary_name: str) -> Path:
+    expected_root = extracted_root / strip_archive_suffix(asset_name)
+    candidates = [expected_root, extracted_root]
+    for candidate in candidates:
+        binary_path = candidate / "bin" / binary_name
+        license_path = candidate / "LICENSE"
+        if binary_path.exists() and license_path.exists():
+            return candidate
+    raise SmokeError(
+        "archive_tree_release missing extracted tree root; checked: "
+        + ", ".join(str(candidate) for candidate in candidates)
+    )
+
+
 def phase_archive_tree_release(binary: Path, target_triple: str, workspace: Path) -> None:
     managed_dir = workspace / "archive-tree-managed"
     destination = workspace / "archive-tree"
@@ -370,7 +384,11 @@ def phase_archive_tree_release(binary: Path, target_triple: str, workspace: Path
     result = run_installer_json(binary, args, attempts=DOWNLOAD_ATTEMPTS)
     item = single_item(result)
     extracted_root = require_installed(item, phase=ARCHIVE_TREE_RELEASE_PHASE)
-    root_dir = extracted_root / strip_archive_suffix(asset["name"])
+    root_dir = resolve_archive_tree_root(
+        extracted_root,
+        asset["name"],
+        f"gh{executable_suffix(target_triple)}",
+    )
     gh_binary = root_dir / "bin" / f"gh{executable_suffix(target_triple)}"
     license_file = root_dir / "LICENSE"
     if not gh_binary.exists():
