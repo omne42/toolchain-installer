@@ -337,6 +337,8 @@ def phase_pip(binary: Path) -> None:
             "boltons",
             "--package",
             PIP_PACKAGE,
+            "--python",
+            sys.executable,
         ],
         attempts=HOST_INSTALL_ATTEMPTS,
     )
