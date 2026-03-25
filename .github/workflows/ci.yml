@@ -84,17 +84,9 @@ jobs:
       - name: Smoke bootstrap output
         run: |
           export OUT="$(./target/release/toolchain-installer --json --tool custom-tool)"
-          python3 - <<'PY'
-import json, os
-data = json.loads(os.environ["OUT"])
-assert data["schema_version"] == 1
-PY
+          python3 -c 'import json, os; data = json.loads(os.environ["OUT"]); assert data["schema_version"] == 1'
 
       - name: Smoke direct method output
         run: |
           export OUT="$(./target/release/toolchain-installer --json --method unknown --id demo)"
-          python3 - <<'PY'
-import json, os
-data = json.loads(os.environ["OUT"])
-assert data["items"][0]["status"] == "unsupported"
-PY
+          python3 -c 'import json, os; data = json.loads(os.environ["OUT"]); assert data["items"][0]["status"] == "unsupported"'
