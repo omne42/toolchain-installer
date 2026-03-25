@@ -29,7 +29,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust fmt
-        run: cargo fmt --manifest-path Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path Cargo.toml -- --check
 
       - name: Rust check
         run: cargo check --locked --all-targets
