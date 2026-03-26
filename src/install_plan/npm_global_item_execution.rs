@@ -13,6 +13,7 @@ struct NpmGlobalRecipe {
     args: Vec<String>,
     env: Vec<(String, String)>,
     binary_path: PathBuf,
+    fallback_search_root: Option<PathBuf>,
     source: String,
 }
 
@@ -35,9 +36,8 @@ pub(crate) fn execute_npm_global_item(
 
     let destination = match resolve_npm_global_destination(
         &recipe.binary_path,
-        &item.package_spec,
         &item.binary_name,
-        Some(managed_dir),
+        recipe.fallback_search_root.as_deref(),
     ) {
         Some(destination) => destination,
         None => create_windows_bun_global_launcher(
@@ -85,6 +85,7 @@ fn build_npm_global_recipe(
     match manager {
         NodePackageManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
+            let fallback_search_root = npm_global_package_dir(&prefix_root, &package);
             let binary_path = if target_triple.contains("windows") {
                 prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
             } else {
@@ -106,6 +107,7 @@ fn build_npm_global_recipe(
                     prefix_root.display().to_string(),
                 )],
                 binary_path,
+                fallback_search_root: Some(fallback_search_root),
                 source: "npm:npm".to_string(),
             })
         }
@@ -122,6 +124,7 @@ fn build_npm_global_recipe(
                     ("PATH".to_string(), prepend_path_env(managed_dir)?),
                 ],
                 binary_path,
+                fallback_search_root: None,
                 source: "npm:pnpm".to_string(),
             })
         }
@@ -147,6 +150,7 @@ fn build_npm_global_recipe(
                     ("PATH".to_string(), prepend_path_env(&binary_dir)?),
                 ],
                 binary_path,
+                fallback_search_root: Some(global_dir.join("node_modules").join(".bin")),
                 source: "npm:bun".to_string(),
             })
         }
@@ -172,24 +176,28 @@ fn npm_prefix_root_for_target(target_triple: &str, managed_dir: &Path) -> Operat
 
 fn resolve_npm_global_destination(
     binary_path: &Path,
-    package: &str,
     binary_name: &str,
-    search_root: Option<&Path>,
+    fallback_search_root: Option<&Path>,
 ) -> Option<PathBuf> {
     if let Some(destination) = find_binary_at_path(binary_path, binary_name) {
         return Some(destination);
     }
 
-    let prefix_root = binary_path.parent()?.parent()?;
+    if let Some(destination) =
+        fallback_search_root.and_then(|root| find_named_binary_under_dir(root, binary_name))
+    {
+        return Some(destination);
+    }
+
+    None
+}
+
+fn npm_global_package_dir(prefix_root: &Path, package: &str) -> PathBuf {
     let mut package_dir = prefix_root.join("lib").join("node_modules");
     for segment in npm_package_name(package).split('/') {
         package_dir.push(segment);
     }
-    if let Some(destination) = find_named_binary_under_dir(&package_dir, binary_name) {
-        return Some(destination);
-    }
-
-    search_root.and_then(|root| find_named_binary_under_dir(root, binary_name))
+    package_dir
 }
 
 #[cfg(windows)]
@@ -455,7 +463,10 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{build_npm_global_recipe, find_binary_at_path, package_bin_relative_path};
+    use super::{
+        build_npm_global_recipe, find_binary_at_path, npm_global_package_dir,
+        package_bin_relative_path, resolve_npm_global_destination,
+    };
     use crate::plan_items::NodePackageManager;
 
     #[test]
@@ -573,6 +584,42 @@ mod tests {
         }
 
         assert!(find_binary_at_path(&missing_path, &binary_name).is_none());
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_ignores_unrelated_managed_dir_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        let package_root = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        let unrelated = temp.path().join("stale").join("http-server");
+        std::fs::create_dir_all(unrelated.parent().expect("stale parent"))
+            .expect("create stale parent");
+        std::fs::write(&unrelated, "#!/bin/sh\nexit 0\n").expect("write stale binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&unrelated, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod stale binary");
+        }
+
+        assert!(
+            resolve_npm_global_destination(&binary_path, "http-server", Some(&package_root))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn npm_global_package_dir_uses_package_name_without_version() {
+        let package_dir =
+            npm_global_package_dir(Path::new("/tmp/prefix"), "@scope/http-server@14.1.1");
+        assert_eq!(
+            package_dir,
+            PathBuf::from("/tmp/prefix/lib/node_modules/@scope/http-server")
+        );
     }
 
     fn host_target_triple() -> &'static str {
