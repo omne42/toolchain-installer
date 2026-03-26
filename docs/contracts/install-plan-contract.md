@@ -22,6 +22,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 - `schema_version` 当前固定为 `1`。
 - `plan.items` 不能为空。
+- 顶层对象和每个 `items[]` 对象都启用严格未知字段校验；拼错字段名会在反序列化阶段直接失败，不会被静默吞掉。
 - `method` 必须是受支持的方法名；未知方法会在执行前直接返回退出码 `2`。
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
 - `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
@@ -131,11 +132,14 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_tool`
   - 当调用方没有显式提供任何包索引时，默认只使用官方 PyPI `https://pypi.org/simple`。
   - 当调用方显式提供了 `--package-index` 或 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES` 时，installer 不再隐式把官方 PyPI 插到最前面；显式索引顺序就是候选顺序。
+  - 若显式索引、镜像或镜像前缀里出现重复值，只会保留第一次出现的位置，不会按字典序重排。
   - 安装前会探测显式索引的可达性，把可达源优先用于安装。
 - `uv_python`
   - 会先尝试官方 Python 下载来源，失败后再按顺序回退到 `--python-mirror` 或 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供的备用站。
+  - 备用镜像列表若有重复值，只保留第一次出现的位置。
 - `release`
   - 通过内置来源规则、镜像前缀与可达性结果确定下载候选顺序。
+  - `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 的重复值只去重，不重排显式顺序。
 
 ## 参考输入
 

@@ -97,6 +97,25 @@ fn invalid_plan_file_json_returns_failure() {
 }
 
 #[test]
+fn plan_file_rejects_unknown_fields() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "uv", "unexpected": true }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
+#[test]
 fn strict_mode_fails_when_item_failed() {
     let mut cmd = bootstrap_cmd();
     cmd.args([

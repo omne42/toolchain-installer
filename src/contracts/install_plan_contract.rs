@@ -3,6 +3,7 @@ use serde::Deserialize;
 pub const PLAN_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstallPlan {
     #[serde(default)]
     pub schema_version: Option<u32>,
@@ -10,6 +11,7 @@ pub struct InstallPlan {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstallPlanItem {
     pub id: String,
     pub method: String,
