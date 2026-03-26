@@ -24,7 +24,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `plan.items` 不能为空。
 - `method` 必须是受支持的方法名；未知方法会在执行前直接返回退出码 `2`。
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
-- `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
+- `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
 
 ## 方法清单
 

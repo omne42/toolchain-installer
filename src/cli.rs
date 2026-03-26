@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use toolchain_installer::{
-    BootstrapRequest, ExitCode, InstallPlan, InstallPlanItem, InstallerError, has_failure,
-    validate_install_plan,
+    BootstrapCommand, ExecutionRequest, ExitCode, InstallPlan, InstallPlanItem, InstallerError,
+    has_failure, validate_install_plan,
 };
 
 #[derive(Args, Debug, Clone, Default)]
@@ -57,17 +57,23 @@ struct BootstrapArgs {
 }
 
 impl BootstrapArgs {
-    fn build_request(&self) -> BootstrapRequest {
-        BootstrapRequest {
+    fn build_execution_request(&self) -> ExecutionRequest {
+        ExecutionRequest {
             target_triple: self.target_triple.clone(),
             managed_dir: self.managed_dir.clone(),
-            tools: self.tools.clone(),
             mirror_prefixes: self.mirror_prefixes.clone(),
             package_indexes: self.package_indexes.clone(),
             python_install_mirrors: self.python_install_mirrors.clone(),
             gateway_base: self.gateway_base.clone(),
             country: self.country.clone(),
             max_download_bytes: self.max_download_bytes,
+        }
+    }
+
+    fn build_bootstrap_command(&self) -> BootstrapCommand {
+        BootstrapCommand {
+            execution: self.build_execution_request(),
+            tools: self.tools.clone(),
         }
     }
 
@@ -125,11 +131,11 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
     let args = match cli.command {
         Commands::Bootstrap(args) => args,
     };
-    let request = args.build_request();
+    let execution_request = args.build_execution_request();
     let result = if args.method.is_some() {
         let plan = args.build_direct_plan()?;
-        validate_install_plan(&plan, request.target_triple.as_deref())?;
-        toolchain_installer::apply_install_plan(&plan, &request).await?
+        validate_install_plan(&plan, execution_request.target_triple.as_deref())?;
+        toolchain_installer::apply_install_plan(&plan, &execution_request).await?
     } else if let Some(plan_file) = args.plan_file.as_ref() {
         let text = std::fs::read_to_string(plan_file).map_err(|err| {
             InstallerError::usage(format!(
@@ -143,10 +149,11 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
                 plan_file.display()
             ))
         })?;
-        validate_install_plan(&plan, request.target_triple.as_deref())?;
-        toolchain_installer::apply_install_plan(&plan, &request).await?
+        validate_install_plan(&plan, execution_request.target_triple.as_deref())?;
+        toolchain_installer::apply_install_plan(&plan, &execution_request).await?
     } else {
-        toolchain_installer::bootstrap(&request).await?
+        let command = args.build_bootstrap_command();
+        toolchain_installer::bootstrap(&command).await?
     };
 
     if args.json {

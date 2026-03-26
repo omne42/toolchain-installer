@@ -50,6 +50,20 @@ Harness-style explicit disclosure:\n\
     let documented_top_level_dirs = collect_documented_top_level_src_dirs(&doc_text);
     let actual_top_level_dirs = collect_actual_top_level_src_dirs(&source_files);
     let expected_top_level_dirs = actual_top_level_dirs.clone();
+    let actual_architecture_modules = collect_actual_architecture_modules(&source_files);
+    let known_architecture_modules = known_architecture_modules();
+    let missing_dependency_policy_modules = actual_architecture_modules
+        .iter()
+        .filter(|module| !known_architecture_modules.contains(module.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let stale_dependency_policy_modules = known_architecture_modules
+        .iter()
+        .filter(|module| !actual_architecture_modules.contains(**module))
+        .map(|module| (*module).to_string())
+        .collect::<Vec<_>>();
+    let unknown_policy_dependencies =
+        collect_unknown_policy_dependencies(&known_architecture_modules);
 
     let source_file_count = source_files.len();
     let missing_files = source_files
@@ -79,6 +93,9 @@ Harness-style explicit disclosure:\n\
         || !missing_top_level_dirs.is_empty()
         || !extra_documented_top_level_dirs.is_empty()
         || documented_top_level_dirs != expected_top_level_dirs
+        || !missing_dependency_policy_modules.is_empty()
+        || !stale_dependency_policy_modules.is_empty()
+        || !unknown_policy_dependencies.is_empty()
         || !dependency_violations.is_empty()
     {
         return Err(format_validation_failure(
@@ -89,6 +106,9 @@ Harness-style explicit disclosure:\n\
             &extra_documented_top_level_dirs,
             &documented_top_level_dirs,
             &expected_top_level_dirs,
+            &missing_dependency_policy_modules,
+            &stale_dependency_policy_modules,
+            &unknown_policy_dependencies,
             &dependency_violations,
         ));
     }
@@ -437,27 +457,39 @@ fn collect_actual_top_level_src_dirs(source_files: &[String]) -> Vec<String> {
     dirs
 }
 
-fn architecture_module_for_path(path: &str) -> Option<&'static str> {
+fn architecture_module_for_path(path: &str) -> Option<String> {
     match path {
-        "src/main.rs" | "src/lib.rs" | "src/lib_tests.rs" => None,
-        "src/download_sources.rs" => Some("download_sources"),
-        "src/error.rs" => Some("error"),
-        "src/installer_runtime_config.rs" => Some("installer_runtime_config"),
-        "src/plan_items.rs" => Some("plan_items"),
-        _ if path.starts_with("src/artifact/") => Some("artifact"),
-        _ if path.starts_with("src/bootstrap/") => Some("bootstrap"),
-        _ if path.starts_with("src/contracts/") => Some("contracts"),
-        _ if path.starts_with("src/external_gateway/") => Some("external_gateway"),
-        _ if path.starts_with("src/managed_toolchain/") => Some("managed_toolchain"),
-        _ if path.starts_with("src/plan/") => Some("plan"),
-        _ => None,
+        "src/main.rs" | "src/lib.rs" | "src/lib_tests.rs" | "src/cli.rs" => None,
+        _ => path.strip_prefix("src/").and_then(|rest| {
+            if let Some((module, _)) = rest.split_once('/') {
+                Some(module.to_string())
+            } else {
+                rest.strip_suffix(".rs").map(|module| module.to_string())
+            }
+        }),
     }
+}
+
+fn collect_actual_architecture_modules(source_files: &[String]) -> BTreeSet<String> {
+    source_files
+        .iter()
+        .filter_map(|path| architecture_module_for_path(path))
+        .collect()
 }
 
 fn allowed_dependencies_for(module: &str) -> &'static [&'static str] {
     match module {
+        "application" => &[
+            "artifact",
+            "builtin_tools",
+            "contracts",
+            "error",
+            "install_plan",
+            "installer_runtime_config",
+            "managed_toolchain",
+        ],
         "artifact" => &["contracts"],
-        "bootstrap" => &[
+        "builtin_tools" => &[
             "artifact",
             "contracts",
             "download_sources",
@@ -480,7 +512,7 @@ fn allowed_dependencies_for(module: &str) -> &'static [&'static str] {
             "installer_runtime_config",
             "plan_items",
         ],
-        "plan" => &[
+        "install_plan" => &[
             "contracts",
             "download_sources",
             "error",
@@ -496,19 +528,34 @@ fn allowed_dependencies_for(module: &str) -> &'static [&'static str] {
 
 fn known_architecture_modules() -> BTreeSet<&'static str> {
     [
+        "application",
         "artifact",
-        "bootstrap",
+        "builtin_tools",
         "contracts",
         "download_sources",
         "error",
         "external_gateway",
+        "install_plan",
         "installer_runtime_config",
         "managed_toolchain",
-        "plan",
         "plan_items",
     ]
     .into_iter()
     .collect()
+}
+
+fn collect_unknown_policy_dependencies(known_modules: &BTreeSet<&'static str>) -> Vec<String> {
+    let mut unknown_dependencies = Vec::new();
+    for module in known_modules {
+        for dependency in allowed_dependencies_for(module) {
+            if !known_modules.contains(dependency) {
+                unknown_dependencies.push((*dependency).to_string());
+            }
+        }
+    }
+    unknown_dependencies.sort();
+    unknown_dependencies.dedup();
+    unknown_dependencies
 }
 
 fn collect_dependency_violations(source_snapshots: &[SourceSnapshot]) -> Vec<DependencyViolation> {
@@ -519,7 +566,10 @@ fn collect_dependency_violations(source_snapshots: &[SourceSnapshot]) -> Vec<Dep
         let Some(source_module) = architecture_module_for_path(&snapshot.path) else {
             continue;
         };
-        let allowed = allowed_dependencies_for(source_module)
+        if !known_modules.contains(source_module.as_str()) {
+            continue;
+        }
+        let allowed = allowed_dependencies_for(&source_module)
             .iter()
             .copied()
             .collect::<BTreeSet<_>>();
@@ -531,7 +581,7 @@ fn collect_dependency_violations(source_snapshots: &[SourceSnapshot]) -> Vec<Dep
             }
             violations.push(DependencyViolation {
                 source_path: snapshot.path.clone(),
-                source_module: source_module.to_string(),
+                source_module: source_module.clone(),
                 referenced_module,
             });
         }
@@ -595,6 +645,9 @@ fn format_validation_failure(
     extra_documented_top_level_dirs: &[String],
     documented_top_level_dirs: &[String],
     expected_top_level_dirs: &[String],
+    missing_dependency_policy_modules: &[String],
+    stale_dependency_policy_modules: &[String],
+    unknown_policy_dependencies: &[String],
     dependency_violations: &[DependencyViolation],
 ) -> String {
     let mut message =
@@ -636,6 +689,33 @@ fn format_validation_failure(
         message.push_str(
             "- top-level `src/*/` directory entries in `docs/architecture/source-layout.md` are not ordered alphabetically\n",
         );
+    }
+    if !missing_dependency_policy_modules.is_empty() {
+        message.push_str(
+            "- some top-level source modules exist in `src/` but do not have an explicit dependency policy entry\n",
+        );
+        message.push_str(&format!(
+            "- missing dependency-policy module count: {}\n",
+            missing_dependency_policy_modules.len()
+        ));
+    }
+    if !stale_dependency_policy_modules.is_empty() {
+        message.push_str(
+            "- the dependency policy still contains top-level modules that no longer exist in `src/`\n",
+        );
+        message.push_str(&format!(
+            "- stale dependency-policy module count: {}\n",
+            stale_dependency_policy_modules.len()
+        ));
+    }
+    if !unknown_policy_dependencies.is_empty() {
+        message.push_str(
+            "- the dependency policy references top-level modules that are not defined in the policy set\n",
+        );
+        message.push_str(&format!(
+            "- unknown dependency-policy target count: {}\n",
+            unknown_policy_dependencies.len()
+        ));
     }
     if !dependency_violations.is_empty() {
         message.push_str(
@@ -680,6 +760,24 @@ fn format_validation_failure(
         message.push_str("\nExpected alphabetical order:\n");
         for path in expected_top_level_dirs {
             message.push_str(&format!("- `{path}/`\n"));
+        }
+    }
+    if !missing_dependency_policy_modules.is_empty() {
+        message.push_str("\nTop-level modules missing dependency policy entries:\n");
+        for module in missing_dependency_policy_modules {
+            message.push_str(&format!("- `{module}`\n"));
+        }
+    }
+    if !stale_dependency_policy_modules.is_empty() {
+        message.push_str("\nStale dependency policy modules:\n");
+        for module in stale_dependency_policy_modules {
+            message.push_str(&format!("- `{module}`\n"));
+        }
+    }
+    if !unknown_policy_dependencies.is_empty() {
+        message.push_str("\nUnknown dependency policy targets:\n");
+        for module in unknown_policy_dependencies {
+            message.push_str(&format!("- `{module}`\n"));
         }
     }
     if !dependency_violations.is_empty() {
@@ -728,6 +826,21 @@ fn format_validation_failure(
             "- keep the explanations, but do not keep a semantically grouped order that violates the alphabetic rule\n",
         );
     }
+    if !missing_dependency_policy_modules.is_empty() {
+        message.push_str(
+            "- add every new top-level module to the explicit dependency policy instead of letting it bypass architecture checks\n",
+        );
+    }
+    if !stale_dependency_policy_modules.is_empty() {
+        message.push_str(
+            "- remove dependency-policy entries for top-level modules that no longer exist after refactors or renames\n",
+        );
+    }
+    if !unknown_policy_dependencies.is_empty() {
+        message.push_str(
+            "- only reference real policy-controlled top-level modules in dependency allow-lists; fix typos and stale names\n",
+        );
+    }
     if !dependency_violations.is_empty() {
         message.push_str(
             "- move the shared logic into a lower layer or shared model module instead of reaching upward across architecture boundaries\n",
@@ -738,7 +851,8 @@ fn format_validation_failure(
     }
     message.push_str(
         "\nWhy this blocks the change:\n\
-- `source-layout.md` is the architectural index for real source boundaries; silent drift and ad hoc ordering are not allowed\n",
+- `source-layout.md` is the architectural index for real source boundaries; silent drift and ad hoc ordering are not allowed\n\
+- the dependency policy is itself part of the architecture contract, so new top-level modules must be declared explicitly\n",
     );
     message
 }
@@ -771,8 +885,9 @@ fn os_str_to_string(value: &OsStr) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        SourceSnapshot, collect_actual_top_level_src_dirs, collect_dependency_violations,
-        collect_documented_source_files, collect_documented_top_level_src_dirs,
+        SourceSnapshot, collect_actual_architecture_modules, collect_actual_top_level_src_dirs,
+        collect_dependency_violations, collect_documented_source_files,
+        collect_documented_top_level_src_dirs, collect_unknown_policy_dependencies,
         extract_crate_module_dependencies, format_validation_failure,
     };
 
@@ -781,47 +896,49 @@ mod tests {
         let doc = "\
 - `src/artifact/`
   - `install_source.rs`：...
-- `src/bootstrap/`
-  - `builtin_tools/`
-    - `bootstrap_execution.rs`：...
+- `src/application/`
+  - `bootstrap_use_case.rs`：...
 ";
         let files = collect_documented_source_files(doc);
         assert!(files.contains(&"src/artifact/install_source.rs".to_string()));
-        assert!(files.contains(&"src/bootstrap/builtin_tools/bootstrap_execution.rs".to_string()));
+        assert!(files.contains(&"src/application/bootstrap_use_case.rs".to_string()));
     }
 
     #[test]
     fn collects_top_level_src_dirs_in_document_order() {
         let doc = "\
-- `src/bootstrap/`
+- `src/application/`
 - `src/artifact/`
-- `src/plan/`
+- `src/install_plan/`
 ";
         let dirs = collect_documented_top_level_src_dirs(doc);
-        assert_eq!(dirs, vec!["src/bootstrap", "src/artifact", "src/plan"]);
+        assert_eq!(dirs, vec!["src/application", "src/artifact", "src/install_plan"]);
     }
 
     #[test]
     fn collects_actual_top_level_src_dirs_from_source_files() {
         let dirs = collect_actual_top_level_src_dirs(&[
-            "src/bootstrap/mod.rs".to_string(),
-            "src/plan/mod.rs".to_string(),
+            "src/application/mod.rs".to_string(),
+            "src/install_plan/mod.rs".to_string(),
             "src/download_sources.rs".to_string(),
             "src/artifact/mod.rs".to_string(),
         ]);
-        assert_eq!(dirs, vec!["src/artifact", "src/bootstrap", "src/plan"]);
+        assert_eq!(dirs, vec!["src/application", "src/artifact", "src/install_plan"]);
     }
 
     #[test]
     fn renders_combined_failure_message() {
         let message = format_validation_failure(
             "staged index",
-            &["src/plan/mod.rs".to_string()],
+            &["src/install_plan/mod.rs".to_string()],
             &["src/legacy.rs".to_string()],
             &["src/contracts".to_string()],
             &["src/platform".to_string()],
-            &["src/bootstrap".to_string(), "src/artifact".to_string()],
-            &["src/artifact".to_string(), "src/bootstrap".to_string()],
+            &["src/application".to_string(), "src/artifact".to_string()],
+            &["src/application".to_string(), "src/artifact".to_string()],
+            &["future_domain".to_string()],
+            &["legacy_domain".to_string()],
+            &["typo_domain".to_string()],
             &[],
         );
         assert!(message.contains("Missing file entries:"));
@@ -830,6 +947,9 @@ mod tests {
         assert!(message.contains("Extra documented top-level src directory entries:"));
         assert!(message.contains("Documented top-level src directory order:"));
         assert!(message.contains("Expected alphabetical order:"));
+        assert!(message.contains("Top-level modules missing dependency policy entries:"));
+        assert!(message.contains("Stale dependency policy modules:"));
+        assert!(message.contains("Unknown dependency policy targets:"));
     }
 
     #[test]
@@ -847,15 +967,39 @@ mod tests {
         let violations = collect_dependency_violations(&[
             SourceSnapshot {
                 path: "src/managed_toolchain/mod.rs".to_string(),
-                contents: "use crate::plan::resolved_plan_item::ResolvedPlanItem;".to_string(),
+                contents: "use crate::install_plan::resolved_plan_item::ResolvedPlanItem;"
+                    .to_string(),
             },
             SourceSnapshot {
-                path: "src/plan/mod.rs".to_string(),
+                path: "src/install_plan/mod.rs".to_string(),
                 contents: String::new(),
             },
         ]);
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].source_module, "managed_toolchain");
-        assert_eq!(violations[0].referenced_module, "plan");
+        assert_eq!(violations[0].referenced_module, "install_plan");
+    }
+
+    #[test]
+    fn collects_actual_architecture_modules_from_top_level_paths() {
+        let modules = collect_actual_architecture_modules(&[
+            "src/application/mod.rs".to_string(),
+            "src/future_domain/mod.rs".to_string(),
+            "src/download_sources.rs".to_string(),
+            "src/main.rs".to_string(),
+            "src/cli.rs".to_string(),
+        ]);
+        assert!(modules.contains("application"));
+        assert!(modules.contains("future_domain"));
+        assert!(modules.contains("download_sources"));
+        assert!(!modules.contains("main"));
+        assert!(!modules.contains("cli"));
+    }
+
+    #[test]
+    fn policy_targets_must_exist_in_known_module_set() {
+        let unknown_dependencies =
+            collect_unknown_policy_dependencies(&super::known_architecture_modules());
+        assert!(unknown_dependencies.is_empty());
     }
 }

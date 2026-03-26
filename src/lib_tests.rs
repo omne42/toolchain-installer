@@ -18,13 +18,13 @@ use omne_system_package_primitives::{
     SystemPackageManager, default_system_package_install_recipes_for_os,
 };
 
-use crate::bootstrap::builtin_tools::{
+use crate::builtin_tools::{
     gh_release_asset_suffix_for_target, install_gh_from_public_release,
     install_git_from_public_release, normalize_requested_tools,
     select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
-    BootstrapArchiveFormat, BootstrapRequest, BootstrapSourceKind, BootstrapStatus, InstallPlan,
+    BootstrapArchiveFormat, BootstrapSourceKind, BootstrapStatus, ExecutionRequest, InstallPlan,
     InstallPlanItem, PLAN_SCHEMA_VERSION,
 };
 use crate::download_sources::make_download_candidates;
@@ -32,6 +32,7 @@ use crate::error::ExitCode;
 use crate::external_gateway::{
     infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
 };
+use crate::install_plan::install_plan_validation::validate_plan;
 use crate::installer_runtime_config::{
     DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
     GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
@@ -43,7 +44,6 @@ use crate::managed_toolchain::managed_root_dir::{
 use crate::managed_toolchain::{
     execute_uv_python_item, execute_uv_tool_item, install_uv_from_public_release,
 };
-use crate::plan::install_plan_validation::validate_plan;
 use crate::plan_items::{UvPythonPlanItem, UvToolPlanItem};
 
 fn test_runtime_config() -> InstallerRuntimeConfig {
@@ -133,7 +133,7 @@ fn runtime_config_uses_default_package_index_only_when_none_is_configured() {
     if std::env::var_os("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES").is_some() {
         return;
     }
-    let cfg = InstallerRuntimeConfig::from_request(&BootstrapRequest::default());
+    let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest::default());
     assert_eq!(
         cfg.package_indexes.indexes,
         vec![DEFAULT_PYPI_INDEX.to_string()]
@@ -145,9 +145,9 @@ fn runtime_config_does_not_prepend_official_package_index_when_explicit_indexes_
     if std::env::var_os("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES").is_some() {
         return;
     }
-    let cfg = InstallerRuntimeConfig::from_request(&BootstrapRequest {
+    let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
         package_indexes: vec!["https://mirror.example/simple".to_string()],
-        ..BootstrapRequest::default()
+        ..ExecutionRequest::default()
     });
     assert_eq!(
         cfg.package_indexes.indexes,
@@ -651,7 +651,7 @@ async fn apply_install_plan_rejects_download_over_configured_size_limit() -> any
             python: None,
         }],
     };
-    let request = crate::BootstrapRequest {
+    let request = crate::ExecutionRequest {
         managed_dir: Some(managed_dir),
         max_download_bytes: Some(4),
         ..Default::default()
@@ -705,7 +705,7 @@ async fn apply_install_plan_installs_non_archive_release_with_sha256() -> anyhow
             python: None,
         }],
     };
-    let request = crate::BootstrapRequest {
+    let request = crate::ExecutionRequest {
         managed_dir: Some(managed_dir.clone()),
         ..Default::default()
     };
@@ -762,7 +762,7 @@ async fn apply_install_plan_installs_archive_release_and_reports_archive_match()
             python: None,
         }],
     };
-    let request = crate::BootstrapRequest {
+    let request = crate::ExecutionRequest {
         managed_dir: Some(managed_dir.clone()),
         ..Default::default()
     };

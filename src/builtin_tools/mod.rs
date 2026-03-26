@@ -1,8 +1,5 @@
-mod bootstrap_execution;
-mod builtin_tool_selection;
-mod public_release_asset_installation;
-
-pub use bootstrap_execution::bootstrap;
+pub(crate) mod builtin_tool_selection;
+pub(crate) mod public_release_asset_installation;
 
 #[cfg(test)]
 pub(crate) use builtin_tool_selection::normalize_requested_tools;

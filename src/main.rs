@@ -1,9 +1,8 @@
-#[path = "bootstrap/cli.rs"]
-mod bootstrap_cli;
+mod cli;
 
 #[tokio::main]
 async fn main() {
-    if let Err(err) = bootstrap_cli::run().await {
+    if let Err(err) = cli::run().await {
         eprintln!("{err}");
         std::process::exit(err.exit_code().as_i32());
     }

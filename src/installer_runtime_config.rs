@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use github_kit::GitHubApiRequestOptions;
 
-use crate::contracts::BootstrapRequest;
+use crate::contracts::ExecutionRequest;
 
 pub(crate) const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
 pub(crate) const DEFAULT_HTTP_TIMEOUT_SECONDS: u64 = 120;
@@ -53,20 +53,20 @@ pub(crate) struct DownloadPolicy {
 }
 
 impl InstallerRuntimeConfig {
-    pub(crate) fn from_request(request: &BootstrapRequest) -> Self {
+    pub(crate) fn from_execution_request(request: &ExecutionRequest) -> Self {
         Self {
-            github_releases: GitHubReleasePolicy::from_request(),
-            download_sources: DownloadSourcePolicy::from_request(request),
-            package_indexes: PackageIndexPolicy::from_request(request),
-            python_mirrors: PythonMirrorPolicy::from_request(request),
-            gateway: GatewayRoutingPolicy::from_request(request),
-            download: DownloadPolicy::from_request(request),
+            github_releases: GitHubReleasePolicy::from_environment(),
+            download_sources: DownloadSourcePolicy::from_execution_request(request),
+            package_indexes: PackageIndexPolicy::from_execution_request(request),
+            python_mirrors: PythonMirrorPolicy::from_execution_request(request),
+            gateway: GatewayRoutingPolicy::from_execution_request(request),
+            download: DownloadPolicy::from_execution_request(request),
         }
     }
 }
 
 impl GitHubReleasePolicy {
-    fn from_request() -> Self {
+    fn from_environment() -> Self {
         let github_api_bases = parse_csv_env("TOOLCHAIN_INSTALLER_GITHUB_API_BASES");
         let github_api_bases = if github_api_bases.is_empty() {
             vec![DEFAULT_GITHUB_API_BASE.to_string()]
@@ -90,7 +90,7 @@ impl GitHubReleasePolicy {
 }
 
 impl DownloadSourcePolicy {
-    fn from_request(request: &BootstrapRequest) -> Self {
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
         let mut mirror_prefixes = parse_csv_env("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES");
         for prefix in &request.mirror_prefixes {
             if !prefix.trim().is_empty() {
@@ -105,7 +105,7 @@ impl DownloadSourcePolicy {
 }
 
 impl PackageIndexPolicy {
-    fn from_request(request: &BootstrapRequest) -> Self {
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
         let mut indexes = parse_csv_env("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES");
         for index in &request.package_indexes {
             if !index.trim().is_empty() {
@@ -121,7 +121,7 @@ impl PackageIndexPolicy {
 }
 
 impl PythonMirrorPolicy {
-    fn from_request(request: &BootstrapRequest) -> Self {
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
         let mut install_mirrors = parse_csv_env("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS");
         for mirror in &request.python_install_mirrors {
             if !mirror.trim().is_empty() {
@@ -135,7 +135,7 @@ impl PythonMirrorPolicy {
 }
 
 impl GatewayRoutingPolicy {
-    fn from_request(request: &BootstrapRequest) -> Self {
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
         let base = request
             .gateway_base
             .as_ref()
@@ -169,7 +169,7 @@ impl GatewayRoutingPolicy {
 }
 
 impl DownloadPolicy {
-    fn from_request(request: &BootstrapRequest) -> Self {
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
         let http_timeout = std::env::var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS")
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())

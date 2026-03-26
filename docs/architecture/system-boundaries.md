@@ -8,10 +8,14 @@
 
 - 二进制入口：`src/main.rs`
   - 负责启动 CLI，并把参数解析交给二进制专属模块。
+- 二进制专属 CLI：`src/cli.rs`
+  - 负责 CLI 参数模型、文件输入读取和对库用例的命令分发，不承载安装策略。
 - 库入口：`src/lib.rs`
   - 只做模块装配与公开导出，不承载流程细节。
-- 安装域：`src/bootstrap/`、`src/plan/`、`src/managed_toolchain/`、`src/download_sources.rs`、`src/plan_items.rs`
-  - 共同覆盖“确定装什么、从哪下载、如何安装、如何输出结果”。
+- 应用编排域：`src/application/`
+  - 负责 bootstrap / install plan 用例编排、执行上下文初始化，以及把领域执行结果汇总成稳定输出。
+- 领域策略域：`src/builtin_tools/`、`src/install_plan/`、`src/managed_toolchain/`、`src/download_sources.rs`、`src/plan_items.rs`
+  - 共同覆盖“确定装什么、从哪下载、如何安装”的领域策略与共享模型；不负责 CLI 解析或运行上下文装配。
 - artifact 内部域：`src/artifact/`
   - 承载内部 artifact 安装结果模型，不作为外部输入/输出 contract 暴露。
 - 外部网关集成域：`src/external_gateway/`
@@ -41,12 +45,15 @@
 
 ## 模块职责边界
 
-- `bootstrap`
-  - 面向“当前宿主机补齐基础工具链”的内置用例。
-  - 只允许处理宿主机场景，不暴露跨目标平台语义。
-- `plan`
-  - 执行调用方给定的安装计划，并负责把原始 `method` 字符串归位成更明确的领域方法分类。
-  - 只校验和编排，不拥有共享 artifact 安装管道本身。
+- `application`
+  - 面向对外用例编排，负责把 CLI / library 输入归一化成执行上下文，并调度具体领域策略。
+  - 不持有内置工具安装规则、plan method 字段矩阵或具体下载来源选择策略。
+- `builtin_tools`
+  - 承载“bootstrap 内置工具”领域策略，例如默认工具选择、public release 资产选择，以及 git/gh/uv 的内置安装适配。
+  - 不负责 CLI 解析、宿主/目标初始化、HTTP client 构建或结果总汇总。
+- `install_plan`
+  - 承载安装 plan 领域策略：plan method 归位、DTO -> 强类型条目收敛、方法分发和各 method 的安装执行策略。
+  - 不负责执行上下文构建，也不直接承载顶层 use case 编排。
 - `artifact`
   - 负责 installer 内部 artifact 安装结果模型，例如安装来源和可选 archive match 的归并。
   - 不属于外部 CLI/JSON contract，也不承载下载候选策略或 runtime 安装原语。
@@ -58,13 +65,13 @@
   - 不承载通用来源候选构造、GitHub API client 或下载/安装执行。
 - `managed_toolchain`
   - 负责围绕 `managed_dir` 的托管工具链环境编排：收敛 `uv` 工具目录、Python 目录和缓存目录，解析托管根目录策略，并执行 `uv`、`uv python install`、`uv tool install`。
-  - 对上层接收的是显式托管工具链方法分发，而不是在领域内部继续解析原始方法字符串。
+  - 对上层接收的是显式托管工具链方法分发，而不是在领域内部继续解析原始方法字符串或构建执行上下文。
   - 也拥有托管 `uv` 的 public release 供给能力，因为 `bootstrap` 与托管工具链执行都在复用同一套 `uv` 安装细节。
 - `plan_items`
-  - 负责 `plan` 与 `managed_toolchain` 共享的强类型安装项模型。
+  - 负责 `install_plan` 与 `managed_toolchain` 共享的强类型安装项模型。
   - 只定义领域数据，不负责 plan 方法归一化、校验、下载候选或执行。
 - `installer_runtime_config`
-  - 负责把 CLI/env 输入归一化成内部运行期策略对象。
+  - 负责把 `ExecutionRequest` / env 输入归一化成内部运行期策略对象。
   - 当前已经明确拆成 `github_releases`、`download_sources`、`download`、`package_indexes`、`python_mirrors`、`gateway` 六类策略，而不是让 GitHub API、镜像候选、索引、gateway、国家码和下载限制继续平铺混放。
 - `omne-host-info-primitives`
   - 负责宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀推断。
@@ -112,19 +119,22 @@
   - 最低层；不允许依赖其他 installer 顶层模块。
 - `contracts`
   - 只允许依赖 `error`。
+- `application`
+  - 可以依赖 `builtin_tools`、`contracts`、`error`、`install_plan`、`installer_runtime_config`、`managed_toolchain`。
+  - 不反向提供给任何领域策略层依赖。
 - `artifact`、`download_sources`、`installer_runtime_config`、`plan_items`
-  - 只允许依赖更低层公共边界；不能反向依赖 `managed_toolchain`、`plan`、`bootstrap`。
+  - 只允许依赖更低层公共边界；不能反向依赖 `managed_toolchain`、`install_plan`、`builtin_tools`、`application`。
+- `builtin_tools`
+  - 可以依赖 `artifact`、`contracts`、`download_sources`、`error`、`external_gateway`、`installer_runtime_config`、`managed_toolchain`。
+  - 不能依赖 `install_plan` 或 `application`。
 - `external_gateway`
   - 只允许依赖 `installer_runtime_config`。
 - `managed_toolchain`
   - 可以依赖 `artifact`、`contracts`、`download_sources`、`error`、`installer_runtime_config`、`plan_items`。
-  - 不能反向依赖 `plan` 或 `bootstrap`。
-- `plan`
+  - 不能反向依赖 `install_plan`、`builtin_tools` 或 `application`。
+- `install_plan`
   - 可以依赖 `managed_toolchain` 及更低层模块，并负责执行编排。
-  - 不能依赖 `bootstrap`。
-- `bootstrap`
-  - 可以依赖 `managed_toolchain` 及更低层模块，并负责宿主机 bootstrap 编排。
-  - 不能依赖 `plan`。
+  - 不能依赖 `builtin_tools` 或 `application`。
 - 上述方向由 `tools/source-layout-check/` 在本地 git hook 与 CI 中共同执行。
 
 ## 宿主与目标语义
