@@ -18,7 +18,9 @@ pub use contracts::{
     InstallPlanItem, OUTPUT_SCHEMA_VERSION, PLAN_SCHEMA_VERSION, has_failure,
 };
 pub use error::{ExitCode, InstallerError, InstallerResult};
-pub use install_plan::install_plan_validation::validate_install_plan;
+pub use install_plan::install_plan_validation::{
+    validate_install_plan, validate_install_plan_with_request,
+};
 
 #[cfg(test)]
 mod lib_tests;

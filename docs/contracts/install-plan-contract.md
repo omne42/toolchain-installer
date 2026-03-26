@@ -23,8 +23,10 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `schema_version` 当前固定为 `1`。
 - `plan.items` 不能为空。
 - 顶层对象和每个 `items[]` 对象都启用严格未知字段校验；拼错字段名会在反序列化阶段直接失败，不会被静默吞掉。
+- `plan.items[*].id` 必须全局唯一；重复 `id` 会在执行前返回退出码 `2`。
 - `method` 必须是受支持的方法名；未知方法会在执行前直接返回退出码 `2`。
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
+- 解析后的目标路径若发生冲突，会在执行前返回退出码 `2`，不会依赖执行顺序“碰巧覆盖”。
 - `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
 
 ## 方法清单
@@ -119,13 +121,14 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `release.url` 仅允许 `http` 或 `https`。
 - `archive_tree_release.url` 仅允许 `http` 或 `https`，且资产名必须是受支持的 `.tar.gz`、`.tar.xz` 或 `.zip`。
 - `destination` 若为相对路径，会解析到 `managed_dir` 下。
-- 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
+- 任意 `destination` 都禁止使用绝对路径，也禁止包含 `..`，避免写出 `managed_dir` 边界。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，不会默认写入 `managed_dir`。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
+- 所有可解析出最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径。
 
 ## 来源探测与回退
 

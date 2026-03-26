@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use toolchain_installer::{
     BootstrapCommand, ExecutionRequest, ExitCode, InstallPlan, InstallPlanItem, InstallerError,
-    has_failure, validate_install_plan,
+    has_failure, validate_install_plan_with_request,
 };
 
 #[derive(Args, Debug, Clone, Default)]
@@ -134,7 +134,7 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
     let execution_request = args.build_execution_request();
     let result = if args.method.is_some() {
         let plan = args.build_direct_plan()?;
-        validate_install_plan(&plan, execution_request.target_triple.as_deref())?;
+        validate_install_plan_with_request(&plan, &execution_request)?;
         toolchain_installer::apply_install_plan(&plan, &execution_request).await?
     } else if let Some(plan_file) = args.plan_file.as_ref() {
         let text = std::fs::read_to_string(plan_file).map_err(|err| {
@@ -149,7 +149,7 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
                 plan_file.display()
             ))
         })?;
-        validate_install_plan(&plan, execution_request.target_triple.as_deref())?;
+        validate_install_plan_with_request(&plan, &execution_request)?;
         toolchain_installer::apply_install_plan(&plan, &execution_request).await?
     } else {
         let command = args.build_bootstrap_command();

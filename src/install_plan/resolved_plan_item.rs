@@ -507,6 +507,11 @@ fn require_destination(item_id: &str, raw_destination: Option<&str>) -> Installe
 
 fn validate_destination(item_id: &str, raw_destination: &str) -> InstallerResult<PathBuf> {
     let path = PathBuf::from(raw_destination);
+    if path.is_absolute() {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` destination `{raw_destination}` must stay under managed_dir; absolute paths are not allowed"
+        )));
+    }
     if path.file_name().is_none() {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` must include a file name"
