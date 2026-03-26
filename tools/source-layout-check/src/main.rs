@@ -935,7 +935,7 @@ mod tests {
             &["src/contracts".to_string()],
             &["src/platform".to_string()],
             &["src/application".to_string(), "src/artifact".to_string()],
-            &["src/application".to_string(), "src/artifact".to_string()],
+            &["src/artifact".to_string(), "src/application".to_string()],
             &["future_domain".to_string()],
             &["legacy_domain".to_string()],
             &["typo_domain".to_string()],

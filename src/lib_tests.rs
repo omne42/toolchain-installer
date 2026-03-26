@@ -316,7 +316,13 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
         ManagedBootstrapState::ManagedBroken {
             detail: format!(
                 "managed git payload is missing required runtime {}",
-                payload.join("msys-2.0.dll").display()
+                managed_dir
+                    .join("git-portable")
+                    .join("PortableGit")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("msys-2.0.dll")
+                    .display()
             )
         }
     );
@@ -348,7 +354,13 @@ fn assess_managed_bootstrap_state_reports_healthy_windows_git_launcher() {
         ManagedBootstrapState::ManagedHealthy {
             detail: format!(
                 "managed git launcher points to healthy MinGit payload {} under {}",
-                payload.join("git.exe").display(),
+                managed_dir
+                    .join("git-portable")
+                    .join("PortableGit")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("git.exe")
+                    .display(),
                 managed_dir.join("git-portable").display()
             )
         }
@@ -471,6 +483,7 @@ async fn install_gh_from_public_release_mock_api() -> anyhow::Result<()> {
     let base = format!("http://{addr}");
     let release_body = serde_json::json!({
         "tag_name": "v9.9.9",
+        "body": "x".repeat(20 * 1024),
         "assets": [{
             "name": archive_name,
             "browser_download_url": format!("{base}/asset/{archive_name}"),
@@ -869,6 +882,7 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     let base = format!("http://{addr}");
     let release_body = serde_json::json!({
         "tag_name": "0.11.0",
+        "body": "x".repeat(20 * 1024),
         "assets": [{
             "name": archive_name,
             "browser_download_url": format!("{base}/asset/{archive_name}"),
@@ -1808,7 +1822,7 @@ fn public_validate_install_plan_stays_structure_only_without_managed_dir_context
         ],
     };
 
-    crate::validate_install_plan(&plan, Some("x86_64-unknown-linux-gnu"))
+    crate::validate_install_plan(&plan, None)
         .expect("public validator should not guess managed_dir-dependent conflicts");
 }
 

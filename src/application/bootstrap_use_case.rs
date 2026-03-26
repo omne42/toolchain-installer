@@ -262,7 +262,11 @@ fn launcher_target_from_script(script: &str) -> Option<PathBuf> {
         if target.is_empty() {
             return None;
         }
-        Some(PathBuf::from(target.replace('\\', "/")))
+        let mut relative = PathBuf::new();
+        for component in target.split(['\\', '/']).filter(|part| !part.is_empty()) {
+            relative.push(component);
+        }
+        (!relative.as_os_str().is_empty()).then_some(relative)
     })
 }
 

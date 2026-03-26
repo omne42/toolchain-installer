@@ -37,8 +37,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -63,8 +61,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,8 +89,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -152,8 +146,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -180,8 +172,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -191,10 +181,27 @@ jobs:
 
       - name: Smoke bootstrap output
         run: |
-          export OUT="$(./target/release/toolchain-installer --json --tool custom-tool)"
+          export OUT="$(./target/release/toolchain-installer bootstrap --json --tool custom-tool)"
           python3 -c 'import json, os; data = json.loads(os.environ["OUT"]); assert data["schema_version"] == 1'
 
-      - name: Smoke direct method output
+      - name: Smoke direct method usage failure
         run: |
-          export OUT="$(./target/release/toolchain-installer --json --method unknown --id demo)"
-          python3 -c 'import json, os; data = json.loads(os.environ["OUT"]); assert data["items"][0]["status"] == "unsupported"'
+          python3 - <<'PY'
+          import subprocess
+
+          completed = subprocess.run(
+              [
+                  "./target/release/toolchain-installer",
+                  "bootstrap",
+                  "--json",
+                  "--method",
+                  "unknown",
+                  "--id",
+                  "demo",
+              ],
+              text=True,
+              capture_output=True,
+          )
+          assert completed.returncode == 2, completed
+          assert "uses unsupported method `unknown`" in completed.stderr, completed.stderr
+          PY

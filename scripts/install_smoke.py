@@ -139,15 +139,16 @@ def run_installer_json(
     env: dict[str, str] | None = None,
     attempts: int = 1,
 ) -> dict:
+    command_args = args if args and args[0] == "bootstrap" else ["bootstrap", *args]
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            completed = run_command([binary, *args], env=env)
+            completed = run_command([binary, *command_args], env=env)
             try:
                 return json.loads(completed.stdout)
             except json.JSONDecodeError as err:
                 raise SmokeError(
-                    f"installer output is not valid json for args {args}: {err}\n"
+                    f"installer output is not valid json for args {command_args}: {err}\n"
                     f"stdout:\n{completed.stdout}\n"
                     f"stderr:\n{completed.stderr}"
                 ) from err
@@ -481,11 +482,10 @@ def install_release_spec(
     *,
     phase: str,
     managed_dir: Path,
-    workspace: Path,
     spec: dict[str, object],
     attempts: int,
 ) -> None:
-    destination = workspace / str(spec["id"]) / str(spec["binary_name"])
+    destination = Path(str(spec["id"])) / str(spec["binary_name"])
     args = [
         "--json",
         "--managed-dir",
@@ -727,7 +727,7 @@ def phase_bootstrap_uv(binary: Path, target_triple: str, workspace: Path) -> Non
 
 def phase_release_gh(binary: Path, target_triple: str, workspace: Path) -> None:
     managed_dir = workspace / "release-managed"
-    destination = workspace / f"gh{executable_suffix(target_triple)}"
+    destination = Path(f"gh{executable_suffix(target_triple)}")
     release = fetch_json(f"https://api.github.com/repos/{GH_RELEASE_REPO}/releases/latest")
     asset = find_asset_for_suffix(release, gh_asset_suffix_for_target(target_triple))
     args = [
@@ -764,7 +764,6 @@ def phase_release_catalog(binary: Path, target_triple: str, workspace: Path) -> 
             binary,
             phase=RELEASE_CATALOG_PHASE,
             managed_dir=managed_dir,
-            workspace=workspace,
             spec=spec,
             attempts=DOWNLOAD_ATTEMPTS,
         )
@@ -845,7 +844,7 @@ def phase_archive_tree_release(binary: Path, target_triple: str, workspace: Path
     ]
 
     for spec in archive_specs:
-        destination = workspace / spec["id"]
+        destination = Path(str(spec["id"]))
         args = [
             "--json",
             "--managed-dir",
@@ -1112,7 +1111,8 @@ def phase_workspace_package(binary: Path, workspace: Path) -> None:
     ]
 
     for spec in package_specs:
-        workspace_dir = workspace / f"workspace-package-{spec['id']}"
+        workspace_name = f"workspace-package-{spec['id']}"
+        workspace_dir = workspace / workspace_name
         workspace_dir.mkdir(parents=True, exist_ok=True)
         (workspace_dir / "package.json").write_text(
             json.dumps({"name": f"ti-{spec['id']}", "private": True}, indent=2),
@@ -1122,6 +1122,8 @@ def phase_workspace_package(binary: Path, workspace: Path) -> None:
             binary,
             [
                 "--json",
+                "--managed-dir",
+                str(workspace),
                 "--method",
                 WORKSPACE_PACKAGE_PHASE,
                 "--id",
@@ -1129,7 +1131,7 @@ def phase_workspace_package(binary: Path, workspace: Path) -> None:
                 "--package",
                 spec["package"],
                 "--destination",
-                str(workspace_dir),
+                workspace_name,
                 "--manager",
                 spec["manager"],
             ],
@@ -1300,7 +1302,7 @@ def phase_go_install(binary: Path, workspace: Path) -> None:
 
 
 def detect_target_triple(binary: Path) -> str:
-    result = run_installer_json(binary, ["--json", "--method", "unknown", "--id", "probe"])
+    result = run_installer_json(binary, ["--json", "--tool", "probe-tool"])
     target_triple = result.get("target_triple")
     if not isinstance(target_triple, str) or not target_triple:
         raise SmokeError(f"cannot determine target triple from installer output: {result}")
