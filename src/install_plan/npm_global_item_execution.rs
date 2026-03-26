@@ -13,6 +13,8 @@ struct NpmGlobalRecipe {
     args: Vec<String>,
     env: Vec<(String, String)>,
     binary_path: PathBuf,
+    fallback_package_dir: Option<PathBuf>,
+    fallback_search_root: Option<PathBuf>,
     source: String,
 }
 
@@ -37,7 +39,8 @@ pub(crate) fn execute_npm_global_item(
         &recipe.binary_path,
         &item.package_spec,
         &item.binary_name,
-        Some(managed_dir),
+        recipe.fallback_package_dir.as_deref(),
+        recipe.fallback_search_root.as_deref(),
     ) {
         Some(destination) => destination,
         None => create_windows_bun_global_launcher(
@@ -85,6 +88,7 @@ fn build_npm_global_recipe(
     match manager {
         NodePackageManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
+            let fallback_package_dir = npm_global_package_dir(&prefix_root, &package);
             let binary_path = if target_triple.contains("windows") {
                 prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
             } else {
@@ -106,6 +110,8 @@ fn build_npm_global_recipe(
                     prefix_root.display().to_string(),
                 )],
                 binary_path,
+                fallback_package_dir: Some(fallback_package_dir),
+                fallback_search_root: None,
                 source: "npm:npm".to_string(),
             })
         }
@@ -122,6 +128,8 @@ fn build_npm_global_recipe(
                     ("PATH".to_string(), prepend_path_env(managed_dir)?),
                 ],
                 binary_path,
+                fallback_package_dir: None,
+                fallback_search_root: None,
                 source: "npm:pnpm".to_string(),
             })
         }
@@ -147,6 +155,8 @@ fn build_npm_global_recipe(
                     ("PATH".to_string(), prepend_path_env(&binary_dir)?),
                 ],
                 binary_path,
+                fallback_package_dir: None,
+                fallback_search_root: Some(global_dir.join("node_modules").join(".bin")),
                 source: "npm:bun".to_string(),
             })
         }
@@ -174,22 +184,35 @@ fn resolve_npm_global_destination(
     binary_path: &Path,
     package: &str,
     binary_name: &str,
-    search_root: Option<&Path>,
+    fallback_package_dir: Option<&Path>,
+    fallback_search_root: Option<&Path>,
 ) -> Option<PathBuf> {
     if let Some(destination) = find_binary_at_path(binary_path, binary_name) {
         return Some(destination);
     }
 
-    let prefix_root = binary_path.parent()?.parent()?;
+    if let Some(destination) = fallback_package_dir
+        .and_then(|package_dir| resolve_package_bin_script(package_dir, package, binary_name))
+        .filter(|path| command_path_exists(path))
+    {
+        return Some(destination);
+    }
+
+    if let Some(destination) =
+        fallback_search_root.and_then(|root| find_named_binary_under_dir(root, binary_name))
+    {
+        return Some(destination);
+    }
+
+    None
+}
+
+fn npm_global_package_dir(prefix_root: &Path, package: &str) -> PathBuf {
     let mut package_dir = prefix_root.join("lib").join("node_modules");
     for segment in npm_package_name(package).split('/') {
         package_dir.push(segment);
     }
-    if let Some(destination) = find_named_binary_under_dir(&package_dir, binary_name) {
-        return Some(destination);
-    }
-
-    search_root.and_then(|root| find_named_binary_under_dir(root, binary_name))
+    package_dir
 }
 
 #[cfg(windows)]
@@ -305,7 +328,6 @@ fn resolve_bun_package_bin_script(
     Some(package_dir.join(relative))
 }
 
-#[cfg(any(windows, test))]
 fn package_bin_relative_path(
     manifest: &serde_json::Value,
     package: &str,
@@ -336,6 +358,17 @@ fn package_bin_relative_path(
         }
         _ => None,
     }
+}
+
+fn resolve_package_bin_script(
+    package_dir: &Path,
+    package: &str,
+    binary_name: &str,
+) -> Option<PathBuf> {
+    let manifest = std::fs::read_to_string(package_dir.join("package.json")).ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).ok()?;
+    let relative = package_bin_relative_path(&manifest, package, binary_name)?;
+    Some(package_dir.join(relative))
 }
 
 #[cfg(windows)]
@@ -455,7 +488,10 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{build_npm_global_recipe, find_binary_at_path, package_bin_relative_path};
+    use super::{
+        build_npm_global_recipe, find_binary_at_path, npm_global_package_dir,
+        package_bin_relative_path, resolve_npm_global_destination, resolve_package_bin_script,
+    };
     use crate::plan_items::NodePackageManager;
 
     #[test]
@@ -573,6 +609,100 @@ mod tests {
         }
 
         assert!(find_binary_at_path(&missing_path, &binary_name).is_none());
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_ignores_unrelated_managed_dir_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        let package_root = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        let unrelated = temp.path().join("stale").join("http-server");
+        std::fs::create_dir_all(unrelated.parent().expect("stale parent"))
+            .expect("create stale parent");
+        std::fs::write(&unrelated, "#!/bin/sh\nexit 0\n").expect("write stale binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&unrelated, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod stale binary");
+        }
+
+        assert!(
+            resolve_npm_global_destination(
+                &binary_path,
+                "http-server@14.1.1",
+                "http-server",
+                None,
+                Some(&package_root),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn npm_global_package_dir_uses_package_name_without_version() {
+        let package_dir =
+            npm_global_package_dir(Path::new("/tmp/prefix"), "@scope/http-server@14.1.1");
+        assert_eq!(
+            package_dir,
+            PathBuf::from("/tmp/prefix/lib/node_modules/@scope/http-server")
+        );
+    }
+
+    #[test]
+    fn resolve_package_bin_script_uses_manifest_instead_of_scanning_package_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_dir = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        std::fs::create_dir_all(package_dir.join("dist")).expect("create package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"http-server","bin":{"http-server":"dist/http-server.js"}}"#,
+        )
+        .expect("write manifest");
+
+        let resolved =
+            resolve_package_bin_script(&package_dir, "http-server@14.1.1", "http-server")
+                .expect("resolved package bin path");
+        assert_eq!(resolved, package_dir.join("dist").join("http-server.js"));
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_rejects_stale_binary_without_manifest_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        let package_dir = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+        let stale = package_dir.join("bin").join("http-server");
+        std::fs::write(&stale, "#!/bin/sh\nexit 0\n").expect("write stale binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod stale binary");
+        }
+
+        assert!(
+            resolve_npm_global_destination(
+                &binary_path,
+                "http-server@14.1.1",
+                "http-server",
+                Some(&package_dir),
+                None,
+            )
+            .is_none()
+        );
     }
 
     fn host_target_triple() -> &'static str {

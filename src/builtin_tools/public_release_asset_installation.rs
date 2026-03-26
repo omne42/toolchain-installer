@@ -205,10 +205,9 @@ async fn download_and_install_mingit_bundle(
         ))
     })?;
     let portable_root = managed_dir.join("git-portable");
-    if portable_root.exists() {
-        fs::remove_dir_all(&portable_root)
-            .map_err(|err| OperationError::install(err.to_string()))?;
-    }
+    let staging_root = managed_dir.join("git-portable.stage");
+    let backup_root = managed_dir.join("git-portable.backup");
+    remove_dir_if_exists(&staging_root)?;
 
     let candidates = build_download_candidates(canonical_url, mirror_prefixes, gateway_candidate);
     let selected = download_and_install_archive_tree(
@@ -216,7 +215,7 @@ async fn download_and_install_mingit_bundle(
         &candidates,
         &ArchiveTreeInstallRequest {
             canonical_url,
-            destination: &portable_root,
+            destination: &staging_root,
             asset_name,
             expected_sha256: Some(expected_sha),
             max_download_bytes,
@@ -224,8 +223,13 @@ async fn download_and_install_mingit_bundle(
     )
     .await
     .map_err(OperationError::from_artifact_install)?;
-    let (extracted_git, matched_archive_path) = discover_mingit_executable(&portable_root)?;
-    write_mingit_launcher(destination, managed_dir, &extracted_git)?;
+    let (staged_git, matched_archive_path) = discover_mingit_executable(&staging_root)?;
+    let relative_git = staged_git.strip_prefix(&staging_root).map_err(|err| {
+        OperationError::install(format!("git executable not under staging dir: {err}"))
+    })?;
+    let final_git = portable_root.join(relative_git);
+    replace_mingit_installation(&portable_root, &staging_root, &backup_root)?;
+    write_mingit_launcher(destination, managed_dir, &final_git)?;
 
     Ok(InstallSource::new(
         selected.url,
@@ -235,6 +239,34 @@ async fn download_and_install_mingit_bundle(
         format: BootstrapArchiveFormat::Zip,
         path: matched_archive_path,
     }))
+}
+
+fn remove_dir_if_exists(path: &Path) -> OperationResult<()> {
+    if path.exists() {
+        fs::remove_dir_all(path).map_err(|err| OperationError::install(err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn replace_mingit_installation(
+    portable_root: &Path,
+    staging_root: &Path,
+    backup_root: &Path,
+) -> OperationResult<()> {
+    remove_dir_if_exists(backup_root)?;
+    if portable_root.exists() {
+        fs::rename(portable_root, backup_root)
+            .map_err(|err| OperationError::install(err.to_string()))?;
+    }
+
+    if let Err(err) = fs::rename(staging_root, portable_root) {
+        if backup_root.exists() {
+            let _ = fs::rename(backup_root, portable_root);
+        }
+        return Err(OperationError::install(err.to_string()));
+    }
+
+    remove_dir_if_exists(backup_root)
 }
 
 const MINGIT_GIT_ENTRY_SUFFIXES: [&str; 4] = [

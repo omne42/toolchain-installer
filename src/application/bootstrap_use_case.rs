@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::{detect_host_platform, executable_suffix_for_target};
 use omne_process_primitives::{
@@ -75,7 +76,9 @@ async fn bootstrap_builtin_tool(
     }
 
     let destination = bootstrap_destination(tool, target_triple, binary_ext, managed_dir);
-    if destination.exists() {
+    let managed_state =
+        assess_managed_bootstrap_state(tool, target_triple, &destination, managed_dir);
+    if let ManagedBootstrapState::ManagedHealthy { detail } = &managed_state {
         return BootstrapItem {
             tool: tool.to_string(),
             status: BootstrapStatus::Installed,
@@ -83,7 +86,7 @@ async fn bootstrap_builtin_tool(
             source_kind: Some(BootstrapSourceKind::Managed),
             archive_match: None,
             destination: Some(destination.display().to_string()),
-            detail: Some("managed binary already exists".to_string()),
+            detail: Some(detail.clone()),
             error_code: None,
             failure_code: None,
         };
@@ -97,6 +100,12 @@ async fn bootstrap_builtin_tool(
                 archive_match,
             } = source;
             let destination = resolved_bootstrap_destination(tool, &destination, source_kind);
+            let detail = match managed_state {
+                ManagedBootstrapState::ManagedBroken { detail } => Some(format!(
+                    "reinstalled after broken managed install: {detail}"
+                )),
+                _ => None,
+            };
             BootstrapItem {
                 tool: tool.to_string(),
                 status: BootstrapStatus::Installed,
@@ -104,33 +113,134 @@ async fn bootstrap_builtin_tool(
                 source_kind: Some(source_kind),
                 archive_match,
                 destination,
-                detail: None,
+                detail,
                 error_code: None,
                 failure_code: None,
             }
         }
         Err(err) => {
-            let status = if is_supported_builtin_tool(tool) {
-                BootstrapStatus::Failed
-            } else {
+            let status = if !is_supported_builtin_tool(tool) {
                 BootstrapStatus::Unsupported
+            } else if matches!(managed_state, ManagedBootstrapState::ManagedBroken { .. }) {
+                BootstrapStatus::Broken
+            } else {
+                BootstrapStatus::Failed
             };
-            let detail = err.detail();
-            let error_code = err.error_code().to_string();
+            let detail = match managed_state {
+                ManagedBootstrapState::ManagedBroken {
+                    detail: broken_detail,
+                } => format!("{broken_detail}; reinstall failed: {}", err.detail()),
+                _ => err.detail(),
+            };
+            let error_code = if status == BootstrapStatus::Broken {
+                "managed_install_broken".to_string()
+            } else {
+                err.error_code().to_string()
+            };
             let exit_code = err.exit_code();
             BootstrapItem {
                 tool: tool.to_string(),
                 status,
-                source: None,
-                source_kind: None,
+                source: (status == BootstrapStatus::Broken).then_some("managed".to_string()),
+                source_kind: (status == BootstrapStatus::Broken)
+                    .then_some(BootstrapSourceKind::Managed),
                 archive_match: None,
                 destination: Some(destination.display().to_string()),
                 detail: Some(detail),
-                error_code: (status == BootstrapStatus::Failed).then_some(error_code),
-                failure_code: (status == BootstrapStatus::Failed).then_some(exit_code),
+                error_code: matches!(status, BootstrapStatus::Broken | BootstrapStatus::Failed)
+                    .then_some(error_code),
+                failure_code: matches!(status, BootstrapStatus::Broken | BootstrapStatus::Failed)
+                    .then_some(exit_code),
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ManagedBootstrapState {
+    NeedsInstall,
+    ManagedHealthy { detail: String },
+    ManagedBroken { detail: String },
+}
+
+pub(crate) fn assess_managed_bootstrap_state(
+    tool: &str,
+    target_triple: &str,
+    destination: &Path,
+    managed_dir: &Path,
+) -> ManagedBootstrapState {
+    if !destination.exists() {
+        return ManagedBootstrapState::NeedsInstall;
+    }
+
+    if tool == "git" && target_triple.contains("windows") {
+        return managed_windows_git_state(managed_dir);
+    }
+
+    if managed_binary_reports_version(destination) {
+        return ManagedBootstrapState::ManagedHealthy {
+            detail: "managed binary passed --version health check".to_string(),
+        };
+    }
+
+    ManagedBootstrapState::ManagedBroken {
+        detail: format!(
+            "managed binary exists at {} but failed --version health check",
+            destination.display()
+        ),
+    }
+}
+
+fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
+    let portable_root = managed_dir.join("git-portable");
+    let candidates = [
+        portable_root
+            .join("PortableGit")
+            .join("cmd")
+            .join("git.exe"),
+        portable_root
+            .join("PortableGit")
+            .join("mingw64")
+            .join("bin")
+            .join("git.exe"),
+        portable_root
+            .join("PortableGit")
+            .join("usr")
+            .join("bin")
+            .join("git.exe"),
+        portable_root
+            .join("PortableGit")
+            .join("bin")
+            .join("git.exe"),
+    ];
+    let Some(executable) = candidates.into_iter().find(|candidate| candidate.exists()) else {
+        return ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git launcher exists but MinGit payload is missing under {}",
+                portable_root.display()
+            ),
+        };
+    };
+
+    ManagedBootstrapState::ManagedHealthy {
+        detail: format!(
+            "managed git launcher points to existing MinGit payload {}",
+            executable.display()
+        ),
+    }
+}
+
+fn managed_binary_reports_version(path: &Path) -> bool {
+    let output = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    output.status.success()
 }
 
 fn bootstrap_destination(

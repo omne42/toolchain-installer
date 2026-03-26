@@ -56,10 +56,13 @@
   - 逗号分隔的 GitHub metadata API base 列表；未设置时默认只使用 `https://api.github.com`。
 - `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES`
   - 逗号分隔的 release 下载镜像前缀；与 `--mirror-prefix` 共同组成候选顺序。
+  - 重复值只按首次出现去重，不会改变显式给定的候选顺序。
 - `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`
   - 逗号分隔的 `uv_tool` 显式索引列表；若这里或 CLI 没有提供任何索引，installer 才会回退到官方 PyPI。
+  - 重复值只按首次出现去重，不会改变显式给定的候选顺序。
 - `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`
   - 逗号分隔的 `uv_python` 备用镜像列表。
+  - 重复值只按首次出现去重，不会改变显式给定的候选顺序。
 - `TOOLCHAIN_INSTALLER_GITHUB_TOKEN`
   - 可选 GitHub token；用于请求 GitHub release metadata API，避免 CI / 共享出口上的匿名限额。若未设置，installer 会回退读取 `GITHUB_TOKEN`。
 - `TOOLCHAIN_INSTALLER_GATEWAY_BASE`
@@ -86,7 +89,7 @@
   "items": [
     {
       "tool": "git",
-      "status": "present|installed|failed|unsupported",
+      "status": "present|installed|broken|failed|unsupported",
       "source": "https://...",
       "source_kind": "gateway|canonical|mirror|managed|system_package|pip|python_mirror|package_index",
       "archive_match": {
@@ -105,6 +108,7 @@
 
 - `download_failed`
 - `install_failed`
+- `managed_install_broken`
 - `usage_error`
 
 ## 退出码
@@ -112,7 +116,7 @@
 - `0`
   - 执行成功；若未开启 `--strict`，允许部分工具失败。
 - `2`
-  - 参数错误、不支持的参数组合，或 plan / `--method` 中出现未知方法名。
+  - 参数错误、不支持的参数组合，plan 中出现未知字段，或 plan / `--method` 中出现未知方法名。
 - `3`
   - 单项调用中的下载或校验失败。
 - `4`
@@ -128,6 +132,7 @@
 - stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
 - `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
+- `broken` 表示检测到已有托管安装存在，但健康检查失败且本次重装也没有修复它；调用方应把它视为失败。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
 - `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。
 

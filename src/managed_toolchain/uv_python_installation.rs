@@ -3,14 +3,12 @@ use std::path::Path;
 use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind};
-use crate::error::OperationResult;
+use crate::error::{OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::bootstrap_item_construction::{
     build_installed_bootstrap_item, build_managed_uv_usage_detail,
 };
-use crate::managed_toolchain::managed_environment_layout::{
-    managed_python_installation_dir, managed_uv_process_env,
-};
+use crate::managed_toolchain::managed_environment_layout::managed_uv_process_env;
 use crate::managed_toolchain::managed_python_executable_discovery::find_managed_python_executable;
 use crate::managed_toolchain::managed_uv_installation::ensure_managed_uv;
 use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidates;
@@ -39,7 +37,17 @@ pub(crate) async fn execute_uv_python_item(
         run_host_recipe(&HostRecipeRequest::new(uv.program.as_os_str(), &args).with_env(&env))
             .map_err(|err| format!("{} failed: {err}", candidate.label.clone()))?;
         let destination = find_managed_python_executable(managed_dir, &item.version, target_triple)
-            .unwrap_or_else(|| managed_python_installation_dir(managed_dir));
+            .ok_or_else(|| {
+                format!(
+                    "{} failed: {}",
+                    candidate.label,
+                    OperationError::install(format!(
+                        "uv python install succeeded but no managed Python executable matching `{}` was found",
+                        item.version
+                    ))
+                    .detail()
+                )
+            })?;
         Ok(build_installed_bootstrap_item(
             &item.id,
             candidate.label,

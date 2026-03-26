@@ -18,6 +18,9 @@ use omne_system_package_primitives::{
     SystemPackageManager, default_system_package_install_recipes_for_os,
 };
 
+use crate::application::bootstrap_use_case::{
+    ManagedBootstrapState, assess_managed_bootstrap_state,
+};
 use crate::builtin_tools::{
     gh_release_asset_suffix_for_target, install_gh_from_public_release,
     install_git_from_public_release, normalize_requested_tools,
@@ -38,6 +41,7 @@ use crate::installer_runtime_config::{
     GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
     PythonMirrorPolicy,
 };
+use crate::managed_toolchain::managed_environment_layout::managed_python_installation_dir;
 use crate::managed_toolchain::managed_root_dir::{
     default_managed_dir_under_data_root, resolve_managed_toolchain_dir,
 };
@@ -152,6 +156,138 @@ fn runtime_config_does_not_prepend_official_package_index_when_explicit_indexes_
     assert_eq!(
         cfg.package_indexes.indexes,
         vec!["https://mirror.example/simple".to_string()]
+    );
+}
+
+#[test]
+fn runtime_config_preserves_explicit_source_order_while_deduping() {
+    if std::env::var_os("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES").is_some()
+        || std::env::var_os("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES").is_some()
+        || std::env::var_os("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS").is_some()
+    {
+        return;
+    }
+    let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
+        mirror_prefixes: vec![
+            "https://mirror-b.example/releases".to_string(),
+            "https://mirror-a.example/releases".to_string(),
+            "https://mirror-b.example/releases".to_string(),
+        ],
+        package_indexes: vec![
+            "https://index-b.example/simple".to_string(),
+            "https://index-a.example/simple".to_string(),
+            "https://index-b.example/simple".to_string(),
+        ],
+        python_install_mirrors: vec![
+            "https://python-b.example".to_string(),
+            "https://python-a.example".to_string(),
+            "https://python-b.example".to_string(),
+        ],
+        ..ExecutionRequest::default()
+    });
+
+    assert_eq!(
+        cfg.download_sources.mirror_prefixes,
+        vec![
+            "https://mirror-b.example/releases".to_string(),
+            "https://mirror-a.example/releases".to_string(),
+        ]
+    );
+    assert_eq!(
+        cfg.package_indexes.indexes,
+        vec![
+            "https://index-b.example/simple".to_string(),
+            "https://index-a.example/simple".to_string(),
+        ]
+    );
+    assert_eq!(
+        cfg.python_mirrors.install_mirrors,
+        vec![
+            "https://python-b.example".to_string(),
+            "https://python-a.example".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn install_plan_contract_rejects_unknown_fields_during_deserialization() {
+    let err = serde_json::from_str::<InstallPlan>(
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "uv", "unexpected": true }
+  ]
+}"#,
+    )
+    .expect_err("unknown fields should fail during deserialization");
+
+    assert!(err.to_string().contains("unexpected"));
+}
+
+#[test]
+fn assess_managed_bootstrap_state_reports_missing_install() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("uv");
+    let state = assess_managed_bootstrap_state(
+        "uv",
+        "x86_64-unknown-linux-gnu",
+        &destination,
+        &managed_dir,
+    );
+    assert_eq!(state, ManagedBootstrapState::NeedsInstall);
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn assess_managed_bootstrap_state_reports_healthy_binary_after_version_check() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("uv");
+    write_executable(
+        &destination,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.1.0"
+  exit 0
+fi
+exit 2
+"#,
+    )
+    .expect("write executable");
+
+    let state = assess_managed_bootstrap_state(
+        "uv",
+        "x86_64-unknown-linux-gnu",
+        &destination,
+        &managed_dir,
+    );
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedHealthy {
+            detail: "managed binary passed --version health check".to_string()
+        }
+    );
+}
+
+#[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_git_launcher_without_payload() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+    std::fs::write(&destination, "@echo off\r\n").expect("write git launcher");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git launcher exists but MinGit payload is missing under {}",
+                managed_dir.join("git-portable").display()
+            )
+        }
     );
 }
 
@@ -549,6 +685,80 @@ async fn install_git_from_public_release_windows_zip_accepts_mingw64_fallback() 
             .join("msys-2.0.dll")
             .exists()
     );
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_git_from_public_release_preserves_existing_install_on_failed_update()
+-> anyhow::Result<()> {
+    let archive_name = "MinGit-2.53.0-busybox-64-bit.zip";
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "v2.53.0.windows.1",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": format!("{base}/asset/{archive_name}"),
+            "digest": format!("sha256:{}", sha256_hex(b"not a zip archive"))
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/git-for-windows/git/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(
+        format!("/asset/{archive_name}"),
+        b"not a zip archive".to_vec(),
+    );
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("git.cmd");
+    let existing_git = tmp
+        .path()
+        .join("git-portable")
+        .join("PortableGit")
+        .join("cmd")
+        .join("git.exe");
+    std::fs::create_dir_all(existing_git.parent().expect("git parent"))?;
+    std::fs::write(&existing_git, b"OLD-GIT")?;
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
+    )?;
+
+    let err =
+        install_git_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+            .await
+            .expect_err("invalid archive should fail");
+    assert!(err.detail().contains("invalid"));
+    assert_eq!(std::fs::read(&existing_git)?, b"OLD-GIT");
+    assert_eq!(
+        std::fs::read_to_string(&destination)?,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n"
+    );
+    assert!(!tmp.path().join("git-portable.stage").exists());
+    assert!(!tmp.path().join("git-portable.backup").exists());
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -1053,6 +1263,159 @@ fn validate_plan_rejects_parent_components_in_destination() {
 }
 
 #[test]
+fn validate_plan_rejects_absolute_destination() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("/tmp/escape".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("absolute destination should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_duplicate_item_ids() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-a.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-b.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("duplicate item ids should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "demo-a".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-a.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("bin/shared-demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "demo-b".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-b.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("bin/shared-demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("destination conflicts should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_equivalent_destinations_after_normalization() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "demo-a".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-a.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("./bin/shared-demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "demo-b".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-b.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("bin/shared-demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("normalized destination conflicts should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
 fn validate_plan_rejects_non_http_release_url() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
@@ -1228,6 +1591,115 @@ exit 2
                 .to_string()
                 .as_str()
         )
+    );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_python_item_returns_real_interpreter_from_installation_dir()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  install_root="$UV_PYTHON_INSTALL_DIR/cpython-3.13.12-linux-x86_64-gnu/bin"
+  mkdir -p "$install_root"
+  cat > "$install_root/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$install_root/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13.12".to_string(),
+        version: "3.13.12".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await?;
+    assert_eq!(result.status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(
+            managed_python_installation_dir(&managed_dir)
+                .join("cpython-3.13.12-linux-x86_64-gnu")
+                .join("bin")
+                .join("python3.13")
+                .display()
+                .to_string()
+                .as_str()
+        )
+    );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_python_item_fails_when_no_matching_interpreter_is_created() -> anyhow::Result<()>
+{
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  mkdir -p "$UV_PYTHON_INSTALL_DIR"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13.12".to_string(),
+        version: "3.13.12".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await
+    .expect_err("missing interpreter should fail");
+    assert_eq!(err.exit_code(), ExitCode::Install);
+    assert!(
+        err.detail()
+            .contains("no managed Python executable matching `3.13.12` was found")
     );
     Ok(())
 }

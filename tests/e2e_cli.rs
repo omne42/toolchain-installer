@@ -97,6 +97,25 @@ fn invalid_plan_file_json_returns_failure() {
 }
 
 #[test]
+fn plan_file_rejects_unknown_fields() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "uv", "unexpected": true }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
+#[test]
 fn strict_mode_fails_when_item_failed() {
     let mut cmd = bootstrap_cmd();
     cmd.args([
@@ -240,11 +259,13 @@ fn max_download_bytes_flag_limits_release_downloads() {
     let handle = spawn_mock_http_server(listener, routes, 1);
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let destination = temp.path().join("demo.bin");
+    let managed_dir = temp.path().join("managed");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
             "--max-download-bytes",
             "4",
             "--method",
@@ -254,8 +275,8 @@ fn max_download_bytes_flag_limits_release_downloads() {
             "--url",
             &format!("http://{addr}/demo.bin"),
             "--destination",
+            "demo.bin",
         ])
-        .arg(&destination)
         .assert()
         .code(3)
         .get_output()
@@ -404,6 +425,63 @@ fn relative_release_destination_is_resolved_under_managed_dir() {
 }
 
 #[test]
+fn absolute_release_destination_returns_usage_exit_code() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args([
+        "--method",
+        "release",
+        "--id",
+        "demo-release",
+        "--url",
+        "http://127.0.0.1:9/demo.tar.gz",
+        "--destination",
+        "/tmp/escape",
+    ])
+    .assert()
+    .code(2);
+}
+
+#[test]
+fn duplicate_plan_item_ids_return_usage_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "release", "url": "https://example.com/a.tar.gz" },
+    { "id": "demo", "method": "release", "url": "https://example.com/b.tar.gz" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
+#[test]
+fn conflicting_plan_destinations_return_usage_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo-a", "method": "release", "url": "https://example.com/a.tar.gz", "destination": "bin/shared-demo" },
+    { "id": "demo-b", "method": "release", "url": "https://example.com/b.tar.gz", "destination": "bin/shared-demo" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
+#[test]
 fn archive_release_json_includes_archive_match() {
     let archive_name = "demo-release.tar.gz";
     let archive_bytes = make_tar_gz_archive(&[(
@@ -471,7 +549,7 @@ fn archive_tree_release_extracts_directory_tree() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
@@ -485,8 +563,8 @@ fn archive_tree_release_extracts_directory_tree() {
             "--url",
             &format!("http://{addr}/{archive_name}"),
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -532,7 +610,7 @@ fn archive_tree_release_extracts_tar_symlinks() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
@@ -546,8 +624,8 @@ fn archive_tree_release_extracts_tar_symlinks() {
             "--url",
             &format!("http://{addr}/{archive_name}"),
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -583,7 +661,7 @@ fn archive_tree_release_extracts_zip_tree_without_top_level_directory() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
@@ -597,8 +675,8 @@ fn archive_tree_release_extracts_zip_tree_without_top_level_directory() {
             "--url",
             &format!("http://{addr}/{archive_name}"),
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -638,7 +716,7 @@ fn archive_tree_release_retries_mirror_after_invalid_canonical_archive() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     std::fs::create_dir_all(&destination).expect("create destination");
     std::fs::write(destination.join("old.txt"), "stale").expect("write stale marker");
 
@@ -657,8 +735,8 @@ fn archive_tree_release_retries_mirror_after_invalid_canonical_archive() {
             "--url",
             &canonical_url,
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -804,6 +882,9 @@ fn npm_global_falls_back_to_installed_package_binary() {
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
 /bin/mkdir -p "$npm_config_prefix/lib/node_modules/http-server/bin"
+/bin/cat > "$npm_config_prefix/lib/node_modules/http-server/package.json" <<'EOF'
+{"name":"http-server","bin":{"http-server":"bin/http-server"}}
+EOF
 /bin/cat > "$npm_config_prefix/lib/node_modules/http-server/bin/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
@@ -847,6 +928,64 @@ EOF
         expected.display().to_string()
     );
     assert!(expected.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_global_does_not_report_success_from_unrelated_stale_binary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+/bin/mkdir -p "$npm_config_prefix"
+exit 0
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let stale_binary = managed_dir.join("stale").join("http-server");
+    if let Some(parent) = stale_binary.parent() {
+        std::fs::create_dir_all(parent).expect("create stale parent");
+    }
+    write_executable(
+        &stale_binary,
+        r#"#!/bin/sh
+echo "stale"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-stale",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert_eq!(
+        std::fs::read_to_string(&stale_binary).expect("read stale"),
+        "#!/bin/sh\necho \"stale\"\n"
+    );
 }
 
 #[cfg(unix)]

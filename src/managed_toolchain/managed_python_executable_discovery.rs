@@ -3,6 +3,8 @@ use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::executable_suffix_for_target;
 
+use super::managed_environment_layout::managed_python_installation_dir;
+
 pub(super) fn find_managed_python_executable(
     managed_dir: &Path,
     version: &str,
@@ -35,7 +37,54 @@ pub(super) fn find_managed_python_executable(
             return Some(path);
         }
     }
-    None
+
+    find_python_under_installation_dir(
+        &managed_python_installation_dir(managed_dir),
+        version,
+        target_triple,
+    )
+}
+
+fn find_python_under_installation_dir(
+    installation_dir: &Path,
+    version: &str,
+    target_triple: &str,
+) -> Option<PathBuf> {
+    if !installation_dir.is_dir() {
+        return None;
+    }
+
+    let ext = executable_suffix_for_target(target_triple);
+    let mut best_match: Option<PathBuf> = None;
+    let mut stack = vec![installation_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_type = entry.file_type().ok()?;
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("python") || !name.ends_with(ext) {
+                continue;
+            }
+            if !executable_reports_python_version(&path, version) {
+                continue;
+            }
+            if best_match.as_ref().is_none_or(|current| path < *current) {
+                best_match = Some(path);
+            }
+        }
+    }
+
+    best_match
 }
 
 fn python_major_minor(version: &str) -> Option<String> {

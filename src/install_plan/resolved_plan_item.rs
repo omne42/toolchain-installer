@@ -507,20 +507,34 @@ fn require_destination(item_id: &str, raw_destination: Option<&str>) -> Installe
 
 fn validate_destination(item_id: &str, raw_destination: &str) -> InstallerResult<PathBuf> {
     let path = PathBuf::from(raw_destination);
-    if path.file_name().is_none() {
+    if path.is_absolute() {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` destination `{raw_destination}` must stay under managed_dir; absolute paths are not allowed"
+        )));
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::ParentDir => {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{item_id}` destination `{raw_destination}` cannot contain `..`"
+                )));
+            }
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{item_id}` destination `{raw_destination}` must stay under managed_dir; absolute paths are not allowed"
+                )));
+            }
+        }
+    }
+    if normalized.file_name().is_none() {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` must include a file name"
         )));
     }
-    if path
-        .components()
-        .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        return Err(InstallerError::usage(format!(
-            "plan item `{item_id}` destination `{raw_destination}` cannot contain `..`"
-        )));
-    }
-    Ok(path)
+    Ok(normalized)
 }
 
 fn reject_disallowed_fields(item_id: &str, fields: &[(&str, Option<&str>)]) -> InstallerResult<()> {
