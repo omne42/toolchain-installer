@@ -1111,7 +1111,8 @@ def phase_workspace_package(binary: Path, workspace: Path) -> None:
     ]
 
     for spec in package_specs:
-        workspace_dir = workspace / f"workspace-package-{spec['id']}"
+        workspace_name = f"workspace-package-{spec['id']}"
+        workspace_dir = workspace / workspace_name
         workspace_dir.mkdir(parents=True, exist_ok=True)
         (workspace_dir / "package.json").write_text(
             json.dumps({"name": f"ti-{spec['id']}", "private": True}, indent=2),
@@ -1121,6 +1122,8 @@ def phase_workspace_package(binary: Path, workspace: Path) -> None:
             binary,
             [
                 "--json",
+                "--managed-dir",
+                str(workspace),
                 "--method",
                 WORKSPACE_PACKAGE_PHASE,
                 "--id",
@@ -1128,7 +1131,7 @@ def phase_workspace_package(binary: Path, workspace: Path) -> None:
                 "--package",
                 spec["package"],
                 "--destination",
-                str(workspace_dir),
+                workspace_name,
                 "--manager",
                 spec["manager"],
             ],

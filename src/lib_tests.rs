@@ -355,7 +355,11 @@ fn assess_managed_bootstrap_state_reports_healthy_windows_git_launcher() {
             detail: format!(
                 "managed git launcher points to healthy MinGit payload {} under {}",
                 managed_dir
-                    .join(Path::new("git-portable/PortableGit/mingw64/bin/git.exe"))
+                    .join("git-portable")
+                    .join("PortableGit")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("git.exe")
                     .display(),
                 managed_dir.join("git-portable").display()
             )
