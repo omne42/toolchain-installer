@@ -555,6 +555,80 @@ async fn install_git_from_public_release_windows_zip_accepts_mingw64_fallback() 
 }
 
 #[tokio::test]
+async fn install_git_from_public_release_preserves_existing_install_on_failed_update()
+-> anyhow::Result<()> {
+    let archive_name = "MinGit-2.53.0-busybox-64-bit.zip";
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "v2.53.0.windows.1",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": format!("{base}/asset/{archive_name}"),
+            "digest": format!("sha256:{}", sha256_hex(b"not a zip archive"))
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/git-for-windows/git/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(
+        format!("/asset/{archive_name}"),
+        b"not a zip archive".to_vec(),
+    );
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("git.cmd");
+    let existing_git = tmp
+        .path()
+        .join("git-portable")
+        .join("PortableGit")
+        .join("cmd")
+        .join("git.exe");
+    std::fs::create_dir_all(existing_git.parent().expect("git parent"))?;
+    std::fs::write(&existing_git, b"OLD-GIT")?;
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
+    )?;
+
+    let err =
+        install_git_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+            .await
+            .expect_err("invalid archive should fail");
+    assert!(err.detail().contains("invalid"));
+    assert_eq!(std::fs::read(&existing_git)?, b"OLD-GIT");
+    assert_eq!(
+        std::fs::read_to_string(&destination)?,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n"
+    );
+    assert!(!tmp.path().join("git-portable.stage").exists());
+    assert!(!tmp.path().join("git-portable.backup").exists());
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
 async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     let archive_name = "uv-x86_64-unknown-linux-gnu.tar.gz";
     let archive_bytes = make_tar_gz_archive(&[(
