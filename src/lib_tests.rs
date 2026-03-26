@@ -878,6 +878,7 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     let base = format!("http://{addr}");
     let release_body = serde_json::json!({
         "tag_name": "0.11.0",
+        "body": "x".repeat(20 * 1024),
         "assets": [{
             "name": archive_name,
             "browser_download_url": format!("{base}/asset/{archive_name}"),

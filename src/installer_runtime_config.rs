@@ -1,8 +1,6 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use github_kit::GitHubApiRequestOptions;
-
 use crate::contracts::ExecutionRequest;
 
 pub(crate) const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
@@ -80,12 +78,6 @@ impl GitHubReleasePolicy {
             api_bases: github_api_bases,
             token: github_token,
         }
-    }
-
-    pub(crate) fn api_request_options(&self) -> GitHubApiRequestOptions<'_> {
-        GitHubApiRequestOptions::new()
-            .with_bearer_token(self.token.as_deref())
-            .with_user_agent("toolchain-installer")
     }
 }
 
