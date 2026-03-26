@@ -107,16 +107,16 @@ pub(crate) async fn install_git_from_public_release(
     })?;
     let gateway = gateway_candidate_for_git_release_asset(cfg, &release.tag_name, &asset.name);
     if target_triple.contains("windows") {
-        return download_and_install_mingit_bundle(
+        return download_and_install_mingit_bundle(MingitBundleInstallRequest {
             client,
-            &asset.browser_download_url,
-            &asset.name,
-            &cfg.download_sources.mirror_prefixes,
-            gateway.as_deref(),
+            canonical_url: &asset.browser_download_url,
+            asset_name: &asset.name,
+            mirror_prefixes: &cfg.download_sources.mirror_prefixes,
+            gateway_candidate: gateway.as_deref(),
             destination,
-            &expected_sha,
-            cfg.download.max_download_bytes,
-        )
+            expected_sha: &expected_sha,
+            max_download_bytes: cfg.download.max_download_bytes,
+        })
         .await;
     }
 
@@ -188,16 +188,30 @@ pub(crate) fn gh_release_asset_suffix_for_target(target_triple: &str) -> Option<
     }
 }
 
-async fn download_and_install_mingit_bundle(
-    client: &reqwest::Client,
-    canonical_url: &str,
-    asset_name: &str,
-    mirror_prefixes: &[String],
-    gateway_candidate: Option<&str>,
-    destination: &Path,
-    expected_sha: &Sha256Digest,
+struct MingitBundleInstallRequest<'a> {
+    client: &'a reqwest::Client,
+    canonical_url: &'a str,
+    asset_name: &'a str,
+    mirror_prefixes: &'a [String],
+    gateway_candidate: Option<&'a str>,
+    destination: &'a Path,
+    expected_sha: &'a Sha256Digest,
     max_download_bytes: Option<u64>,
+}
+
+async fn download_and_install_mingit_bundle(
+    request: MingitBundleInstallRequest<'_>,
 ) -> OperationResult<InstallSource> {
+    let MingitBundleInstallRequest {
+        client,
+        canonical_url,
+        asset_name,
+        mirror_prefixes,
+        gateway_candidate,
+        destination,
+        expected_sha,
+        max_download_bytes,
+    } = request;
     let managed_dir = destination.parent().ok_or_else(|| {
         OperationError::install(format!(
             "cannot determine managed dir for {}",

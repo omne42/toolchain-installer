@@ -26,7 +26,7 @@ impl CliExitCode for ExitCode {
 }
 
 #[derive(Debug)]
-pub struct InstallerError(CliError<ExitCode>);
+pub struct InstallerError(Box<CliError<ExitCode>>);
 
 impl InstallerError {
     pub fn usage(message: impl Into<String>) -> Self {
@@ -42,7 +42,7 @@ impl InstallerError {
     }
 
     fn new(exit_code: ExitCode, message: impl Into<String>) -> Self {
-        Self(build_error(exit_code, message))
+        Self(Box::new(build_error(exit_code, message)))
     }
 
     pub fn exit_code(&self) -> ExitCode {
@@ -66,22 +66,22 @@ impl Display for InstallerError {
 
 impl StdError for InstallerError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        Some(&self.0)
+        Some(self.0.as_ref())
     }
 }
 
 pub type InstallerResult<T> = std::result::Result<T, InstallerError>;
 
 #[derive(Debug)]
-pub(crate) struct OperationError(CliError<ExitCode>);
+pub(crate) struct OperationError(Box<CliError<ExitCode>>);
 
 impl OperationError {
     pub(crate) fn download(message: impl Into<String>) -> Self {
-        Self(build_error(ExitCode::Download, message))
+        Self(Box::new(build_error(ExitCode::Download, message)))
     }
 
     pub(crate) fn install(message: impl Into<String>) -> Self {
-        Self(build_error(ExitCode::Install, message))
+        Self(Box::new(build_error(ExitCode::Install, message)))
     }
 
     pub(crate) fn from_artifact_install(err: ArtifactInstallError) -> Self {
@@ -125,7 +125,7 @@ impl Display for OperationError {
 
 impl StdError for OperationError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        Some(&self.0)
+        Some(self.0.as_ref())
     }
 }
 
