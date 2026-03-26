@@ -248,7 +248,7 @@ fn remove_dir_if_exists(path: &Path) -> OperationResult<()> {
     Ok(())
 }
 
-fn replace_mingit_installation(
+pub(crate) fn replace_mingit_installation(
     portable_root: &Path,
     staging_root: &Path,
     backup_root: &Path,
@@ -266,7 +266,8 @@ fn replace_mingit_installation(
         return Err(OperationError::install(err.to_string()));
     }
 
-    remove_dir_if_exists(backup_root)
+    let _ = remove_dir_if_exists(backup_root);
+    Ok(())
 }
 
 const MINGIT_GIT_ENTRY_SUFFIXES: [&str; 4] = [
