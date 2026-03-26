@@ -139,15 +139,16 @@ def run_installer_json(
     env: dict[str, str] | None = None,
     attempts: int = 1,
 ) -> dict:
+    command_args = args if args and args[0] == "bootstrap" else ["bootstrap", *args]
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            completed = run_command([binary, *args], env=env)
+            completed = run_command([binary, *command_args], env=env)
             try:
                 return json.loads(completed.stdout)
             except json.JSONDecodeError as err:
                 raise SmokeError(
-                    f"installer output is not valid json for args {args}: {err}\n"
+                    f"installer output is not valid json for args {command_args}: {err}\n"
                     f"stdout:\n{completed.stdout}\n"
                     f"stderr:\n{completed.stderr}"
                 ) from err
@@ -1300,7 +1301,7 @@ def phase_go_install(binary: Path, workspace: Path) -> None:
 
 
 def detect_target_triple(binary: Path) -> str:
-    result = run_installer_json(binary, ["--json", "--method", "unknown", "--id", "probe"])
+    result = run_installer_json(binary, ["--json", "--tool", "probe-tool"])
     target_triple = result.get("target_triple")
     if not isinstance(target_triple, str) or not target_triple:
         raise SmokeError(f"cannot determine target triple from installer output: {result}")

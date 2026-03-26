@@ -163,7 +163,10 @@ pub(crate) fn validate_destination(
     }
 
     let path = PathBuf::from(raw_destination);
-    if path.is_absolute() && windows_kind != WindowsDestinationKind::Absolute {
+    if raw_destination.starts_with('/')
+        || path.is_absolute()
+        || windows_kind == WindowsDestinationKind::Absolute
+    {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
         )));
@@ -304,6 +307,12 @@ mod tests {
     #[test]
     fn validate_destination_rejects_unix_absolute_path() {
         let err = validate_destination("demo", "/tmp/demo").expect_err("should reject");
+        assert!(err.to_string().contains("cannot be an absolute path"));
+    }
+
+    #[test]
+    fn validate_destination_rejects_windows_absolute_path() {
+        let err = validate_destination("demo", "C:\\tools\\demo.exe").expect_err("should reject");
         assert!(err.to_string().contains("cannot be an absolute path"));
     }
 

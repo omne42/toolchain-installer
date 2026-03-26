@@ -316,7 +316,11 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
         ManagedBootstrapState::ManagedBroken {
             detail: format!(
                 "managed git payload is missing required runtime {}",
-                payload.join("msys-2.0.dll").display()
+                managed_dir
+                    .join(Path::new(
+                        "git-portable/PortableGit/mingw64/bin/msys-2.0.dll"
+                    ))
+                    .display()
             )
         }
     );
@@ -348,7 +352,9 @@ fn assess_managed_bootstrap_state_reports_healthy_windows_git_launcher() {
         ManagedBootstrapState::ManagedHealthy {
             detail: format!(
                 "managed git launcher points to healthy MinGit payload {} under {}",
-                payload.join("git.exe").display(),
+                managed_dir
+                    .join(Path::new("git-portable/PortableGit/mingw64/bin/git.exe"))
+                    .display(),
                 managed_dir.join("git-portable").display()
             )
         }
@@ -1808,7 +1814,7 @@ fn public_validate_install_plan_stays_structure_only_without_managed_dir_context
         ],
     };
 
-    crate::validate_install_plan(&plan, Some("x86_64-unknown-linux-gnu"))
+    crate::validate_install_plan(&plan, None)
         .expect("public validator should not guess managed_dir-dependent conflicts");
 }
 
