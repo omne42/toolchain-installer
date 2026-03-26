@@ -2,89 +2,93 @@ use std::path::{Path, PathBuf};
 
 use omne_host_info_primitives::executable_suffix_for_target;
 
-use crate::contracts::InstallPlanItem;
-
-use super::plan_method::PlanMethod;
+use crate::plan_items::{CargoInstallPlanItem, ReleasePlanItem, ResolvedPlanItem, UvToolPlanItem};
 
 pub(crate) fn effective_destination_for_item(
-    item: &InstallPlanItem,
+    item: &ResolvedPlanItem,
     target_triple: &str,
     managed_dir: &Path,
 ) -> Option<PathBuf> {
-    match PlanMethod::classify(item).unwrap_or(PlanMethod::Unknown) {
-        PlanMethod::Release => Some(resolve_release_destination(
+    match item {
+        ResolvedPlanItem::Release(item) => Some(resolve_release_destination(
             item,
             target_triple,
             managed_dir,
         )),
-        PlanMethod::ArchiveTreeRelease => Some(resolve_archive_tree_destination(item, managed_dir)),
-        PlanMethod::CargoInstall => Some(resolve_cargo_install_destination(
+        ResolvedPlanItem::ArchiveTreeRelease(item) => Some(
+            item.destination
+                .as_deref()
+                .map(|destination| resolve_destination_path(destination, managed_dir))
+                .unwrap_or_else(|| managed_dir.join(&item.id)),
+        ),
+        ResolvedPlanItem::CargoInstall(item) => Some(resolve_cargo_install_destination(
             item,
             target_triple,
             managed_dir,
         )),
-        PlanMethod::WorkspacePackage => item
-            .destination
-            .as_deref()
-            .map(|raw| resolve_destination_path(raw, managed_dir)),
-        _ => item
-            .destination
-            .as_ref()
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute()),
+        ResolvedPlanItem::Uv(_) => {
+            Some(managed_dir.join(format!("uv{}", executable_suffix_for_target(target_triple))))
+        }
+        ResolvedPlanItem::UvTool(item) => Some(resolve_uv_tool_destination(
+            item,
+            target_triple,
+            managed_dir,
+        )),
+        ResolvedPlanItem::WorkspacePackage(item) => {
+            Some(resolve_destination_path(&item.destination, managed_dir))
+        }
+        _ => None,
     }
 }
 
 pub(crate) fn resolve_release_destination(
-    item: &InstallPlanItem,
+    item: &ReleasePlanItem,
     target_triple: &str,
     managed_dir: &Path,
 ) -> PathBuf {
-    let binary_name = item
-        .binary_name
-        .clone()
-        .unwrap_or_else(|| format!("{}{}", item.id, executable_suffix_for_target(target_triple)));
-    if let Some(raw_destination) = item.destination.as_deref() {
-        return resolve_destination_path(raw_destination, managed_dir);
+    if let Some(destination) = item.destination.as_deref() {
+        return resolve_destination_path(destination, managed_dir);
     }
-    managed_dir.join(binary_name)
+    managed_dir.join(resolve_release_binary_name(item, target_triple))
 }
 
-pub(crate) fn resolve_archive_tree_destination(
-    item: &InstallPlanItem,
-    managed_dir: &Path,
-) -> PathBuf {
-    if let Some(raw_destination) = item.destination.as_deref() {
-        return resolve_destination_path(raw_destination, managed_dir);
-    }
-    managed_dir.join(&item.id)
+pub(crate) fn resolve_release_binary_name(item: &ReleasePlanItem, target_triple: &str) -> String {
+    item.binary_name
+        .clone()
+        .unwrap_or_else(|| format!("{}{}", item.id, executable_suffix_for_target(target_triple)))
 }
 
 pub(crate) fn resolve_cargo_install_destination(
-    item: &InstallPlanItem,
+    item: &CargoInstallPlanItem,
     target_triple: &str,
     managed_dir: &Path,
 ) -> PathBuf {
-    let binary_name = item
-        .binary_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(item.id.as_str());
     managed_dir
         .parent()
         .unwrap_or(managed_dir)
         .join("bin")
         .join(format!(
-            "{binary_name}{}",
+            "{}{}",
+            item.binary_name,
             executable_suffix_for_target(target_triple)
         ))
 }
 
-fn resolve_destination_path(raw_destination: &str, managed_dir: &Path) -> PathBuf {
-    let path = PathBuf::from(raw_destination.trim());
+pub(crate) fn resolve_uv_tool_destination(
+    item: &UvToolPlanItem,
+    target_triple: &str,
+    managed_dir: &Path,
+) -> PathBuf {
+    managed_dir.join(format!(
+        "{}{}",
+        item.binary_name,
+        executable_suffix_for_target(target_triple)
+    ))
+}
+
+fn resolve_destination_path(path: &Path, managed_dir: &Path) -> PathBuf {
     if path.is_absolute() {
-        return path;
+        return path.to_path_buf();
     }
     managed_dir.join(path)
 }

@@ -1,23 +1,22 @@
-use std::fs::{self, File};
-use std::io::Cursor;
+use std::fs;
 use std::path::{Path, PathBuf};
 
+use github_kit::{GitHubReleaseAsset, fetch_latest_release};
+use omne_artifact_install_primitives::{
+    ArchiveTreeInstallRequest, BinaryArchiveInstallRequest, InstalledArchiveBinary,
+    download_and_install_archive_tree, download_and_install_binary_from_archive,
+};
 use omne_fs_primitives::{AtomicWriteOptions, write_file_atomically};
-use omne_integrity_primitives::parse_sha256_digest;
-use omne_integrity_primitives::{Sha256Digest, verify_sha256_reader};
-use zip::ZipArchive;
+use omne_integrity_primitives::{Sha256Digest, parse_sha256_digest};
 
-use crate::contracts::{BootstrapArchiveFormat, BootstrapArchiveMatch, InstallSource};
+use crate::artifact::InstallSource;
+use crate::contracts::{BootstrapArchiveFormat, BootstrapArchiveMatch};
+use crate::download_sources::{
+    build_download_candidates, result_source_kind_for_download_candidate,
+};
 use crate::error::{OperationError, OperationResult};
-use crate::installation::archive_binary::{
-    InstalledArchiveDownload, download_and_install_binary_from_archive,
-};
+use crate::external_gateway::gateway_candidate_for_git_release_asset;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
-use crate::source_acquisition::{
-    DownloadOptions, GithubReleaseAsset, build_download_candidates,
-    download_candidate_to_writer_with_options, fetch_latest_github_release,
-    make_gateway_asset_candidate, result_source_kind_for_download_candidate,
-};
 
 pub(crate) async fn install_gh_from_public_release(
     target_triple: &str,
@@ -31,9 +30,15 @@ pub(crate) async fn install_gh_from_public_release(
             "gh public recipe unsupported on target `{target_triple}`"
         ))
     })?;
-    let release = fetch_latest_github_release(client, &cfg.github_api_bases, "cli/cli")
-        .await
-        .map_err(|err| OperationError::download(err.to_string()))?;
+    let request_options = cfg.github_releases.api_request_options();
+    let release = fetch_latest_release(
+        client,
+        &cfg.github_releases.api_bases,
+        "cli/cli",
+        request_options,
+    )
+    .await
+    .map_err(|err| OperationError::download(err.to_string()))?;
     let asset = release
         .assets
         .iter()
@@ -43,21 +48,28 @@ pub(crate) async fn install_gh_from_public_release(
         })?;
     let expected_sha = parse_sha256_digest(asset.digest.as_deref())
         .ok_or_else(|| OperationError::download("missing sha256 digest in gh release metadata"))?;
+    let candidates = build_download_candidates(
+        &asset.browser_download_url,
+        &cfg.download_sources.mirror_prefixes,
+        None,
+    );
     let downloaded = download_and_install_binary_from_archive(
         client,
-        &asset.browser_download_url,
-        &cfg.mirror_prefixes,
-        None,
-        destination,
-        &asset.name,
-        &format!("gh{binary_ext}"),
-        "gh",
-        Some(&format!("bin/gh{binary_ext}")),
-        Some(&expected_sha),
-        cfg.max_download_bytes,
+        &candidates,
+        &BinaryArchiveInstallRequest {
+            canonical_url: &asset.browser_download_url,
+            destination,
+            asset_name: &asset.name,
+            binary_name: &format!("gh{binary_ext}"),
+            tool_name: "gh",
+            archive_binary_hint: Some(&format!("bin/gh{binary_ext}")),
+            expected_sha256: Some(&expected_sha),
+            max_download_bytes: cfg.download.max_download_bytes,
+        },
     )
-    .await?;
-    let InstalledArchiveDownload {
+    .await
+    .map_err(OperationError::from_artifact_install)?;
+    let InstalledArchiveBinary {
         source,
         archive_match,
     } = downloaded;
@@ -74,9 +86,15 @@ pub(crate) async fn install_git_from_public_release(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
-    let release = fetch_latest_github_release(client, &cfg.github_api_bases, "git-for-windows/git")
-        .await
-        .map_err(|err| OperationError::download(err.to_string()))?;
+    let request_options = cfg.github_releases.api_request_options();
+    let release = fetch_latest_release(
+        client,
+        &cfg.github_releases.api_bases,
+        "git-for-windows/git",
+        request_options,
+    )
+    .await
+    .map_err(|err| OperationError::download(err.to_string()))?;
     let asset = select_mingit_release_asset_for_target(&release.assets, target_triple).ok_or_else(
         || {
             OperationError::download(format!(
@@ -87,41 +105,43 @@ pub(crate) async fn install_git_from_public_release(
     let expected_sha = parse_sha256_digest(asset.digest.as_deref()).ok_or_else(|| {
         OperationError::download("missing sha256 digest in git-for-windows release metadata")
     })?;
-    let gateway = if cfg.use_gateway_for_git_release() {
-        cfg.gateway_base
-            .as_deref()
-            .map(|base| make_gateway_asset_candidate(base, "git", &release.tag_name, &asset.name))
-    } else {
-        None
-    };
+    let gateway = gateway_candidate_for_git_release_asset(cfg, &release.tag_name, &asset.name);
     if target_triple.contains("windows") {
         return download_and_install_mingit_bundle(
             client,
             &asset.browser_download_url,
-            &cfg.mirror_prefixes,
+            &asset.name,
+            &cfg.download_sources.mirror_prefixes,
             gateway.as_deref(),
             destination,
             &expected_sha,
-            cfg.max_download_bytes,
+            cfg.download.max_download_bytes,
         )
         .await;
     }
 
+    let candidates = build_download_candidates(
+        &asset.browser_download_url,
+        &cfg.download_sources.mirror_prefixes,
+        gateway.as_deref(),
+    );
     let downloaded = download_and_install_binary_from_archive(
         client,
-        &asset.browser_download_url,
-        &cfg.mirror_prefixes,
-        gateway.as_deref(),
-        destination,
-        &asset.name,
-        "git.exe",
-        "git",
-        None,
-        Some(&expected_sha),
-        cfg.max_download_bytes,
+        &candidates,
+        &BinaryArchiveInstallRequest {
+            canonical_url: &asset.browser_download_url,
+            destination,
+            asset_name: &asset.name,
+            binary_name: "git.exe",
+            tool_name: "git",
+            archive_binary_hint: None,
+            expected_sha256: Some(&expected_sha),
+            max_download_bytes: cfg.download.max_download_bytes,
+        },
     )
-    .await?;
-    let InstalledArchiveDownload {
+    .await
+    .map_err(OperationError::from_artifact_install)?;
+    let InstalledArchiveBinary {
         source,
         archive_match,
     } = downloaded;
@@ -133,9 +153,9 @@ pub(crate) async fn install_git_from_public_release(
 }
 
 pub(crate) fn select_mingit_release_asset_for_target<'a>(
-    assets: &'a [GithubReleaseAsset],
+    assets: &'a [GitHubReleaseAsset],
     target_triple: &str,
-) -> Option<&'a GithubReleaseAsset> {
+) -> Option<&'a GitHubReleaseAsset> {
     match target_triple {
         "x86_64-pc-windows-msvc" => assets
             .iter()
@@ -171,55 +191,13 @@ pub(crate) fn gh_release_asset_suffix_for_target(target_triple: &str) -> Option<
 async fn download_and_install_mingit_bundle(
     client: &reqwest::Client,
     canonical_url: &str,
+    asset_name: &str,
     mirror_prefixes: &[String],
     gateway_candidate: Option<&str>,
     destination: &Path,
     expected_sha: &Sha256Digest,
     max_download_bytes: Option<u64>,
 ) -> OperationResult<InstallSource> {
-    let candidates = build_download_candidates(canonical_url, mirror_prefixes, gateway_candidate);
-    let mut errors = Vec::new();
-    for candidate in candidates {
-        let mut archive_bytes = Vec::new();
-        let download_result = download_candidate_to_writer_with_options(
-            client,
-            &candidate,
-            &mut archive_bytes,
-            DownloadOptions {
-                max_bytes: max_download_bytes,
-            },
-        )
-        .await;
-        if let Err(err) = download_result {
-            errors.push(format!(
-                "{}:{} -> {err}",
-                candidate.kind.label(),
-                candidate.url
-            ));
-            continue;
-        }
-
-        let mut reader = Cursor::new(&archive_bytes);
-        verify_sha256_reader(&mut reader, expected_sha)
-            .map_err(|err| OperationError::download(err.to_string()))?;
-        let archive_match = install_mingit_bundle_from_zip_bytes(&archive_bytes, destination)?;
-        return Ok(InstallSource::new(
-            candidate.url,
-            result_source_kind_for_download_candidate(candidate.kind),
-        )
-        .with_archive_match(archive_match));
-    }
-
-    Err(OperationError::download(format!(
-        "all download candidates failed for {canonical_url}: {}",
-        errors.join(" | ")
-    )))
-}
-
-fn install_mingit_bundle_from_zip_bytes(
-    archive_bytes: &[u8],
-    destination: &Path,
-) -> OperationResult<BootstrapArchiveMatch> {
     let managed_dir = destination.parent().ok_or_else(|| {
         OperationError::install(format!(
             "cannot determine managed dir for {}",
@@ -231,68 +209,32 @@ fn install_mingit_bundle_from_zip_bytes(
         fs::remove_dir_all(&portable_root)
             .map_err(|err| OperationError::install(err.to_string()))?;
     }
-    fs::create_dir_all(&portable_root).map_err(|err| OperationError::install(err.to_string()))?;
 
-    let mut archive = ZipArchive::new(Cursor::new(archive_bytes))
-        .map_err(|err| OperationError::install(err.to_string()))?;
-    let mut extracted_git: Option<(usize, PathBuf)> = None;
-    let mut matched_archive_path: Option<(usize, String)> = None;
-
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|err| OperationError::install(err.to_string()))?;
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| {
-                OperationError::install(format!("unsafe archive entry path at index {index}"))
-            })?
-            .to_path_buf();
-        let output_path = portable_root.join(&enclosed);
-        if entry.is_dir() {
-            fs::create_dir_all(&output_path)
-                .map_err(|err| OperationError::install(err.to_string()))?;
-            continue;
-        }
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| OperationError::install(err.to_string()))?;
-        }
-        let mut file =
-            File::create(&output_path).map_err(|err| OperationError::install(err.to_string()))?;
-        std::io::copy(&mut entry, &mut file)
-            .map_err(|err| OperationError::install(err.to_string()))?;
-
-        let normalized = enclosed.to_string_lossy().replace('\\', "/");
-        if let Some(priority) = mingit_git_entry_priority(&normalized) {
-            let should_replace = extracted_git
-                .as_ref()
-                .map(|(current_priority, _)| priority < *current_priority)
-                .unwrap_or(true);
-            if should_replace {
-                extracted_git = Some((priority, output_path));
-                matched_archive_path = Some((priority, normalized));
-            }
-        }
-    }
-
-    let (_, extracted_git) = extracted_git.ok_or_else(|| {
-        OperationError::install(format!(
-            "git executable not found in MinGit archive; expected one of: {}",
-            MINGIT_GIT_ENTRY_SUFFIXES
-                .iter()
-                .map(|path| format!("`{}`", path.trim_start_matches('/')))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-    })?;
-    let (_, matched_archive_path) =
-        matched_archive_path.expect("matched path set with extracted git");
+    let candidates = build_download_candidates(canonical_url, mirror_prefixes, gateway_candidate);
+    let selected = download_and_install_archive_tree(
+        client,
+        &candidates,
+        &ArchiveTreeInstallRequest {
+            canonical_url,
+            destination: &portable_root,
+            asset_name,
+            expected_sha256: Some(expected_sha),
+            max_download_bytes,
+        },
+    )
+    .await
+    .map_err(OperationError::from_artifact_install)?;
+    let (extracted_git, matched_archive_path) = discover_mingit_executable(&portable_root)?;
     write_mingit_launcher(destination, managed_dir, &extracted_git)?;
 
-    Ok(BootstrapArchiveMatch {
+    Ok(InstallSource::new(
+        selected.url,
+        result_source_kind_for_download_candidate(selected.kind),
+    )
+    .with_archive_match(BootstrapArchiveMatch {
         format: BootstrapArchiveFormat::Zip,
         path: matched_archive_path,
-    })
+    }))
 }
 
 const MINGIT_GIT_ENTRY_SUFFIXES: [&str; 4] = [
@@ -306,6 +248,61 @@ fn mingit_git_entry_priority(path: &str) -> Option<usize> {
     MINGIT_GIT_ENTRY_SUFFIXES
         .iter()
         .position(|suffix| path.ends_with(suffix))
+}
+
+fn discover_mingit_executable(portable_root: &Path) -> OperationResult<(PathBuf, String)> {
+    let mut best_match: Option<(usize, String, PathBuf)> = None;
+    let mut stack = vec![portable_root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir).map_err(|err| OperationError::install(err.to_string()))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| OperationError::install(err.to_string()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|err| OperationError::install(err.to_string()))?;
+            let path = entry.path();
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let relative = path.strip_prefix(portable_root).map_err(|err| {
+                OperationError::install(format!(
+                    "portable git path is not under extracted root: {err}"
+                ))
+            })?;
+            let normalized = relative.to_string_lossy().replace('\\', "/");
+            let Some(priority) = mingit_git_entry_priority(&normalized) else {
+                continue;
+            };
+            let should_replace = best_match
+                .as_ref()
+                .map(|(current_priority, current_path, _)| {
+                    priority < *current_priority
+                        || (priority == *current_priority && normalized < *current_path)
+                })
+                .unwrap_or(true);
+            if should_replace {
+                best_match = Some((priority, normalized, path));
+            }
+        }
+    }
+
+    let (_, matched_archive_path, extracted_git) = best_match.ok_or_else(|| {
+        OperationError::install(format!(
+            "git executable not found in MinGit archive; expected one of: {}",
+            MINGIT_GIT_ENTRY_SUFFIXES
+                .iter()
+                .map(|path| format!("`{}`", path.trim_start_matches('/')))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })?;
+    Ok((extracted_git, matched_archive_path))
 }
 
 fn write_mingit_launcher(

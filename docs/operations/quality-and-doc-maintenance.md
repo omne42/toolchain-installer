@@ -39,6 +39,18 @@ CI 另外会在 GitHub-hosted Linux、macOS、Windows runner 上调用 `scripts/
 - `examples/*.json`
   - 作为可执行参考输入，和文档一起维护。
 
+## Git Hooks
+
+- 仓库提供 `.githooks/pre-commit`，用于检查 `docs/architecture/source-layout.md` 是否与当前 `src/` 的真实源码树双向一致，并校验顶层模块依赖方向。
+- 安装方式：
+  - `git config core.hooksPath .githooks`
+- hook 实际调用：
+  - `cargo run --quiet --locked --manifest-path tools/source-layout-check/Cargo.toml -- --staged`
+- `--staged` 语义意味着 hook 校验的是即将提交的 index 快照，不是未暂存的工作树；源码增删或 `source-layout.md` 更新都必须一起 `git add`。
+- `source-layout.md` 中所有顶层 `src/*/` 目录条目必须按字母序排列，不能按主观重要性或语义分组打乱顺序。
+- 检查失败时，hook 会显性披露缺失的 `src/...` 文件路径、文档中残留的失效 `src/...` 条目、顶层目录集合不一致、目录顺序错误，以及违反架构方向的模块依赖，而不是静默放过结构漂移。
+- Rust 检查器源码位于 `tools/source-layout-check/`；它不依赖 installer 主 crate，承担源码布局与顶层依赖方向的一致性校验。
+
 ## 同步更新规则
 
 - CLI 参数、输出字段或退出码变化时，更新 `docs/contracts/cli-surface.md`。

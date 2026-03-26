@@ -1,4 +1,4 @@
-use super::{BootstrapArchiveMatch, BootstrapSourceKind};
+use crate::contracts::{BootstrapArchiveMatch, BootstrapSourceKind};
 
 #[derive(Debug, Clone)]
 pub(crate) struct InstallSource {

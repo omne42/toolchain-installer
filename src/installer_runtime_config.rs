@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use github_kit::GitHubApiRequestOptions;
+
 use crate::contracts::BootstrapRequest;
 
 pub(crate) const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
@@ -9,55 +11,132 @@ pub(crate) const DEFAULT_PYPI_INDEX: &str = "https://pypi.org/simple";
 
 #[derive(Debug, Clone)]
 pub(crate) struct InstallerRuntimeConfig {
-    pub(crate) github_api_bases: Vec<String>,
+    pub(crate) github_releases: GitHubReleasePolicy,
+    pub(crate) download_sources: DownloadSourcePolicy,
+    pub(crate) package_indexes: PackageIndexPolicy,
+    pub(crate) python_mirrors: PythonMirrorPolicy,
+    pub(crate) gateway: GatewayRoutingPolicy,
+    pub(crate) download: DownloadPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GitHubReleasePolicy {
+    pub(crate) api_bases: Vec<String>,
+    pub(crate) token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DownloadSourcePolicy {
     pub(crate) mirror_prefixes: Vec<String>,
-    pub(crate) package_indexes: Vec<String>,
-    pub(crate) python_install_mirrors: Vec<String>,
-    pub(crate) gateway_base: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PackageIndexPolicy {
+    pub(crate) indexes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PythonMirrorPolicy {
+    pub(crate) install_mirrors: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GatewayRoutingPolicy {
+    pub(crate) base: Option<String>,
     pub(crate) country: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DownloadPolicy {
     pub(crate) http_timeout: Duration,
     pub(crate) max_download_bytes: Option<u64>,
 }
 
 impl InstallerRuntimeConfig {
     pub(crate) fn from_request(request: &BootstrapRequest) -> Self {
+        Self {
+            github_releases: GitHubReleasePolicy::from_request(),
+            download_sources: DownloadSourcePolicy::from_request(request),
+            package_indexes: PackageIndexPolicy::from_request(request),
+            python_mirrors: PythonMirrorPolicy::from_request(request),
+            gateway: GatewayRoutingPolicy::from_request(request),
+            download: DownloadPolicy::from_request(request),
+        }
+    }
+}
+
+impl GitHubReleasePolicy {
+    fn from_request() -> Self {
         let github_api_bases = parse_csv_env("TOOLCHAIN_INSTALLER_GITHUB_API_BASES");
         let github_api_bases = if github_api_bases.is_empty() {
             vec![DEFAULT_GITHUB_API_BASE.to_string()]
         } else {
             github_api_bases
         };
+        let github_token = parse_nonempty_env("TOOLCHAIN_INSTALLER_GITHUB_TOKEN")
+            .or_else(|| parse_nonempty_env("GITHUB_TOKEN"));
 
+        Self {
+            api_bases: github_api_bases,
+            token: github_token,
+        }
+    }
+
+    pub(crate) fn api_request_options(&self) -> GitHubApiRequestOptions<'_> {
+        GitHubApiRequestOptions::new()
+            .with_bearer_token(self.token.as_deref())
+            .with_user_agent("toolchain-installer")
+    }
+}
+
+impl DownloadSourcePolicy {
+    fn from_request(request: &BootstrapRequest) -> Self {
         let mut mirror_prefixes = parse_csv_env("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES");
         for prefix in &request.mirror_prefixes {
             if !prefix.trim().is_empty() {
                 mirror_prefixes.push(prefix.trim().to_string());
             }
         }
-        let mut unique = BTreeSet::new();
-        mirror_prefixes.retain(|value| unique.insert(value.clone()));
 
-        let mut package_indexes = vec![DEFAULT_PYPI_INDEX.to_string()];
-        package_indexes.extend(parse_csv_env("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES"));
+        Self {
+            mirror_prefixes: dedupe_strings(mirror_prefixes),
+        }
+    }
+}
+
+impl PackageIndexPolicy {
+    fn from_request(request: &BootstrapRequest) -> Self {
+        let mut indexes = parse_csv_env("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES");
         for index in &request.package_indexes {
             if !index.trim().is_empty() {
-                package_indexes.push(index.trim().to_string());
+                indexes.push(index.trim().to_string());
             }
         }
-        let mut unique = BTreeSet::new();
-        package_indexes.retain(|value| unique.insert(value.clone()));
+        let mut indexes = dedupe_strings(indexes);
+        if indexes.is_empty() {
+            indexes.push(DEFAULT_PYPI_INDEX.to_string());
+        }
+        Self { indexes }
+    }
+}
 
-        let mut python_install_mirrors =
-            parse_csv_env("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS");
+impl PythonMirrorPolicy {
+    fn from_request(request: &BootstrapRequest) -> Self {
+        let mut install_mirrors = parse_csv_env("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS");
         for mirror in &request.python_install_mirrors {
             if !mirror.trim().is_empty() {
-                python_install_mirrors.push(mirror.trim().to_string());
+                install_mirrors.push(mirror.trim().to_string());
             }
         }
-        let mut unique = BTreeSet::new();
-        python_install_mirrors.retain(|value| unique.insert(value.clone()));
+        Self {
+            install_mirrors: dedupe_strings(install_mirrors),
+        }
+    }
+}
 
-        let gateway_base = request
+impl GatewayRoutingPolicy {
+    fn from_request(request: &BootstrapRequest) -> Self {
+        let base = request
             .gateway_base
             .as_ref()
             .map(|value| value.trim().to_string())
@@ -81,6 +160,16 @@ impl InstallerRuntimeConfig {
                     .filter(|value| !value.is_empty())
             });
 
+        Self { base, country }
+    }
+
+    pub(crate) fn use_for_git_release(&self) -> bool {
+        self.base.is_some() && self.country.as_deref() == Some("CN")
+    }
+}
+
+impl DownloadPolicy {
+    fn from_request(request: &BootstrapRequest) -> Self {
         let http_timeout = std::env::var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS")
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
@@ -93,20 +182,18 @@ impl InstallerRuntimeConfig {
             .or_else(|| parse_positive_u64_env("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES"));
 
         Self {
-            github_api_bases,
-            mirror_prefixes,
-            package_indexes,
-            python_install_mirrors,
-            gateway_base,
-            country,
             http_timeout,
             max_download_bytes,
         }
     }
+}
 
-    pub(crate) fn use_gateway_for_git_release(&self) -> bool {
-        self.gateway_base.is_some() && self.country.as_deref() == Some("CN")
-    }
+fn dedupe_strings(values: Vec<String>) -> Vec<String> {
+    let mut unique = BTreeSet::new();
+    values
+        .into_iter()
+        .filter(|value| unique.insert(value.clone()))
+        .collect()
 }
 
 fn parse_csv_env(name: &str) -> Vec<String> {
@@ -127,4 +214,11 @@ fn parse_positive_u64_env(name: &str) -> Option<u64> {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
+}
+
+fn parse_nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|value| !value.is_empty())
 }

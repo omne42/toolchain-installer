@@ -1,7 +1,7 @@
 use omne_archive_primitives::{ArchiveBinaryMatch, BinaryArchiveFormat};
 use serde::Serialize;
 
-use crate::error::{ExitCode, error_code_label};
+use crate::error::ExitCode;
 
 pub const OUTPUT_SCHEMA_VERSION: u32 = 1;
 
@@ -96,6 +96,7 @@ pub(crate) fn build_failed_bootstrap_item(
     tool: String,
     destination: Option<String>,
     detail: impl Into<String>,
+    error_code: impl Into<String>,
     failure_code: ExitCode,
 ) -> BootstrapItem {
     BootstrapItem {
@@ -106,7 +107,7 @@ pub(crate) fn build_failed_bootstrap_item(
         archive_match: None,
         destination,
         detail: Some(detail.into()),
-        error_code: Some(error_code_label(failure_code).to_string()),
+        error_code: Some(error_code.into()),
         failure_code: Some(failure_code),
     }
 }

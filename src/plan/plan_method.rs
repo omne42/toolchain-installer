@@ -1,4 +1,18 @@
-use crate::contracts::InstallPlanItem;
+pub(crate) const SUPPORTED_PLAN_METHODS: &[&str] = &[
+    "release",
+    "archive_tree_release",
+    "system_package",
+    "apt",
+    "pip",
+    "npm_global",
+    "workspace_package",
+    "cargo_install",
+    "rustup_component",
+    "go_install",
+    "uv",
+    "uv_python",
+    "uv_tool",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ManagedToolchainMethod {
@@ -24,11 +38,6 @@ pub(crate) enum PlanMethod {
 }
 
 impl PlanMethod {
-    pub(crate) fn classify(item: &InstallPlanItem) -> Option<Self> {
-        let normalized = normalize_plan_method(&item.method)?;
-        Some(Self::from_normalized(&normalized))
-    }
-
     pub(crate) fn from_normalized(normalized: &str) -> Self {
         match normalized {
             "release" => Self::Release,

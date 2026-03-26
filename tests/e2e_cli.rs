@@ -6,11 +6,17 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::thread;
 
+fn bootstrap_cmd() -> assert_cmd::Command {
+    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    cmd.arg("bootstrap");
+    cmd
+}
+
 #[test]
 fn bootstrap_with_unknown_tool_returns_unsupported_status() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
-        .args(["bootstrap", "--json", "--tool", "custom-tool"])
+        .args(["--json", "--tool", "custom-tool"])
         .assert()
         .success()
         .get_output()
@@ -24,22 +30,15 @@ fn bootstrap_with_unknown_tool_returns_unsupported_status() {
 }
 
 #[test]
-fn direct_method_with_unknown_strategy_returns_unsupported_status() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
-    let output = cmd
-        .args(["--json", "--method", "unknown", "--id", "demo"])
+fn direct_method_with_unknown_strategy_returns_usage_exit_code() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--json", "--method", "unknown", "--id", "demo"])
         .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let json: Value = serde_json::from_slice(&output).expect("valid json");
-    assert_eq!(json["items"][0]["tool"], "demo");
-    assert_eq!(json["items"][0]["status"], "unsupported");
+        .code(2);
 }
 
 #[test]
-fn plan_file_path_executes_without_network() {
+fn plan_file_rejects_unknown_method_without_network() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("plan.json");
     std::fs::write(
@@ -53,18 +52,11 @@ fn plan_file_path_executes_without_network() {
     )
     .expect("write plan");
 
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
-    let output = cmd
-        .args(["--json", "--plan-file"])
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--json", "--plan-file"])
         .arg(&plan_path)
         .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let json: Value = serde_json::from_slice(&output).expect("valid json");
-    assert_eq!(json["items"][0]["tool"], "demo");
-    assert_eq!(json["items"][0]["status"], "unsupported");
+        .code(2);
 }
 
 #[test]
@@ -73,7 +65,7 @@ fn method_and_plan_file_conflict_returns_failure() {
     let plan_path = temp.path().join("plan.json");
     std::fs::write(&plan_path, r#"{"schema_version":1,"items":[]}"#).expect("write plan");
 
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args(["--method", "pip", "--id", "demo", "--plan-file"])
         .arg(&plan_path)
         .assert()
@@ -82,13 +74,13 @@ fn method_and_plan_file_conflict_returns_failure() {
 
 #[test]
 fn method_without_id_returns_failure() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args(["--method", "pip"]).assert().code(2);
 }
 
 #[test]
 fn missing_plan_file_returns_failure() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args(["--plan-file", "/tmp/not-exist-plan-file.json"])
         .assert()
         .code(2);
@@ -100,13 +92,13 @@ fn invalid_plan_file_json_returns_failure() {
     let plan_path = temp.path().join("broken-plan.json");
     std::fs::write(&plan_path, "{ invalid").expect("write plan");
 
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
 }
 
 #[test]
 fn strict_mode_fails_when_item_failed() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--json",
         "--strict",
@@ -124,8 +116,8 @@ fn strict_mode_fails_when_item_failed() {
 }
 
 #[test]
-fn strict_mode_allows_unsupported_without_failure() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+fn strict_mode_unknown_method_still_returns_usage_exit_code() {
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--json",
         "--strict",
@@ -135,7 +127,7 @@ fn strict_mode_allows_unsupported_without_failure() {
         "unsupported-demo",
     ])
     .assert()
-    .success();
+    .code(2);
 }
 
 #[test]
@@ -144,11 +136,11 @@ fn default_managed_dir_uses_home_omne_data_layout() {
     let fake_home = temp.path().join("home");
     std::fs::create_dir_all(&fake_home).expect("create fake home");
 
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("HOME", &fake_home)
         .env("USERPROFILE", &fake_home)
-        .args(["--json", "--method", "unknown", "--id", "demo"])
+        .args(["--json", "--tool", "custom-tool"])
         .assert()
         .success()
         .get_output()
@@ -176,12 +168,12 @@ fn omne_data_dir_env_overrides_home_default_layout() {
     std::fs::create_dir_all(&fake_home).expect("create fake home");
     std::fs::create_dir_all(&omne_data_dir).expect("create omne root");
 
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("HOME", &fake_home)
         .env("USERPROFILE", &fake_home)
         .env("OMNE_DATA_DIR", &omne_data_dir)
-        .args(["--json", "--method", "unknown", "--id", "demo"])
+        .args(["--json", "--tool", "custom-tool"])
         .assert()
         .success()
         .get_output()
@@ -202,9 +194,9 @@ fn omne_data_dir_env_overrides_home_default_layout() {
 
 #[test]
 fn default_bootstrap_json_shape_contains_target_and_items() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
-        .args(["bootstrap", "--json"])
+        .args(["--json"])
         .assert()
         .success()
         .get_output()
@@ -219,7 +211,7 @@ fn default_bootstrap_json_shape_contains_target_and_items() {
 
 #[test]
 fn single_item_download_failure_uses_download_exit_code() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -249,7 +241,7 @@ fn max_download_bytes_flag_limits_release_downloads() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let destination = temp.path().join("demo.bin");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -282,9 +274,9 @@ fn max_download_bytes_flag_limits_release_downloads() {
 }
 
 fn non_host_target_triple() -> String {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
-        .args(["--json", "--method", "unknown", "--id", "host-probe"])
+        .args(["--json", "--tool", "custom-tool"])
         .assert()
         .success()
         .get_output()
@@ -309,7 +301,7 @@ fn non_host_target_triple() -> String {
 #[test]
 fn cross_target_host_bound_method_returns_usage_exit_code() {
     let target = non_host_target_triple();
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--json",
         "--target-triple",
@@ -328,15 +320,15 @@ fn cross_target_host_bound_method_returns_usage_exit_code() {
 #[test]
 fn bootstrap_rejects_cross_target_override() {
     let target = non_host_target_triple();
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
-    cmd.args(["bootstrap", "--target-triple", &target, "--tool", "git"])
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--target-triple", &target, "--tool", "git"])
         .assert()
         .code(2);
 }
 
 #[test]
 fn single_item_install_failure_uses_install_exit_code() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -373,7 +365,7 @@ fn unsupported_plan_schema_returns_usage_exit_code() {
     )
     .expect("write plan");
 
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
 }
 
@@ -381,7 +373,7 @@ fn unsupported_plan_schema_returns_usage_exit_code() {
 fn relative_release_destination_is_resolved_under_managed_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -428,7 +420,7 @@ fn archive_release_json_includes_archive_match() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -480,7 +472,7 @@ fn archive_tree_release_extracts_directory_tree() {
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
     let destination = temp.path().join("tree");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -541,7 +533,7 @@ fn archive_tree_release_extracts_tar_symlinks() {
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
     let destination = temp.path().join("tree");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -592,7 +584,7 @@ fn archive_tree_release_extracts_zip_tree_without_top_level_directory() {
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
     let destination = temp.path().join("tree");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -625,9 +617,67 @@ fn archive_tree_release_extracts_zip_tree_without_top_level_directory() {
 }
 
 #[test]
+fn archive_tree_release_retries_mirror_after_invalid_canonical_archive() {
+    let archive_name = "demo-tree-retry.zip";
+    let valid_archive = make_zip_archive(&[
+        ("bin/demo.exe", b"MZ".as_slice(), 0o755),
+        ("LICENSE", b"demo-license\n".as_slice(), 0o644),
+    ]);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let base = format!("http://{addr}");
+    let canonical_url = format!("{base}/{archive_name}");
+    let mirror_prefix = format!("{base}/mirror/");
+    let mirror_path = format!("/mirror/{canonical_url}");
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/{archive_name}"), b"not a zip archive".to_vec());
+    routes.insert(mirror_path, valid_archive);
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    let destination = temp.path().join("tree");
+    std::fs::create_dir_all(&destination).expect("create destination");
+    std::fs::write(destination.join("old.txt"), "stale").expect("write stale marker");
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--mirror-prefix",
+            &mirror_prefix,
+            "--method",
+            "archive_tree_release",
+            "--id",
+            "demo-tree-retry",
+            "--url",
+            &canonical_url,
+            "--destination",
+        ])
+        .arg(&destination)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source_kind"], "mirror");
+    assert!(!destination.join("old.txt").exists());
+    assert!(destination.join("bin/demo.exe").exists());
+    assert!(destination.join("LICENSE").exists());
+
+    handle.join().expect("mock server thread join");
+}
+
+#[test]
 fn archive_tree_release_allows_cross_target() {
     let target = non_host_target_triple();
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--json",
         "--target-triple",
@@ -645,7 +695,7 @@ fn archive_tree_release_allows_cross_target() {
 
 #[test]
 fn pip_rejects_destination_field() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--method",
         "pip",
@@ -662,7 +712,7 @@ fn pip_rejects_destination_field() {
 
 #[test]
 fn workspace_package_requires_destination_field() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--method",
         "workspace_package",
@@ -677,7 +727,7 @@ fn workspace_package_requires_destination_field() {
 
 #[test]
 fn npm_global_rejects_destination_field() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--method",
         "npm_global",
@@ -712,7 +762,7 @@ EOF
     );
 
     let managed_dir = temp.path().join("custom-npm-prefix");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("PATH", &fake_bin_dir)
         .args([
@@ -763,7 +813,7 @@ EOF
     );
 
     let managed_dir = temp.path().join("custom-npm-prefix");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("PATH", &fake_bin_dir)
         .args([
@@ -823,7 +873,7 @@ EOF
     );
 
     let managed_dir = temp.path().join("custom-pnpm-home");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("PATH", &fake_bin_dir)
         .args([
@@ -882,7 +932,7 @@ EOF
     );
 
     let managed_dir = temp.path().join("custom-bun-root");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("PATH", &fake_bin_dir)
         .args([
@@ -936,7 +986,7 @@ EOF
     );
 
     let managed_dir = temp.path().join("custom-bun-root");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("PATH", &fake_bin_dir)
         .args([
@@ -1003,7 +1053,7 @@ EOF
     );
 
     let managed_dir = temp.path().join("custom-managed");
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .env("PATH", &fake_bin_dir)
         .args([
@@ -1036,7 +1086,7 @@ EOF
 
 #[test]
 fn apt_rejects_non_apt_manager() {
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     cmd.args([
         "--method",
         "apt",
@@ -1085,7 +1135,7 @@ exit 2
 "#,
     );
 
-    let mut cmd = cargo_bin_cmd!("toolchain-installer");
+    let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
@@ -1116,6 +1166,151 @@ exit 2
         json["items"][0]["destination"],
         managed_dir.join("python3.13").display().to_string()
     );
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[test]
+fn uv_tool_method_accepts_binary_name_and_explicit_package_index() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir).expect("managed dir");
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  echo "$UV_DEFAULT_INDEX" > "$UV_TOOL_BIN_DIR/index.log"
+  mkdir -p "$UV_TOOL_BIN_DIR"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "ruff-lsp 0.1.0"
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS", "1")
+        .env_remove("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES")
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--package-index",
+            &index,
+            "--method",
+            "uv_tool",
+            "--id",
+            "ruff-lsp-installer",
+            "--package",
+            "ruff-lsp",
+            "--binary-name",
+            "ruff-lsp",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source"], format!("package-index:{index}"));
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir.join("ruff-lsp").display().to_string()
+    );
+    assert_eq!(
+        std::fs::read_to_string(managed_dir.join("index.log"))
+            .expect("read explicit index log")
+            .trim(),
+        index
+    );
+    assert!(managed_dir.join("ruff-lsp").exists());
+
+    handle.join().expect("mock server thread join");
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[test]
+fn uv_tool_method_fails_when_managed_binary_is_missing() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir).expect("managed dir");
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS", "1")
+        .env_remove("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES")
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--package-index",
+            &index,
+            "--method",
+            "uv_tool",
+            "--id",
+            "ruff-lsp-installer",
+            "--package",
+            "ruff-lsp",
+            "--binary-name",
+            "ruff-lsp",
+        ])
+        .assert()
+        .code(4)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir.join("ruff-lsp").display().to_string()
+    );
+    assert!(
+        json["items"][0]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("expected managed binary")
+    );
+
+    handle.join().expect("mock server thread join");
 }
 
 fn write_executable(path: &Path, body: &str) {

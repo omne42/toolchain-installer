@@ -24,6 +24,7 @@
 这个仓库采用“短入口 + 分层事实文档”的文档系统。先看这些文件：
 
 - `AGENTS.md`：执行者地图
+- `docs/README.md`：文档入口
 - `docs/docs-system-map.md`：文档系统入口与维护规则
 - `docs/architecture/system-boundaries.md`：系统边界
 - `docs/architecture/source-layout.md`：源码布局

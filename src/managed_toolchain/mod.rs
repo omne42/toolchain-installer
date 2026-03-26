@@ -5,30 +5,32 @@ pub(crate) mod managed_root_dir;
 mod managed_uv_installation;
 mod source_candidate_attempts;
 mod uv_installation_source_candidates;
+mod uv_public_release_installation;
 mod uv_python_installation;
 mod uv_tool_installation;
 
 use std::path::Path;
 
-use crate::contracts::{BootstrapItem, InstallPlanItem};
+use crate::contracts::BootstrapItem;
 use crate::error::OperationResult;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
-use crate::plan::plan_method::ManagedToolchainMethod;
+use crate::plan_items::ResolvedPlanItem;
+
+pub(crate) use uv_public_release_installation::install_uv_from_public_release;
 
 pub(crate) async fn execute_managed_toolchain_item(
-    method: ManagedToolchainMethod,
-    item: &InstallPlanItem,
+    item: &ResolvedPlanItem,
     target_triple: &str,
     managed_dir: &Path,
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<BootstrapItem> {
-    match method {
-        ManagedToolchainMethod::Uv => {
+    match item {
+        ResolvedPlanItem::Uv(item) => {
             managed_uv_installation::execute_uv_item(item, target_triple, managed_dir, cfg, client)
                 .await
         }
-        ManagedToolchainMethod::UvPython => {
+        ResolvedPlanItem::UvPython(item) => {
             uv_python_installation::execute_uv_python_item(
                 item,
                 target_triple,
@@ -38,7 +40,7 @@ pub(crate) async fn execute_managed_toolchain_item(
             )
             .await
         }
-        ManagedToolchainMethod::UvTool => {
+        ResolvedPlanItem::UvTool(item) => {
             uv_tool_installation::execute_uv_tool_item(
                 item,
                 target_triple,
@@ -48,6 +50,7 @@ pub(crate) async fn execute_managed_toolchain_item(
             )
             .await
         }
+        _ => unreachable!("non-managed plan item routed to managed_toolchain execution"),
     }
 }
 

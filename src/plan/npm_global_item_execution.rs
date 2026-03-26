@@ -1,17 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use crate::contracts::{BootstrapItem, BootstrapStatus, InstallPlanItem};
-use crate::error::{OperationError, OperationResult};
-use crate::platform::process_runner::{
-    command_path_exists, resolve_command_for_execution, run_recipe_with_env,
+use omne_process_primitives::{
+    HostRecipeRequest, command_path_exists, resolve_command_path, run_host_recipe,
 };
 
-#[derive(Clone, Copy)]
-enum NpmManager {
-    Npm,
-    Pnpm,
-    Bun,
-}
+use crate::contracts::{BootstrapItem, BootstrapStatus};
+use crate::error::{OperationError, OperationResult};
+use crate::plan_items::{NodePackageManager, NpmGlobalPlanItem};
 
 struct NpmGlobalRecipe {
     program: String,
@@ -22,41 +17,35 @@ struct NpmGlobalRecipe {
 }
 
 pub(crate) fn execute_npm_global_item(
-    item: &InstallPlanItem,
+    item: &NpmGlobalPlanItem,
     target_triple: &str,
     managed_dir: &Path,
 ) -> OperationResult<BootstrapItem> {
-    let manager = parse_manager(item.manager.as_deref())?;
-    let package = resolve_versioned_package(item)?;
-    let binary_name = item
-        .binary_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(item.id.as_str());
-
     let recipe = build_npm_global_recipe(
-        manager,
-        package.clone(),
-        binary_name,
+        item.manager,
+        item.package_spec.clone(),
+        &item.binary_name,
         target_triple,
         managed_dir,
     )?;
-    run_recipe_with_env(recipe.program.as_ref(), &recipe.args, &recipe.env)?;
+    run_host_recipe(
+        &HostRecipeRequest::new(recipe.program.as_ref(), &recipe.args).with_env(&recipe.env),
+    )
+    .map_err(OperationError::from_host_recipe)?;
 
     let destination = match resolve_npm_global_destination(
         &recipe.binary_path,
-        &package,
-        binary_name,
+        &item.package_spec,
+        &item.binary_name,
         Some(managed_dir),
     ) {
         Some(destination) => destination,
         None => create_windows_bun_global_launcher(
-            manager,
+            item.manager,
             &recipe.program,
             managed_dir,
-            &package,
-            binary_name,
+            &item.package_spec,
+            &item.binary_name,
         )?
         .ok_or_else(|| {
             OperationError::install(format!(
@@ -86,48 +75,15 @@ pub(crate) fn execute_npm_global_item(
     })
 }
 
-fn parse_manager(raw: Option<&str>) -> OperationResult<NpmManager> {
-    match raw.map(str::trim).filter(|value| !value.is_empty()) {
-        None => Ok(NpmManager::Npm),
-        Some("npm") => Ok(NpmManager::Npm),
-        Some("pnpm") => Ok(NpmManager::Pnpm),
-        Some("bun") => Ok(NpmManager::Bun),
-        Some(value) => Err(OperationError::install(format!(
-            "unsupported npm_global manager `{value}`"
-        ))),
-    }
-}
-
-fn resolve_versioned_package(item: &InstallPlanItem) -> OperationResult<String> {
-    let package = item
-        .package
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OperationError::install("npm_global method requires `package`"))?;
-    let version = item
-        .version
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if let Some(version) = version {
-        if package.contains('@') || package.starts_with("file:") {
-            return Ok(package.to_string());
-        }
-        return Ok(format!("{package}@{version}"));
-    }
-    Ok(package.to_string())
-}
-
 fn build_npm_global_recipe(
-    manager: NpmManager,
+    manager: NodePackageManager,
     package: String,
     binary_name: &str,
     target_triple: &str,
     managed_dir: &Path,
 ) -> OperationResult<NpmGlobalRecipe> {
     match manager {
-        NpmManager::Npm => {
+        NodePackageManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
             let binary_path = if target_triple.contains("windows") {
                 prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
@@ -135,7 +91,9 @@ fn build_npm_global_recipe(
                 prefix_root.join("bin").join(binary_name)
             };
             Ok(NpmGlobalRecipe {
-                program: resolve_command_for_execution("npm"),
+                program: resolve_command_path("npm")
+                    .and_then(|path| path.into_os_string().into_string().ok())
+                    .unwrap_or_else(|| "npm".to_string()),
                 args: vec![
                     "install".to_string(),
                     "--global".to_string(),
@@ -151,11 +109,13 @@ fn build_npm_global_recipe(
                 source: "npm:npm".to_string(),
             })
         }
-        NpmManager::Pnpm => {
+        NodePackageManager::Pnpm => {
             let binary_path =
                 managed_dir.join(global_binary_filename(binary_name, manager, target_triple));
             Ok(NpmGlobalRecipe {
-                program: resolve_command_for_execution("pnpm"),
+                program: resolve_command_path("pnpm")
+                    .and_then(|path| path.into_os_string().into_string().ok())
+                    .unwrap_or_else(|| "pnpm".to_string()),
                 args: vec!["add".to_string(), "--global".to_string(), package],
                 env: vec![
                     ("PNPM_HOME".to_string(), managed_dir.display().to_string()),
@@ -165,13 +125,15 @@ fn build_npm_global_recipe(
                 source: "npm:pnpm".to_string(),
             })
         }
-        NpmManager::Bun => {
+        NodePackageManager::Bun => {
             let global_dir = managed_dir.join("install").join("global");
             let binary_dir = managed_dir.join("bin");
             let binary_path =
                 binary_dir.join(global_binary_filename(binary_name, manager, target_triple));
             Ok(NpmGlobalRecipe {
-                program: resolve_command_for_execution("bun"),
+                program: resolve_command_path("bun")
+                    .and_then(|path| path.into_os_string().into_string().ok())
+                    .unwrap_or_else(|| "bun".to_string()),
                 args: vec!["add".to_string(), "--global".to_string(), package],
                 env: vec![
                     (
@@ -232,13 +194,13 @@ fn resolve_npm_global_destination(
 
 #[cfg(windows)]
 fn create_windows_bun_global_launcher(
-    manager: NpmManager,
+    manager: NodePackageManager,
     bun_program: &str,
     managed_dir: &Path,
     package: &str,
     binary_name: &str,
 ) -> OperationResult<Option<PathBuf>> {
-    if !matches!(manager, NpmManager::Bun) {
+    if !matches!(manager, NodePackageManager::Bun) {
         return Ok(None);
     }
 
@@ -280,7 +242,7 @@ fn create_windows_bun_global_launcher(
 
 #[cfg(not(windows))]
 fn create_windows_bun_global_launcher(
-    _manager: NpmManager,
+    _manager: NodePackageManager,
     _bun_program: &str,
     _managed_dir: &Path,
     _package: &str,
@@ -435,10 +397,14 @@ fn prepend_path_env(path: &Path) -> OperationResult<String> {
     Ok(joined.to_string_lossy().into_owned())
 }
 
-fn global_binary_filename(binary_name: &str, manager: NpmManager, target_triple: &str) -> String {
+fn global_binary_filename(
+    binary_name: &str,
+    manager: NodePackageManager,
+    target_triple: &str,
+) -> String {
     if target_triple.contains("windows") {
         let extension = match manager {
-            NpmManager::Npm | NpmManager::Pnpm | NpmManager::Bun => ".cmd",
+            NodePackageManager::Npm | NodePackageManager::Pnpm | NodePackageManager::Bun => ".cmd",
         };
         return format!("{binary_name}{extension}");
     }
@@ -489,15 +455,14 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{
-        NpmManager, build_npm_global_recipe, find_binary_at_path, package_bin_relative_path,
-    };
+    use super::{build_npm_global_recipe, find_binary_at_path, package_bin_relative_path};
+    use crate::plan_items::NodePackageManager;
 
     #[test]
     fn pnpm_recipe_prepends_pnpm_home_to_path() {
         let managed_dir = std::env::temp_dir().join("ti-pnpm-home");
         let recipe = build_npm_global_recipe(
-            NpmManager::Pnpm,
+            NodePackageManager::Pnpm,
             "http-server@14.1.1".to_string(),
             "http-server",
             host_target_triple(),
@@ -524,7 +489,7 @@ mod tests {
     fn bun_recipe_configures_global_and_bin_dirs() {
         let managed_dir = std::env::temp_dir().join("ti-bun-root");
         let recipe = build_npm_global_recipe(
-            NpmManager::Bun,
+            NodePackageManager::Bun,
             "http-server@14.1.1".to_string(),
             "http-server",
             host_target_triple(),

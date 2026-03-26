@@ -1,13 +1,13 @@
+mod artifact;
 mod bootstrap;
 mod contracts;
+mod download_sources;
 mod error;
-mod installation;
+mod external_gateway;
 mod installer_runtime_config;
 mod managed_toolchain;
 mod plan;
-mod platform;
-mod source_acquisition;
-mod uv;
+mod plan_items;
 
 pub use bootstrap::builtin_tools::bootstrap;
 pub use contracts::{

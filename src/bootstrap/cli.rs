@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -111,13 +110,6 @@ impl BootstrapArgs {
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Reusable toolchain bootstrap installer")]
-struct LegacyCli {
-    #[command(flatten)]
-    args: BootstrapArgs,
-}
-
-#[derive(Parser, Debug)]
-#[command(version, about = "Reusable toolchain bootstrap installer")]
 struct RootCli {
     #[command(subcommand)]
     command: Commands,
@@ -129,7 +121,10 @@ enum Commands {
 }
 
 pub(crate) async fn run() -> Result<(), InstallerError> {
-    let args = parse_bootstrap_args();
+    let cli = RootCli::parse();
+    let args = match cli.command {
+        Commands::Bootstrap(args) => args,
+    };
     let request = args.build_request();
     let result = if args.method.is_some() {
         let plan = args.build_direct_plan()?;
@@ -181,19 +176,4 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
         std::process::exit(code.as_i32());
     }
     Ok(())
-}
-
-fn parse_bootstrap_args() -> BootstrapArgs {
-    let argv: Vec<OsString> = std::env::args_os().collect();
-    if matches!(
-        argv.get(1).and_then(|value| value.to_str()),
-        Some("bootstrap")
-    ) {
-        let cli = RootCli::parse_from(argv);
-        match cli.command {
-            Commands::Bootstrap(args) => args,
-        }
-    } else {
-        LegacyCli::parse_from(argv).args
-    }
 }

@@ -1,44 +1,25 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DownloadCandidateKind {
-    Gateway,
-    Canonical,
-    Mirror,
-}
+use omne_artifact_install_primitives::{ArtifactDownloadCandidate, ArtifactDownloadCandidateKind};
 
-impl DownloadCandidateKind {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Gateway => "gateway",
-            Self::Canonical => "canonical",
-            Self::Mirror => "mirror",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DownloadCandidate {
-    pub(crate) url: String,
-    pub(crate) kind: DownloadCandidateKind,
-}
+use crate::contracts::BootstrapSourceKind;
 
 pub(crate) fn build_download_candidates(
     canonical_url: &str,
     mirror_prefixes: &[String],
     gateway_candidate: Option<&str>,
-) -> Vec<DownloadCandidate> {
+) -> Vec<ArtifactDownloadCandidate> {
     let mut out = Vec::new();
     if let Some(gateway) = gateway_candidate {
         let trimmed = gateway.trim();
         if !trimmed.is_empty() {
-            out.push(DownloadCandidate {
+            out.push(ArtifactDownloadCandidate {
                 url: trimmed.to_string(),
-                kind: DownloadCandidateKind::Gateway,
+                kind: ArtifactDownloadCandidateKind::Gateway,
             });
         }
     }
-    out.push(DownloadCandidate {
+    out.push(ArtifactDownloadCandidate {
         url: canonical_url.to_string(),
-        kind: DownloadCandidateKind::Canonical,
+        kind: ArtifactDownloadCandidateKind::Canonical,
     });
     for raw_prefix in mirror_prefixes {
         let prefix = raw_prefix.trim();
@@ -51,13 +32,23 @@ pub(crate) fn build_download_candidates(
             format!("{prefix}{canonical_url}")
         };
         if !out.iter().any(|value| value.url == candidate) {
-            out.push(DownloadCandidate {
+            out.push(ArtifactDownloadCandidate {
                 url: candidate,
-                kind: DownloadCandidateKind::Mirror,
+                kind: ArtifactDownloadCandidateKind::Mirror,
             });
         }
     }
     out
+}
+
+pub(crate) fn result_source_kind_for_download_candidate(
+    kind: ArtifactDownloadCandidateKind,
+) -> BootstrapSourceKind {
+    match kind {
+        ArtifactDownloadCandidateKind::Gateway => BootstrapSourceKind::Gateway,
+        ArtifactDownloadCandidateKind::Canonical => BootstrapSourceKind::Canonical,
+        ArtifactDownloadCandidateKind::Mirror => BootstrapSourceKind::Mirror,
+    }
 }
 
 #[cfg(test)]

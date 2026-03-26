@@ -1,39 +1,35 @@
-use crate::contracts::{BootstrapItem, BootstrapStatus, InstallPlanItem};
-use crate::error::{OperationError, OperationResult};
-use crate::platform::process_runner::{resolve_command_path, run_recipe};
+use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
+
+use crate::contracts::{BootstrapItem, BootstrapStatus};
+use crate::error::OperationResult;
+use crate::plan_items::RustupComponentPlanItem;
 
 pub(crate) fn execute_rustup_component_item(
-    item: &InstallPlanItem,
+    item: &RustupComponentPlanItem,
     _target_triple: &str,
     _managed_dir: &std::path::Path,
 ) -> OperationResult<BootstrapItem> {
-    let component = item
-        .package
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OperationError::install("rustup_component method requires `package`"))?;
     let args = vec![
         "component".to_string(),
         "add".to_string(),
-        component.to_string(),
+        item.component.to_string(),
     ];
-    run_recipe("rustup", &args)?;
+    run_host_recipe(&HostRecipeRequest::new("rustup".as_ref(), &args))
+        .map_err(crate::error::OperationError::from_host_recipe)?;
 
     let destination = item
         .binary_name
         .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
         .and_then(resolve_command_path)
         .or_else(|| {
-            find_rustup_component_binary(component).and_then(|binary| resolve_command_path(&binary))
+            find_rustup_component_binary(&item.component)
+                .and_then(|binary| resolve_command_path(&binary))
         });
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
-        source: Some(format!("rustup:component:{component}")),
+        source: Some(format!("rustup:component:{}", item.component)),
         source_kind: None,
         archive_match: None,
         destination: destination.map(|path| path.display().to_string()),

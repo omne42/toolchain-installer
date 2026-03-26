@@ -1,21 +1,25 @@
 use std::path::{Path, PathBuf};
 
 use omne_host_info_primitives::{
-    detect_host_target_triple, executable_suffix_for_target, resolve_target_triple,
+    detect_host_platform, detect_host_target_triple, executable_suffix_for_target,
+    resolve_target_triple,
 };
+use omne_process_primitives::{
+    HostRecipeRequest, command_available, resolve_command_path_or_standard_location,
+    run_host_recipe,
+};
+use omne_system_package_primitives::default_system_package_install_recipes_for_os;
 
+use crate::artifact::InstallSource;
 use crate::contracts::{
     BootstrapItem, BootstrapRequest, BootstrapResult, BootstrapSourceKind, BootstrapStatus,
-    InstallSource, OUTPUT_SCHEMA_VERSION,
+    OUTPUT_SCHEMA_VERSION,
 };
 use crate::error::{InstallerError, InstallerResult, OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
-use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
-use crate::platform::{
-    process_runner::{command_available, resolve_command_path_or_standard_location, run_recipe},
-    system_package_recipes::default_current_host_system_package_install_recipes,
+use crate::managed_toolchain::{
+    install_uv_from_public_release, managed_root_dir::resolve_managed_toolchain_dir,
 };
-use crate::uv::release_installation::install_uv_from_public;
 
 use super::builtin_tool_selection::{is_supported_builtin_tool, normalize_requested_tools};
 use super::public_release_asset_installation::{
@@ -38,7 +42,7 @@ pub async fn bootstrap(request: &BootstrapRequest) -> InstallerResult<BootstrapR
     let client = reqwest::Client::builder()
         // GitHub release asset transfers are more reliable via HTTP/1.1 in our CI/runtime mix.
         .http1_only()
-        .timeout(cfg.http_timeout)
+        .timeout(cfg.download.http_timeout)
         .user_agent("toolchain-installer")
         .build()
         .map_err(|err| InstallerError::download(format!("build http client failed: {err}")))?;
@@ -131,6 +135,9 @@ async fn bootstrap_builtin_tool(
             } else {
                 BootstrapStatus::Unsupported
             };
+            let detail = err.detail();
+            let error_code = err.error_code().to_string();
+            let exit_code = err.exit_code();
             BootstrapItem {
                 tool: tool.to_string(),
                 status,
@@ -138,10 +145,9 @@ async fn bootstrap_builtin_tool(
                 source_kind: None,
                 archive_match: None,
                 destination: Some(destination.display().to_string()),
-                detail: Some(err.message),
-                error_code: (status == BootstrapStatus::Failed)
-                    .then(|| crate::error::error_code_label(err.exit_code).to_string()),
-                failure_code: (status == BootstrapStatus::Failed).then_some(err.exit_code),
+                detail: Some(detail),
+                error_code: (status == BootstrapStatus::Failed).then_some(error_code),
+                failure_code: (status == BootstrapStatus::Failed).then_some(exit_code),
             }
         }
     }
@@ -186,7 +192,7 @@ async fn install_builtin_tool(
                 .await
         }
         "git" => install_git_for_bootstrap(target_triple, destination, cfg, client).await,
-        "uv" => install_uv_from_public(target_triple, destination, cfg, client).await,
+        "uv" => install_uv_from_public_release(target_triple, destination, cfg, client).await,
         _ => Err(OperationError::install(format!(
             "unsupported tool `{tool}`"
         ))),
@@ -207,7 +213,14 @@ async fn install_git_for_bootstrap(
 }
 
 fn install_git_via_system_package_manager(target_triple: &str) -> OperationResult<InstallSource> {
-    let recipes = default_current_host_system_package_install_recipes("git");
+    let recipes = detect_host_platform()
+        .map(|platform| {
+            default_system_package_install_recipes_for_os(
+                platform.operating_system().as_str(),
+                "git",
+            )
+        })
+        .unwrap_or_default();
     if recipes.is_empty() {
         return Err(OperationError::install(format!(
             "git install for target `{target_triple}` requires package manager but none is supported on this OS"
@@ -216,7 +229,10 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
 
     let mut errors = Vec::new();
     for recipe in recipes {
-        match run_recipe(recipe.program, &recipe.args) {
+        match run_host_recipe(&HostRecipeRequest::new(
+            recipe.program.as_ref(),
+            &recipe.args,
+        )) {
             Ok(_) => {
                 if resolve_command_path_or_standard_location("git").is_some()
                     || command_available("git")

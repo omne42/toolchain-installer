@@ -1,69 +1,46 @@
 use std::path::Path;
 
-use crate::contracts::{BootstrapItem, BootstrapStatus, InstallPlanItem};
+use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
+
+use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
-use crate::platform::process_runner::{resolve_command_for_execution, run_recipe};
+use crate::plan_items::{ResolvedPlanItem, WorkspacePackagePlanItem};
 
 use super::item_destination_resolution::effective_destination_for_item;
 
 pub(crate) fn execute_workspace_package_item(
-    item: &InstallPlanItem,
+    item: &WorkspacePackagePlanItem,
     managed_dir: &Path,
 ) -> OperationResult<BootstrapItem> {
-    let workspace_dir = effective_destination_for_item(item, "", managed_dir).ok_or_else(|| {
-        OperationError::install("workspace_package method requires `destination`")
-    })?;
+    let resolved_item = ResolvedPlanItem::WorkspacePackage(item.clone());
+    let workspace_dir = effective_destination_for_item(&resolved_item, "", managed_dir)
+        .ok_or_else(|| {
+            OperationError::install("workspace_package method requires `destination`")
+        })?;
     if !workspace_dir.join("package.json").exists() {
         return Err(OperationError::install(format!(
             "workspace_package requires an existing package.json under {}",
             workspace_dir.display()
         )));
     }
-    let manager = item
-        .manager
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("npm");
-    let package = item
-        .package
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OperationError::install("workspace_package method requires `package`"))?;
-    let package = if let Some(version) = item
-        .version
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if package.contains('@') || package.starts_with("file:") {
-            package.to_string()
-        } else {
-            format!("{package}@{version}")
-        }
-    } else {
-        package.to_string()
-    };
-
-    let args = match manager {
+    let args = match item.manager.command_name() {
         "npm" => vec![
             "install".to_string(),
             "--prefix".to_string(),
             workspace_dir.display().to_string(),
-            package,
+            item.package_spec.clone(),
         ],
         "pnpm" => vec![
             "add".to_string(),
             "--dir".to_string(),
             workspace_dir.display().to_string(),
-            package,
+            item.package_spec.clone(),
         ],
         "bun" => vec![
             "add".to_string(),
             "--cwd".to_string(),
             workspace_dir.display().to_string(),
-            package,
+            item.package_spec.clone(),
         ],
         value => {
             return Err(OperationError::install(format!(
@@ -71,8 +48,12 @@ pub(crate) fn execute_workspace_package_item(
             )));
         }
     };
-    let program = resolve_command_for_execution(manager);
-    run_recipe(&program, &args)?;
+    let manager = item.manager.command_name();
+    let program = resolve_command_path(manager)
+        .and_then(|path| path.into_os_string().into_string().ok())
+        .unwrap_or_else(|| manager.to_string());
+    run_host_recipe(&HostRecipeRequest::new(program.as_ref(), &args))
+        .map_err(OperationError::from_host_recipe)?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),

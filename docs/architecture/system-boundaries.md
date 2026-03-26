@@ -10,14 +10,20 @@
   - 负责启动 CLI，并把参数解析交给二进制专属模块。
 - 库入口：`src/lib.rs`
   - 只做模块装配与公开导出，不承载流程细节。
-- 安装域：`src/bootstrap/`、`src/plan/`、`src/installation/`、`src/managed_toolchain/`、`src/uv/`、`src/source_acquisition/`
+- 安装域：`src/bootstrap/`、`src/plan/`、`src/managed_toolchain/`、`src/download_sources.rs`、`src/plan_items.rs`
   - 共同覆盖“确定装什么、从哪下载、如何安装、如何输出结果”。
-- 平台域：`src/platform/`
-  - 负责对 runtime 平台原语的安装域适配，包括进程执行适配和“宿主机探测 + OS 级系统包 recipe”组合。
+- artifact 内部域：`src/artifact/`
+  - 承载内部 artifact 安装结果模型，不作为外部输入/输出 contract 暴露。
+- 外部网关集成域：`src/external_gateway/`
+  - 承载 installer 对外部 edge gateway 的资产路由契约与产品策略，例如 `git-for-windows` release 到 gateway 候选的推断。
 - 契约域：`src/contracts/`、`src/error.rs`、`src/installer_runtime_config.rs`
   - 负责外部输入/输出、退出码、环境变量和运行期配置边界。
 - Shared foundation 依赖：`../omne_foundation/crates/http-kit/`
   - 提供通用 HTTP client、bounded body read / preview、bounded response streaming、URL 校验 / 脱敏、untrusted outbound policy 与 endpoint 探测。
+- Shared foundation 依赖：`../omne_foundation/crates/github-kit/`
+  - 提供 GitHub API 的纯 client 能力：repository 标识校验、latest release URL 构造、多 API base 回退，以及 release metadata DTO。
+- Shared runtime 依赖：`../omne-runtime/crates/omne-artifact-install-primitives/`
+  - 提供 artifact 候选下载执行、SHA 校验、direct binary 安装、archive binary 安装与 archive tree staging+replace 原语。
 - Shared runtime 依赖：`../omne-runtime/crates/omne-integrity-primitives/`
   - 提供 `sha256` 解析、内容摘要计算与校验原语。
 - Shared runtime 依赖：`../omne-runtime/crates/omne-host-info-primitives/`
@@ -27,7 +33,7 @@
 - Shared runtime 依赖：`../omne-runtime/crates/omne-fs-primitives/`
   - 提供底层目录创建、暂存文件写入、权限设置、文件校验与原子替换原语。
 - Shared runtime 依赖：`../omne-runtime/crates/omne-process-primitives/`
-  - 提供宿主机命令探测、带输出捕获的命令执行、工作目录注入，以及命令路径解析 / 标准位置回退和 Unix 下对系统命令的 `sudo -n` 试探原语。
+  - 提供宿主机命令探测、带输出捕获的命令执行、host recipe 执行、工作目录注入、默认 `sudo` 模式推断，以及命令路径解析 / 标准位置回退和 Unix 下对系统命令的 `sudo -n` 试探原语。
 - Shared runtime 依赖：`../omne-runtime/crates/omne-system-package-primitives/`
   - 提供系统包管理器枚举、canonical 名称解析、安装 recipe 建模，以及按 OS 生成默认系统包安装配方的原语。
 - 外部网关项目：`../toolchain-edge-gateway/`
@@ -40,31 +46,38 @@
   - 只允许处理宿主机场景，不暴露跨目标平台语义。
 - `plan`
   - 执行调用方给定的安装计划，并负责把原始 `method` 字符串归位成更明确的领域方法分类。
-  - 只校验和编排，不拥有下载资产或解压细节。
-- `installation`
-  - 负责安装域编排：调用 archive runtime 提取目标二进制，再调用共享文件原语完成权限设置与目标路径落盘。
-  - 不决定使用哪个来源或哪种安装方法。
-- `source_acquisition`
-  - 负责 installer 自己的下载候选建模、`gateway|canonical|mirror` 来源分类、GitHub Release 元数据抓取，以及外部网关资产路由拼装。
-  - 不抽象成通用 HTTP foundation，也不承载 plan 编排、归档落盘或工具链布局策略。
+  - 只校验和编排，不拥有共享 artifact 安装管道本身。
+- `artifact`
+  - 负责 installer 内部 artifact 安装结果模型，例如安装来源和可选 archive match 的归并。
+  - 不属于外部 CLI/JSON contract，也不承载下载候选策略或 runtime 安装原语。
+- `download_sources`
+  - 负责 installer 自己的下载候选建模与 `gateway|canonical|mirror` 来源分类。
+  - 不抽象成通用 HTTP foundation，也不承载 GitHub API client、artifact 落盘/解压安装或工具链布局策略。
+- `external_gateway`
+  - 负责 installer 对外部 edge gateway 的集成边界，包括固定资产路由拼装，以及 `git-for-windows` 这类产品特定 release URL/asset 到 gateway 候选的推断。
+  - 不承载通用来源候选构造、GitHub API client 或下载/安装执行。
 - `managed_toolchain`
   - 负责围绕 `managed_dir` 的托管工具链环境编排：收敛 `uv` 工具目录、Python 目录和缓存目录，解析托管根目录策略，并执行 `uv`、`uv python install`、`uv tool install`。
   - 对上层接收的是显式托管工具链方法分发，而不是在领域内部继续解析原始方法字符串。
-  - 不拥有 `uv` public release 元数据抓取和资产选择细节。
-- `uv`
-  - 负责 `uv` 自身的 public release 资产选择、摘要要求和 archive 安装适配。
-  - 通过 installer 自己的 `source_acquisition` 模块消费 GitHub release 元数据和下载来源策略。
-  - 不拥有 `managed_dir` 布局、Python mirror/index 策略或 plan 输出模型。
-- `platform`
-  - 负责对 runtime 平台原语做 installer 侧组合适配。
-  - 例如把宿主机探测和 OS 级系统包 recipe 原语组合成“当前宿主机默认 recipe”。
-  - 不关心上层 CLI 参数如何组织。
+  - 也拥有托管 `uv` 的 public release 供给能力，因为 `bootstrap` 与托管工具链执行都在复用同一套 `uv` 安装细节。
+- `plan_items`
+  - 负责 `plan` 与 `managed_toolchain` 共享的强类型安装项模型。
+  - 只定义领域数据，不负责 plan 方法归一化、校验、下载候选或执行。
+- `installer_runtime_config`
+  - 负责把 CLI/env 输入归一化成内部运行期策略对象。
+  - 当前已经明确拆成 `github_releases`、`download_sources`、`download`、`package_indexes`、`python_mirrors`、`gateway` 六类策略，而不是让 GitHub API、镜像候选、索引、gateway、国家码和下载限制继续平铺混放。
 - `omne-host-info-primitives`
   - 负责宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀推断。
   - 不负责 `OMNE_DATA_DIR`、`TOOLCHAIN_INSTALLER_MANAGED_DIR`、`managed_dir` 布局或 installer plan 语义。
 - `http-kit`
   - 负责通用 HTTP client、bounded body read / preview、bounded response streaming、URL 校验 / 脱敏、untrusted outbound policy 与 HTTP 可达性探测。
-  - 不承载 GitHub release schema、下载来源分类、镜像 / 网关候选顺序或安装器资产命名。
+  - 不承载 GitHub API schema、下载来源分类、镜像 / 网关候选顺序或安装器资产命名。
+- `github-kit`
+  - 负责 GitHub API 的纯 client 能力，例如 latest release metadata 获取。
+  - 不负责环境变量读取、产品专属 user-agent、来源候选顺序、资产选择或安装执行。
+- `omne-artifact-install-primitives`
+  - 负责 artifact 候选下载执行、可选 SHA-256 校验，以及 direct binary / archive binary / archive tree 安装管道。
+  - 不负责 GitHub release schema、来源候选顺序策略、产品目录布局或 installer 输出 contract。
 - `omne-integrity-primitives`
   - 负责 `sha256:<hex>` 解析、原始 hex 输入解析、内容摘要计算与校验错误建模。
   - 不负责下载来源选择、release 元数据或安装落盘。
@@ -75,7 +88,7 @@
   - 负责通用目录创建、临时文件写入、flush/sync、Unix chmod、文件有效性校验和原子替换。
   - 不理解归档格式、二进制名称匹配或工具链安装计划。
 - `omne-process-primitives`
-  - 负责通用宿主机命令探测、带输出捕获的命令执行、工作目录注入、命令路径解析 / 标准位置回退，以及 Unix 下对 bare system command 的 `sudo -n` 试探。
+  - 负责通用宿主机命令探测、带输出捕获的命令执行、host recipe 执行、工作目录注入、默认 `sudo` 模式推断、命令路径解析 / 标准位置回退，以及 Unix 下对 bare system command 的 `sudo -n` 试探。
   - 不负责包管理器配方、plan 语义、超时策略或安装领域错误码。
 - `omne-system-package-primitives`
   - 负责系统包管理器枚举、canonical 名称解析、安装 recipe 建模，以及按 OS 生成默认系统包安装配方。
@@ -92,6 +105,27 @@
   - 因为它绑定 Cloudflare Worker 运行环境，并编码了 `git-for-windows`、`CN` 国家限制和限流策略。
 - 当前已经拆仓
   - 现在由独立网关项目承载实现与测试；installer 仓库只保留集成边界与来源选择规则。
+
+## 刚性依赖方向
+
+- `error`
+  - 最低层；不允许依赖其他 installer 顶层模块。
+- `contracts`
+  - 只允许依赖 `error`。
+- `artifact`、`download_sources`、`installer_runtime_config`、`plan_items`
+  - 只允许依赖更低层公共边界；不能反向依赖 `managed_toolchain`、`plan`、`bootstrap`。
+- `external_gateway`
+  - 只允许依赖 `installer_runtime_config`。
+- `managed_toolchain`
+  - 可以依赖 `artifact`、`contracts`、`download_sources`、`error`、`installer_runtime_config`、`plan_items`。
+  - 不能反向依赖 `plan` 或 `bootstrap`。
+- `plan`
+  - 可以依赖 `managed_toolchain` 及更低层模块，并负责执行编排。
+  - 不能依赖 `bootstrap`。
+- `bootstrap`
+  - 可以依赖 `managed_toolchain` 及更低层模块，并负责宿主机 bootstrap 编排。
+  - 不能依赖 `plan`。
+- 上述方向由 `tools/source-layout-check/` 在本地 git hook 与 CI 中共同执行。
 
 ## 宿主与目标语义
 

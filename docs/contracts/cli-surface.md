@@ -3,9 +3,8 @@
 ## 命令形态
 
 - 主命令：`toolchain-installer bootstrap [options]`
-- 兼容简写：`toolchain-installer [options]`
 
-推荐对外文档统一使用 `bootstrap` 子命令；简写只为兼容保留。
+对外稳定 CLI 只保留 `bootstrap` 子命令；不再接受裸命令简写。
 
 ## 主要参数
 
@@ -18,7 +17,7 @@
 - `--mirror-prefix <prefix>`
   - 追加 release 下载候选前缀。
 - `--package-index <url>`
-  - 追加 `uv_tool` 的备用 Python 包索引；官方 PyPI 隐式存在。
+  - 为 `uv_tool` 显式追加 Python 包索引；若未提供任何索引，默认只使用官方 PyPI。
 - `--python-mirror <url>`
   - 追加 `uv_python` 的备用 Python 下载镜像；官方来源隐式存在。
 - `--gateway-base <url>`
@@ -37,6 +36,7 @@
   - `uv_python` 直接参数模式下的 Python 版本。
 - `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
   - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
+  - `uv_tool` 额外允许 `--binary-name`，用于声明托管目录下期望出现的可执行文件名。
 - `--package`、`--manager`
   - `system_package`、`apt`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component` 或 `go_install` 模式字段。
 - `--python`
@@ -52,12 +52,20 @@
 
 环境变量补充：
 
+- `TOOLCHAIN_INSTALLER_GITHUB_API_BASES`
+  - 逗号分隔的 GitHub metadata API base 列表；未设置时默认只使用 `https://api.github.com`。
+- `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES`
+  - 逗号分隔的 release 下载镜像前缀；与 `--mirror-prefix` 共同组成候选顺序。
 - `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`
-  - 逗号分隔的 `uv_tool` 备用索引列表。
+  - 逗号分隔的 `uv_tool` 显式索引列表；若这里或 CLI 没有提供任何索引，installer 才会回退到官方 PyPI。
 - `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`
   - 逗号分隔的 `uv_python` 备用镜像列表。
 - `TOOLCHAIN_INSTALLER_GITHUB_TOKEN`
   - 可选 GitHub token；用于请求 GitHub release metadata API，避免 CI / 共享出口上的匿名限额。若未设置，installer 会回退读取 `GITHUB_TOKEN`。
+- `TOOLCHAIN_INSTALLER_GATEWAY_BASE`
+  - 当未显式传 `--gateway-base` 时，作为外部固定路由网关基地址。
+- `TOOLCHAIN_INSTALLER_COUNTRY`
+  - 当未显式传 `--country` 时，作为 gateway 参与条件判断所使用的国家码来源。
 - `TOOLCHAIN_INSTALLER_MANAGED_DIR`
   - 直接覆盖默认托管目录。
 - `TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES`
@@ -104,7 +112,7 @@
 - `0`
   - 执行成功；若未开启 `--strict`，允许部分工具失败。
 - `2`
-  - 参数错误或不支持的参数组合。
+  - 参数错误、不支持的参数组合，或 plan / `--method` 中出现未知方法名。
 - `3`
   - 单项调用中的下载或校验失败。
 - `4`
@@ -117,9 +125,11 @@
 - `schema_version` 升级前必须保持向后兼容。
 - 已有输出字段只能追加，不能重命名或删除。
 - 调用方应依赖 `status`、`detail` 与 `error_code`，不要解析 stderr 文本。
+- stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
 - `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
+- `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。
 
 ## 继续阅读
 

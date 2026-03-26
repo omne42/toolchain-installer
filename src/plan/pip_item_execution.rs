@@ -1,20 +1,11 @@
-use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus, InstallPlanItem};
-use crate::error::{OperationError, OperationResult};
-use crate::platform::process_runner::{command_exists, run_recipe};
+use omne_process_primitives::{HostRecipeRequest, command_exists, run_host_recipe};
 
-pub(crate) fn execute_pip_item(item: &InstallPlanItem) -> OperationResult<BootstrapItem> {
-    let package = item
-        .package
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OperationError::install("pip method requires `package`"))?;
-    let preferred_python = item
-        .python
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "python3".to_string());
+use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
+use crate::error::{OperationError, OperationResult};
+use crate::plan_items::PipPlanItem;
+
+pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapItem> {
+    let preferred_python = item.python.clone().unwrap_or_else(|| "python3".to_string());
     let candidates = if preferred_python == "python3" {
         vec!["python3".to_string(), "python".to_string()]
     } else {
@@ -31,9 +22,9 @@ pub(crate) fn execute_pip_item(item: &InstallPlanItem) -> OperationResult<Bootst
             "-m".to_string(),
             "pip".to_string(),
             "install".to_string(),
-            package.clone(),
+            item.package.clone(),
         ];
-        match run_recipe(&python, &args) {
+        match run_host_recipe(&HostRecipeRequest::new(python.as_ref(), &args)) {
             Ok(_) => {
                 return Ok(BootstrapItem {
                     tool: item.id.clone(),
@@ -41,7 +32,7 @@ pub(crate) fn execute_pip_item(item: &InstallPlanItem) -> OperationResult<Bootst
                     source: Some(format!("pip:{python}")),
                     source_kind: Some(BootstrapSourceKind::Pip),
                     archive_match: None,
-                    destination: item.destination.clone(),
+                    destination: None,
                     detail: None,
                     error_code: None,
                     failure_code: None,

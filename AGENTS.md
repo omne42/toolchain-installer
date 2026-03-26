@@ -5,6 +5,7 @@
 ## 先看哪里
 
 - 外部概览：`README.md`
+- 文档入口：`docs/README.md`
 - 文档系统入口：`docs/docs-system-map.md`
 - 系统边界：`docs/architecture/system-boundaries.md`
 - Worker 归位：`docs/architecture/worker-gateway-placement.md`
@@ -25,23 +26,26 @@
   这里的 `builtin_tools/` 已按流程、工具目录、public release 安装与网关候选拆分。
 - `src/plan/`：安装 plan 校验与执行。
   这里通过 `plan_method.rs` 把原始 `method` 字符串归位到更明确的领域方法分类，并把 `install_plan_validation.rs`、`install_plan_execution.rs`、`item_destination_resolution.rs`、`item_method_dispatch.rs`、`release_item_execution.rs`、`system_package_item_execution.rs`、`pip_item_execution.rs` 拆开承载。
-- `src/platform/`：进程执行与系统包适配。
-  这里的进程执行是适配层；低层命令探测与执行原语在 runtime。
-  系统包管理器枚举、别名与默认安装 recipe 已下沉到真实 shared runtime crate：`../omne-runtime/crates/omne-system-package-primitives/`。
-- `src/installation/`：安装域适配层，调用共享 archive/runtime 能力提取目标二进制，并调用共享文件原语完成原子落盘。
+- `src/artifact/`：内部 artifact 安装结果域。
+  这里的 `install_source.rs` 只承载内部安装来源结果，不是外部 contract。
 - `src/managed_toolchain/`：围绕 `managed_dir` 的托管工具链环境领域，负责 `uv`、`uv python install`、`uv tool install` 的环境布局与编排。
-  这里进一步拆成 `managed_root_dir.rs`、`managed_environment_layout.rs`、`managed_uv_installation.rs`、`managed_python_executable_discovery.rs`、`uv_python_installation.rs`、`uv_tool_installation.rs`、`uv_installation_source_candidates.rs`、`source_candidate_attempts.rs`、`bootstrap_item_construction.rs`。
-- `src/uv/`：`uv` public release 资产选择与安装细节。
-- `src/source_acquisition/`：installer 自有的来源获取领域，承载下载候选、GitHub release 元数据、外部网关路由与来源种类映射。
-- `src/contracts/`：稳定输入/输出契约，进一步拆成 bootstrap request/result、install plan contract 与内部 source model。
+  这里进一步拆成 `managed_root_dir.rs`、`managed_environment_layout.rs`、`managed_uv_installation.rs`、`uv_public_release_installation.rs`、`managed_python_executable_discovery.rs`、`uv_python_installation.rs`、`uv_tool_installation.rs`、`uv_installation_source_candidates.rs`、`source_candidate_attempts.rs`、`bootstrap_item_construction.rs`。
+  `bootstrap` 补齐 `uv` 时也直接复用这里的 public release 安装能力，不再额外维护一个顶层 `uv` 域。
+- `src/download_sources.rs`：installer 自有的下载来源选择域，只承载下载候选构造与来源种类映射；GitHub release metadata client 已下沉到 foundation 的 `github-kit`。
+- `src/external_gateway/`：installer 对外部 edge gateway 的内部集成域。
+  这里承载 gateway 资产路由拼装与 `git-for-windows` release URL 推断，不和通用来源获取逻辑混层。
+- `src/contracts/`：稳定输入/输出契约，只承载 bootstrap request/result 与 install plan contract。
 - `src/error.rs`：错误类型与退出码。
 - `src/installer_runtime_config.rs`：installer 运行期配置与环境变量收敛。
+  这里已经拆成 `github_releases`、`download_sources`、`download`、`package_indexes`、`python_mirrors`、`gateway` 这些内部策略子结构，不再让所有产品配置揉成一个平铺大对象。
 - `../omne_foundation/crates/http-kit/`：shared foundation 的 HTTP 通用能力；不承载 installer 自己的 GitHub release schema 与来源候选策略。
+- `../omne_foundation/crates/github-kit/`：shared foundation 的纯 GitHub API client 能力；负责 latest release metadata 获取，不承载 installer 的来源候选顺序或资产选择策略。
+- `../omne-runtime/crates/omne-artifact-install-primitives/`：shared runtime 的 artifact 下载候选执行、SHA 校验、binary/tree 安装管道原语。
 - `../omne-runtime/crates/omne-host-info-primitives/`：shared runtime 的宿主平台识别、target triple 映射、target override 归一化、home 目录解析与目标可执行后缀原语。
 - `../omne-runtime/crates/omne-integrity-primitives/`：shared runtime 的通用 `sha256` 解析、内容摘要与校验原语。
 - `../omne-runtime/crates/omne-archive-primitives/`：shared runtime 的 archive/compression 格式识别、归档条目遍历与目标二进制提取原语。
 - `../omne-runtime/crates/omne-fs-primitives/`：shared runtime 的低层目录创建、临时文件写入、权限校验与原子替换原语。
-- `../omne-runtime/crates/omne-process-primitives/`：shared runtime 的宿主机命令探测、带输出捕获的命令执行与 Unix `sudo -n` 试探原语。
+- `../omne-runtime/crates/omne-process-primitives/`：shared runtime 的宿主机命令探测、host recipe 执行、默认 `sudo` 模式推断、带输出捕获的命令执行与 Unix `sudo -n` 试探原语。
 - `../toolchain-edge-gateway/`：外部边缘网关项目；installer 只通过 `--gateway-base` 与其集成。
 
 ## 修改规则

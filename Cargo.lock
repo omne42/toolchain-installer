@@ -394,6 +394,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "error-kit"
+version = "0.1.0"
+dependencies = [
+ "structured-text-kit",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -570,6 +578,17 @@ dependencies = [
  "r-efi 6.0.0",
  "wasip2",
  "wasip3",
+]
+
+[[package]]
+name = "github-kit"
+version = "0.1.0"
+dependencies = [
+ "http-kit",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1050,6 +1069,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "omne-artifact-install-primitives"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "http-kit",
+ "omne-archive-primitives",
+ "omne-fs-primitives",
+ "omne-integrity-primitives",
+ "reqwest",
+ "tar",
+ "xz2",
+ "zip",
+]
+
+[[package]]
 name = "omne-fs-primitives"
 version = "0.1.0"
 dependencies = [
@@ -1085,9 +1119,6 @@ dependencies = [
 [[package]]
 name = "omne-system-package-primitives"
 version = "0.1.0"
-dependencies = [
- "omne-host-info-primitives",
-]
 
 [[package]]
 name = "once_cell"
@@ -1621,6 +1652,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "structured-text-kit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1842,9 +1880,12 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
+ "error-kit",
  "flate2",
+ "github-kit",
  "http-kit",
  "omne-archive-primitives",
+ "omne-artifact-install-primitives",
  "omne-fs-primitives",
  "omne-host-info-primitives",
  "omne-integrity-primitives",

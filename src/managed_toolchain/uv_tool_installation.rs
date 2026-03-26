@@ -1,7 +1,9 @@
 use std::path::Path;
 
-use crate::contracts::{BootstrapItem, BootstrapSourceKind, InstallPlanItem};
-use crate::error::{OperationError, OperationResult};
+use omne_process_primitives::{HostRecipeRequest, command_path_exists, run_host_recipe};
+
+use crate::contracts::{BootstrapItem, BootstrapSourceKind};
+use crate::error::OperationResult;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::bootstrap_item_construction::{
     build_installed_bootstrap_item, build_managed_uv_usage_detail,
@@ -14,21 +16,15 @@ use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidat
 use crate::managed_toolchain::uv_installation_source_candidates::{
     package_index_installation_source_candidates, prioritize_reachable_installation_sources,
 };
-use crate::platform::process_runner::run_recipe_with_env;
+use crate::plan_items::UvToolPlanItem;
 
 pub(crate) async fn execute_uv_tool_item(
-    item: &InstallPlanItem,
+    item: &UvToolPlanItem,
     target_triple: &str,
     managed_dir: &Path,
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<BootstrapItem> {
-    let package = item
-        .package
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OperationError::install("uv_tool method requires `package`"))?;
     let (uv, uv_detail) = ensure_managed_uv(target_triple, managed_dir, cfg, client).await?;
     let base_env = managed_uv_process_env(managed_dir);
     let candidates = prioritize_reachable_installation_sources(
@@ -36,8 +32,7 @@ pub(crate) async fn execute_uv_tool_item(
         package_index_installation_source_candidates(cfg),
     )
     .await;
-    let executable_name = item.id.trim();
-    let destination = managed_tool_binary_path(executable_name, target_triple, managed_dir);
+    let destination = managed_tool_binary_path(&item.binary_name, target_triple, managed_dir);
     attempt_source_candidates(candidates, "all uv_tool sources failed", |candidate| {
         let mut env = base_env.clone();
         env.extend(candidate.env.iter().cloned());
@@ -47,21 +42,24 @@ pub(crate) async fn execute_uv_tool_item(
             "install".to_string(),
             "--force".to_string(),
         ];
-        if let Some(python) = item
-            .python
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(python) = item.python.as_deref() {
             args.push("--python".to_string());
             args.push(python.to_string());
         }
-        args.push(package.to_string());
+        args.push(item.package.to_string());
 
-        run_recipe_with_env(uv.program.as_os_str(), &args, &env)
+        run_host_recipe(&HostRecipeRequest::new(uv.program.as_os_str(), &args).with_env(&env))
             .map_err(|err| format!("{} failed: {err}", candidate.label.clone()))?;
+        if !command_path_exists(&destination) {
+            return Err(format!(
+                "{} installed package `{}` but expected managed binary at {}",
+                candidate.label,
+                item.package,
+                destination.display()
+            ));
+        }
         Ok(build_installed_bootstrap_item(
-            item,
+            &item.id,
             candidate.label,
             BootstrapSourceKind::PackageIndex,
             &destination,

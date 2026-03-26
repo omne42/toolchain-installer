@@ -6,6 +6,21 @@ on:
   pull_request:
 
 jobs:
+  architecture-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Architecture lint
+        run: cargo run --quiet --locked --manifest-path tools/source-layout-check/Cargo.toml --
+
+      - name: Architecture lint tests
+        run: cargo test --locked --manifest-path tools/source-layout-check/Cargo.toml
+
   rust-matrix:
     runs-on: ${{ matrix.os }}
     strategy:

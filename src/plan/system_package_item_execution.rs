@@ -1,41 +1,42 @@
-use omne_system_package_primitives::{
-    SystemPackageManager, default_system_package_install_recipes_for_current_host,
-};
+use omne_host_info_primitives::detect_host_platform;
+use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
+use omne_system_package_primitives::SystemPackageManager;
+use omne_system_package_primitives::default_system_package_install_recipes_for_os;
 
-use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus, InstallPlanItem};
+use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
-use crate::platform::process_runner::run_recipe;
+use crate::plan_items::{SystemPackageMode, SystemPackagePlanItem};
 
 pub(crate) fn execute_system_package_item(
-    item: &InstallPlanItem,
+    item: &SystemPackagePlanItem,
 ) -> OperationResult<BootstrapItem> {
-    let package = item
-        .package
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OperationError::install("system_package method requires `package`"))?;
-    let recipes = if let Some(manager) = item
-        .manager
-        .as_ref()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-    {
-        let manager = SystemPackageManager::parse(&manager)
-            .ok_or_else(|| OperationError::install(format!("unsupported manager `{manager}`")))?;
-        vec![manager.install_recipe(&package)]
-    } else {
-        default_system_package_install_recipes_for_current_host(&package)
+    let recipes = match item.mode {
+        SystemPackageMode::AptGet => {
+            vec![SystemPackageManager::AptGet.install_recipe(&item.package)]
+        }
+        SystemPackageMode::Explicit(manager) => vec![manager.install_recipe(&item.package)],
+        SystemPackageMode::Auto => detect_host_platform()
+            .map(|platform| {
+                default_system_package_install_recipes_for_os(
+                    platform.operating_system().as_str(),
+                    &item.package,
+                )
+            })
+            .unwrap_or_default(),
     };
     if recipes.is_empty() {
         return Err(OperationError::install(format!(
-            "no available package manager recipe for `{package}`"
+            "no available package manager recipe for `{}`",
+            item.package
         )));
     }
 
     let mut errors = Vec::new();
     for recipe in recipes {
-        match run_recipe(recipe.program, &recipe.args) {
+        match run_host_recipe(&HostRecipeRequest::new(
+            recipe.program.as_ref(),
+            &recipe.args,
+        )) {
             Ok(_) => {
                 return Ok(BootstrapItem {
                     tool: item.id.clone(),
@@ -43,7 +44,7 @@ pub(crate) fn execute_system_package_item(
                     source: Some(format!("system:{}", recipe.program)),
                     source_kind: Some(BootstrapSourceKind::SystemPackage),
                     archive_match: None,
-                    destination: item.destination.clone(),
+                    destination: None,
                     detail: None,
                     error_code: None,
                     failure_code: None,

@@ -17,7 +17,7 @@ pub(super) fn python_installation_source_candidates(
         env: Vec::new(),
         probe_url: None,
     }];
-    for mirror in &cfg.python_install_mirrors {
+    for mirror in &cfg.python_mirrors.install_mirrors {
         candidates.push(InstallationSourceCandidate {
             label: format!("python-mirror:{mirror}"),
             env: vec![(
@@ -34,6 +34,7 @@ pub(super) fn package_index_installation_source_candidates(
     cfg: &InstallerRuntimeConfig,
 ) -> Vec<InstallationSourceCandidate> {
     cfg.package_indexes
+        .indexes
         .iter()
         .map(|index| InstallationSourceCandidate {
             label: format!("package-index:{index}"),

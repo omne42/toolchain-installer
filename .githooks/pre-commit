@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if command -v cargo >/dev/null 2>&1; then
+  exec cargo run --quiet --locked --manifest-path tools/source-layout-check/Cargo.toml -- --staged
+fi
+
+printf '%s\n' "source-layout validation failed" >&2
+printf '\n' >&2
+printf '%s\n' "Harness-style explicit disclosure:" >&2
+printf '%s\n' "- \`cargo\` is not available, so the repository hook cannot run the Rust source-layout checker" >&2
+printf '%s\n' "- install Rust/Cargo or run the checker manually from an environment that provides it" >&2
+exit 1

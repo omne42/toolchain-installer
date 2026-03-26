@@ -9,6 +9,7 @@ pub(crate) mod npm_global_item_execution;
 pub(crate) mod pip_item_execution;
 pub(crate) mod plan_method;
 pub(crate) mod release_item_execution;
+pub(crate) mod resolved_plan_item;
 pub(crate) mod rustup_component_item_execution;
 pub(crate) mod system_package_item_execution;
 pub(crate) mod workspace_package_item_execution;

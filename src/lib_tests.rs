@@ -6,11 +6,16 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
-use omne_host_info_primitives::{executable_suffix_for_target, resolve_target_triple};
+use github_kit::GitHubReleaseAsset;
+use omne_artifact_install_primitives::{
+    install_archive_tree_from_bytes, install_binary_from_archive,
+};
+use omne_host_info_primitives::{
+    detect_host_platform, executable_suffix_for_target, resolve_target_triple,
+};
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
-    SystemPackageManager, default_system_package_install_recipes_for_current_host,
-    default_system_package_install_recipes_for_os,
+    SystemPackageManager, default_system_package_install_recipes_for_os,
 };
 
 use crate::bootstrap::builtin_tools::{
@@ -19,24 +24,53 @@ use crate::bootstrap::builtin_tools::{
     select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
-    BootstrapArchiveFormat, BootstrapSourceKind, BootstrapStatus, InstallPlan, InstallPlanItem,
-    PLAN_SCHEMA_VERSION,
+    BootstrapArchiveFormat, BootstrapRequest, BootstrapSourceKind, BootstrapStatus, InstallPlan,
+    InstallPlanItem, PLAN_SCHEMA_VERSION,
 };
+use crate::download_sources::make_download_candidates;
 use crate::error::ExitCode;
-use crate::installation::archive_binary::install_binary_from_archive;
+use crate::external_gateway::{
+    infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
+};
 use crate::installer_runtime_config::{
-    DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, InstallerRuntimeConfig,
+    DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
+    GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
+    PythonMirrorPolicy,
 };
 use crate::managed_toolchain::managed_root_dir::{
     default_managed_dir_under_data_root, resolve_managed_toolchain_dir,
 };
-use crate::managed_toolchain::{execute_uv_python_item, execute_uv_tool_item};
-use crate::plan::install_plan_validation::validate_plan;
-use crate::source_acquisition::{
-    GithubReleaseAsset, infer_gateway_candidate_for_git_release, make_download_candidates,
-    make_gateway_asset_candidate,
+use crate::managed_toolchain::{
+    execute_uv_python_item, execute_uv_tool_item, install_uv_from_public_release,
 };
-use crate::uv::release_installation::install_uv_from_public;
+use crate::plan::install_plan_validation::validate_plan;
+use crate::plan_items::{UvPythonPlanItem, UvToolPlanItem};
+
+fn test_runtime_config() -> InstallerRuntimeConfig {
+    InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
+        },
+        python_mirrors: PythonMirrorPolicy {
+            install_mirrors: Vec::new(),
+        },
+        gateway: GatewayRoutingPolicy {
+            base: None,
+            country: None,
+        },
+        download: DownloadPolicy {
+            http_timeout: Duration::from_secs(5),
+            max_download_bytes: None,
+        },
+    }
+}
 
 #[test]
 fn parse_sha256_digest_accepts_valid_value() {
@@ -76,41 +110,87 @@ fn make_download_candidates_prefers_gateway() {
 #[test]
 fn gateway_only_enabled_for_cn() {
     let cfg_cn = InstallerRuntimeConfig {
-        github_api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: Some("https://gw.example".to_string()),
-        country: Some("CN".to_string()),
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        gateway: GatewayRoutingPolicy {
+            base: Some("https://gw.example".to_string()),
+            country: Some("CN".to_string()),
+        },
+        ..test_runtime_config()
     };
-    assert!(cfg_cn.use_gateway_for_git_release());
+    assert!(cfg_cn.gateway.use_for_git_release());
 
     let cfg_us = InstallerRuntimeConfig {
-        github_api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: Some("https://gw.example".to_string()),
-        country: Some("US".to_string()),
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        gateway: GatewayRoutingPolicy {
+            base: Some("https://gw.example".to_string()),
+            country: Some("US".to_string()),
+        },
+        ..test_runtime_config()
     };
-    assert!(!cfg_us.use_gateway_for_git_release());
+    assert!(!cfg_us.gateway.use_for_git_release());
+}
+
+#[test]
+fn runtime_config_uses_default_package_index_only_when_none_is_configured() {
+    if std::env::var_os("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES").is_some() {
+        return;
+    }
+    let cfg = InstallerRuntimeConfig::from_request(&BootstrapRequest::default());
+    assert_eq!(
+        cfg.package_indexes.indexes,
+        vec![DEFAULT_PYPI_INDEX.to_string()]
+    );
+}
+
+#[test]
+fn runtime_config_does_not_prepend_official_package_index_when_explicit_indexes_exist() {
+    if std::env::var_os("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES").is_some() {
+        return;
+    }
+    let cfg = InstallerRuntimeConfig::from_request(&BootstrapRequest {
+        package_indexes: vec!["https://mirror.example/simple".to_string()],
+        ..BootstrapRequest::default()
+    });
+    assert_eq!(
+        cfg.package_indexes.indexes,
+        vec!["https://mirror.example/simple".to_string()]
+    );
+}
+
+#[test]
+fn installer_errors_preserve_freeform_user_text() {
+    let err = validate_plan(
+        &InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![InstallPlanItem {
+                id: "demo".to_string(),
+                method: "unknown".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            }],
+        },
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("unknown method should be rejected");
+
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(err.to_string().contains("unsupported method `unknown`"));
 }
 
 #[test]
 fn infer_gateway_candidate_for_git_release_parses_release_url() {
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: Some("https://gw.example".to_string()),
-        country: Some("CN".to_string()),
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        gateway: GatewayRoutingPolicy {
+            base: Some("https://gw.example".to_string()),
+            country: Some("CN".to_string()),
+        },
+        ..test_runtime_config()
     };
     let candidate = infer_gateway_candidate_for_git_release(
         &cfg,
@@ -126,7 +206,7 @@ fn infer_gateway_candidate_for_git_release_parses_release_url() {
 #[test]
 fn select_mingit_release_asset_prefers_busybox_on_x64() {
     let assets = vec![
-        GithubReleaseAsset {
+        GitHubReleaseAsset {
             name: "MinGit-2.53.0-64-bit.zip".to_string(),
             browser_download_url: "https://example.invalid/a.zip".to_string(),
             digest: Some(
@@ -134,7 +214,7 @@ fn select_mingit_release_asset_prefers_busybox_on_x64() {
                     .to_string(),
             ),
         },
-        GithubReleaseAsset {
+        GitHubReleaseAsset {
             name: "MinGit-2.53.0-busybox-64-bit.zip".to_string(),
             browser_download_url: "https://example.invalid/b.zip".to_string(),
             digest: Some(
@@ -156,8 +236,10 @@ fn system_recipes_cover_linux() {
 }
 
 #[test]
-fn current_host_system_recipes_do_not_require_raw_os_strings() {
-    let _ = default_system_package_install_recipes_for_current_host("git");
+fn toolchain_installer_composes_current_host_system_recipes() {
+    let _ = detect_host_platform().map(|platform| {
+        default_system_package_install_recipes_for_os(platform.operating_system().as_str(), "git")
+    });
 }
 
 #[test]
@@ -166,11 +248,8 @@ fn system_package_manager_rejects_unknown_input() {
 }
 
 #[test]
-fn system_package_manager_normalizes_apt_aliases() {
-    assert_eq!(
-        SystemPackageManager::parse("apt"),
-        Some(SystemPackageManager::AptGet)
-    );
+fn system_package_manager_accepts_only_canonical_names() {
+    assert_eq!(SystemPackageManager::parse("apt"), None);
     assert_eq!(
         SystemPackageManager::parse("apt-get"),
         Some(SystemPackageManager::AptGet)
@@ -210,14 +289,14 @@ async fn install_gh_from_public_release_mock_api() -> anyhow::Result<()> {
     let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![format!("{base}/api")],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: None,
-        country: None,
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -273,14 +352,14 @@ async fn install_gh_from_public_release_windows_zip_uses_bin_hint() -> anyhow::R
     let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![format!("{base}/api")],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: None,
-        country: None,
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -349,14 +428,14 @@ async fn install_git_from_public_release_windows_zip_builds_cmd_launcher() -> an
     let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![format!("{base}/api")],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: None,
-        country: None,
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -429,14 +508,14 @@ async fn install_git_from_public_release_windows_zip_accepts_mingw64_fallback() 
     let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![format!("{base}/api")],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: None,
-        country: None,
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -508,14 +587,14 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![format!("{base}/api")],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: None,
-        country: None,
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -524,7 +603,8 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     let destination = tmp.path().join("uv");
 
     let source =
-        install_uv_from_public("x86_64-unknown-linux-gnu", &destination, &cfg, &client).await?;
+        install_uv_from_public_release("x86_64-unknown-linux-gnu", &destination, &cfg, &client)
+            .await?;
     assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
     assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
     assert_eq!(
@@ -730,6 +810,42 @@ fn install_binary_from_tar_xz_uses_hint() -> anyhow::Result<()> {
 }
 
 #[test]
+fn extract_archive_tree_preserves_existing_destination_on_invalid_archive() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("tree");
+    std::fs::create_dir_all(&destination)?;
+    std::fs::write(destination.join("old.txt"), "stale")?;
+
+    install_archive_tree_from_bytes("demo.zip", b"not-a-zip", &destination)
+        .expect_err("invalid archive should fail");
+    assert_eq!(
+        std::fs::read_to_string(destination.join("old.txt"))?,
+        "stale"
+    );
+    Ok(())
+}
+
+#[test]
+fn extract_archive_tree_replaces_existing_destination_after_successful_stage() -> anyhow::Result<()>
+{
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("tree");
+    std::fs::create_dir_all(&destination)?;
+    std::fs::write(destination.join("old.txt"), "stale")?;
+    let archive = make_zip_archive(&[
+        ("bin/demo", b"#!/bin/sh\necho demo\n".as_slice(), 0o755),
+        ("LICENSE", b"demo-license\n".as_slice(), 0o644),
+    ])?;
+
+    install_archive_tree_from_bytes("demo.zip", &archive, &destination)?;
+
+    assert!(!destination.join("old.txt").exists());
+    assert!(destination.join("bin/demo").exists());
+    assert!(destination.join("LICENSE").exists());
+    Ok(())
+}
+
+#[test]
 fn normalize_requested_tools_dedups_and_trims() {
     let tools = normalize_requested_tools(&[
         " git ".to_string(),
@@ -763,14 +879,11 @@ fn make_gateway_asset_candidate_normalizes_base_trailing_slash() {
 #[test]
 fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: Some("https://gw.example".to_string()),
-        country: Some("CN".to_string()),
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        gateway: GatewayRoutingPolicy {
+            base: Some("https://gw.example".to_string()),
+            country: Some("CN".to_string()),
+        },
+        ..test_runtime_config()
     };
     assert!(
         infer_gateway_candidate_for_git_release(&cfg, "https://example.com/download/v1/file.zip")
@@ -859,6 +972,33 @@ fn validate_plan_rejects_empty_items() {
         "x86_64-unknown-linux-gnu",
     )
     .expect_err("empty plan should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_unknown_method() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "unknown".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("unknown method should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
 }
 
@@ -1051,28 +1191,15 @@ exit 2
 "#,
     )?;
 
-    let item = InstallPlanItem {
+    let item = UvPythonPlanItem {
         id: "python3.13.12".to_string(),
-        method: "uv_python".to_string(),
-        version: Some("3.13.12".to_string()),
-        url: None,
-        sha256: None,
-        archive_binary: None,
-        binary_name: None,
-        destination: None,
-        package: None,
-        manager: None,
-        python: None,
+        version: "3.13.12".to_string(),
     };
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
-        python_install_mirrors: vec!["https://mirror.example/python".to_string()],
-        gateway_base: None,
-        country: None,
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        python_mirrors: PythonMirrorPolicy {
+            install_mirrors: vec!["https://mirror.example/python".to_string()],
+        },
+        ..test_runtime_config()
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -1144,28 +1271,17 @@ exit 2
     routes.insert("/mirror/simple".to_string(), b"ok".to_vec());
     let handle = spawn_mock_http_server(listener, routes, 2);
 
-    let item = InstallPlanItem {
+    let item = UvToolPlanItem {
         id: "ruff".to_string(),
-        method: "uv_tool".to_string(),
-        version: None,
-        url: None,
-        sha256: None,
-        archive_binary: None,
-        binary_name: None,
-        destination: None,
-        package: Some("ruff".to_string()),
-        manager: None,
+        package: "ruff".to_string(),
         python: Some("3.13.12".to_string()),
+        binary_name: "ruff".to_string(),
     };
     let cfg = InstallerRuntimeConfig {
-        github_api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
-        mirror_prefixes: Vec::new(),
-        package_indexes: vec![format!("{base}/official/simple"), backup_index.clone()],
-        python_install_mirrors: Vec::new(),
-        gateway_base: None,
-        country: None,
-        http_timeout: Duration::from_secs(5),
-        max_download_bytes: None,
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![format!("{base}/official/simple"), backup_index.clone()],
+        },
+        ..test_runtime_config()
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -1187,6 +1303,140 @@ exit 2
     let used_index = std::fs::read_to_string(&log_path)?;
     assert_eq!(used_index.trim(), backup_index);
 
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_uses_binary_name_override() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    let log_path = managed_dir.join("index.log");
+    write_executable(
+        &managed_dir.join("uv"),
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  echo "$UV_DEFAULT_INDEX" > "{}"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "ruff-lsp 0.1.0"
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+            log_path.display()
+        ),
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index.clone()],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await?;
+    assert_eq!(result.status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.source.as_deref(),
+        Some(format!("package-index:{index}").as_str())
+    );
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(managed_dir.join("ruff-lsp").display().to_string().as_str())
+    );
+    assert_eq!(std::fs::read_to_string(&log_path)?.trim(), index);
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_rejects_missing_binary_after_install() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await
+    .expect_err("missing managed binary should fail");
+    assert!(err.to_string().contains("expected managed binary"));
     handle.join().expect("mock server thread join");
     Ok(())
 }

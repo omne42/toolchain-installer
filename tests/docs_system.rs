@@ -3,6 +3,7 @@ use std::path::Path;
 
 const REQUIRED_DOC_FILES: &[&str] = &[
     "AGENTS.md",
+    "docs/README.md",
     "docs/docs-system-map.md",
     "docs/architecture/system-boundaries.md",
     "docs/architecture/source-layout.md",
@@ -57,9 +58,11 @@ fn readme_and_agents_point_to_doc_entrypoints() {
     let readme = fs::read_to_string(repo_root().join("README.md")).expect("read README.md");
     let agents = fs::read_to_string(repo_root().join("AGENTS.md")).expect("read AGENTS.md");
 
+    assert!(readme.contains("docs/README.md"));
     assert!(readme.contains("docs/docs-system-map.md"));
     assert!(readme.contains("docs/architecture/system-boundaries.md"));
     assert!(readme.contains("docs/contracts/cli-surface.md"));
+    assert!(agents.contains("docs/README.md"));
     assert!(agents.contains("docs/docs-system-map.md"));
     assert!(agents.contains("docs/operations/quality-and-doc-maintenance.md"));
 }
