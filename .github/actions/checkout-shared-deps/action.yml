@@ -28,8 +28,6 @@ runs:
         token: ${{ inputs.token }}
         path: _deps/omne_foundation
         fetch-depth: 1
-        sparse-checkout: |
-          crates/http-kit
 
     - name: Checkout omne-runtime
       uses: actions/checkout@v6
@@ -39,13 +37,6 @@ runs:
         token: ${{ inputs.token }}
         path: _deps/omne-runtime
         fetch-depth: 1
-        sparse-checkout: |
-          crates/omne-archive-primitives
-          crates/omne-fs-primitives
-          crates/omne-host-info-primitives
-          crates/omne-integrity-primitives
-          crates/omne-process-primitives
-          crates/omne-system-package-primitives
 
     - name: Move shared repos into sibling layout
       shell: bash
@@ -54,6 +45,8 @@ runs:
         rm -rf ../omne_foundation ../omne-runtime
         mv _deps/omne_foundation ../omne_foundation
         mv _deps/omne-runtime ../omne-runtime
+        test -f ../omne_foundation/crates/error-kit/Cargo.toml
+        test -f ../omne_foundation/crates/github-kit/Cargo.toml
         test -f ../omne_foundation/crates/http-kit/Cargo.toml
         test -f ../omne-runtime/crates/omne-process-primitives/Cargo.toml
         rmdir _deps 2>/dev/null || true
