@@ -317,9 +317,11 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
             detail: format!(
                 "managed git payload is missing required runtime {}",
                 managed_dir
-                    .join(Path::new(
-                        "git-portable/PortableGit/mingw64/bin/msys-2.0.dll"
-                    ))
+                    .join("git-portable")
+                    .join("PortableGit")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("msys-2.0.dll")
                     .display()
             )
         }
@@ -477,6 +479,7 @@ async fn install_gh_from_public_release_mock_api() -> anyhow::Result<()> {
     let base = format!("http://{addr}");
     let release_body = serde_json::json!({
         "tag_name": "v9.9.9",
+        "body": "x".repeat(20 * 1024),
         "assets": [{
             "name": archive_name,
             "browser_download_url": format!("{base}/asset/{archive_name}"),

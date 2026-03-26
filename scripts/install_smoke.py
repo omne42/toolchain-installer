@@ -482,11 +482,10 @@ def install_release_spec(
     *,
     phase: str,
     managed_dir: Path,
-    workspace: Path,
     spec: dict[str, object],
     attempts: int,
 ) -> None:
-    destination = workspace / str(spec["id"]) / str(spec["binary_name"])
+    destination = Path(str(spec["id"])) / str(spec["binary_name"])
     args = [
         "--json",
         "--managed-dir",
@@ -728,7 +727,7 @@ def phase_bootstrap_uv(binary: Path, target_triple: str, workspace: Path) -> Non
 
 def phase_release_gh(binary: Path, target_triple: str, workspace: Path) -> None:
     managed_dir = workspace / "release-managed"
-    destination = workspace / f"gh{executable_suffix(target_triple)}"
+    destination = Path(f"gh{executable_suffix(target_triple)}")
     release = fetch_json(f"https://api.github.com/repos/{GH_RELEASE_REPO}/releases/latest")
     asset = find_asset_for_suffix(release, gh_asset_suffix_for_target(target_triple))
     args = [
@@ -765,7 +764,6 @@ def phase_release_catalog(binary: Path, target_triple: str, workspace: Path) -> 
             binary,
             phase=RELEASE_CATALOG_PHASE,
             managed_dir=managed_dir,
-            workspace=workspace,
             spec=spec,
             attempts=DOWNLOAD_ATTEMPTS,
         )
@@ -846,7 +844,7 @@ def phase_archive_tree_release(binary: Path, target_triple: str, workspace: Path
     ]
 
     for spec in archive_specs:
-        destination = workspace / spec["id"]
+        destination = Path(str(spec["id"]))
         args = [
             "--json",
             "--managed-dir",
