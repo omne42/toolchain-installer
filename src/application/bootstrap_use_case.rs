@@ -119,20 +119,19 @@ async fn bootstrap_builtin_tool(
             }
         }
         Err(err) => {
-            let status = if !is_supported_builtin_tool(tool) {
-                BootstrapStatus::Unsupported
-            } else if matches!(managed_state, ManagedBootstrapState::ManagedBroken { .. }) {
-                BootstrapStatus::Broken
-            } else {
+            let status = if is_supported_builtin_tool(tool) {
                 BootstrapStatus::Failed
+            } else {
+                BootstrapStatus::Unsupported
             };
-            let detail = match managed_state {
+            let detail = match &managed_state {
                 ManagedBootstrapState::ManagedBroken {
                     detail: broken_detail,
                 } => format!("{broken_detail}; reinstall failed: {}", err.detail()),
                 _ => err.detail(),
             };
-            let error_code = if status == BootstrapStatus::Broken {
+            let error_code = if matches!(managed_state, ManagedBootstrapState::ManagedBroken { .. })
+            {
                 "managed_install_broken".to_string()
             } else {
                 err.error_code().to_string()
@@ -141,16 +140,13 @@ async fn bootstrap_builtin_tool(
             BootstrapItem {
                 tool: tool.to_string(),
                 status,
-                source: (status == BootstrapStatus::Broken).then_some("managed".to_string()),
-                source_kind: (status == BootstrapStatus::Broken)
-                    .then_some(BootstrapSourceKind::Managed),
+                source: None,
+                source_kind: None,
                 archive_match: None,
                 destination: Some(destination.display().to_string()),
                 detail: Some(detail),
-                error_code: matches!(status, BootstrapStatus::Broken | BootstrapStatus::Failed)
-                    .then_some(error_code),
-                failure_code: matches!(status, BootstrapStatus::Broken | BootstrapStatus::Failed)
-                    .then_some(exit_code),
+                error_code: (status == BootstrapStatus::Failed).then_some(error_code),
+                failure_code: (status == BootstrapStatus::Failed).then_some(exit_code),
             }
         }
     }
@@ -192,42 +188,81 @@ pub(crate) fn assess_managed_bootstrap_state(
 }
 
 fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
+    let launcher_path = managed_dir.join("git.cmd");
     let portable_root = managed_dir.join("git-portable");
-    let candidates = [
-        portable_root
-            .join("PortableGit")
-            .join("cmd")
-            .join("git.exe"),
-        portable_root
-            .join("PortableGit")
-            .join("mingw64")
-            .join("bin")
-            .join("git.exe"),
-        portable_root
-            .join("PortableGit")
-            .join("usr")
-            .join("bin")
-            .join("git.exe"),
-        portable_root
-            .join("PortableGit")
-            .join("bin")
-            .join("git.exe"),
-    ];
-    let Some(executable) = candidates.into_iter().find(|candidate| candidate.exists()) else {
+    let launcher = match std::fs::read_to_string(&launcher_path) {
+        Ok(launcher) => launcher,
+        Err(err) => {
+            return ManagedBootstrapState::ManagedBroken {
+                detail: format!(
+                    "managed git launcher exists but cannot be read at {}: {err}",
+                    launcher_path.display()
+                ),
+            };
+        }
+    };
+    let Some(relative_target) = launcher_target_from_script(&launcher) else {
         return ManagedBootstrapState::ManagedBroken {
             detail: format!(
-                "managed git launcher exists but MinGit payload is missing under {}",
-                portable_root.display()
+                "managed git launcher at {} does not point to a MinGit payload",
+                launcher_path.display()
             ),
         };
     };
+    let executable = managed_dir.join(&relative_target);
+    if !executable.exists() {
+        return ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git launcher points to missing MinGit payload {}",
+                executable.display()
+            ),
+        };
+    }
+    if let Some(expected_dll) = expected_mingit_runtime_dll(&relative_target) {
+        let runtime_dll = managed_dir.join(expected_dll);
+        if !runtime_dll.exists() {
+            return ManagedBootstrapState::ManagedBroken {
+                detail: format!(
+                    "managed git payload is missing required runtime {}",
+                    runtime_dll.display()
+                ),
+            };
+        }
+    }
 
     ManagedBootstrapState::ManagedHealthy {
         detail: format!(
-            "managed git launcher points to existing MinGit payload {}",
-            executable.display()
+            "managed git launcher points to healthy MinGit payload {} under {}",
+            executable.display(),
+            portable_root.display()
         ),
     }
+}
+
+fn launcher_target_from_script(script: &str) -> Option<PathBuf> {
+    script.lines().find_map(|line| {
+        let start = line.find("%~dp0")?;
+        let rest = &line[start + 5..];
+        let end = rest.find('"')?;
+        let target = rest[..end].trim();
+        if target.is_empty() {
+            return None;
+        }
+        Some(PathBuf::from(target.replace('\\', "/")))
+    })
+}
+
+fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
+    let normalized = relative_target.to_string_lossy().replace('\\', "/");
+    if normalized.ends_with("PortableGit/mingw64/bin/git.exe")
+        || normalized.ends_with("PortableGit/usr/bin/git.exe")
+        || normalized.ends_with("PortableGit/bin/git.exe")
+    {
+        return relative_target
+            .parent()
+            .map(|parent| parent.join("msys-2.0.dll"));
+    }
+    None
 }
 
 fn managed_binary_reports_version(path: &Path) -> bool {
