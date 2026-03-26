@@ -10,6 +10,7 @@ pub const OUTPUT_SCHEMA_VERSION: u32 = 1;
 pub enum BootstrapStatus {
     Present,
     Installed,
+    Broken,
     Failed,
     Unsupported,
 }
@@ -87,9 +88,12 @@ pub struct BootstrapResult {
 }
 
 pub fn has_failure(items: &[BootstrapItem]) -> bool {
-    items
-        .iter()
-        .any(|item| item.status == BootstrapStatus::Failed)
+    items.iter().any(|item| {
+        matches!(
+            item.status,
+            BootstrapStatus::Broken | BootstrapStatus::Failed
+        )
+    })
 }
 
 pub(crate) fn build_failed_bootstrap_item(

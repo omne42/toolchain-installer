@@ -18,6 +18,9 @@ use omne_system_package_primitives::{
     SystemPackageManager, default_system_package_install_recipes_for_os,
 };
 
+use crate::application::bootstrap_use_case::{
+    ManagedBootstrapState, assess_managed_bootstrap_state,
+};
 use crate::builtin_tools::{
     gh_release_asset_suffix_for_target, install_gh_from_public_release,
     install_git_from_public_release, normalize_requested_tools,
@@ -218,6 +221,73 @@ fn install_plan_contract_rejects_unknown_fields_during_deserialization() {
     .expect_err("unknown fields should fail during deserialization");
 
     assert!(err.to_string().contains("unexpected"));
+}
+
+#[test]
+fn assess_managed_bootstrap_state_reports_missing_install() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("uv");
+    let state = assess_managed_bootstrap_state(
+        "uv",
+        "x86_64-unknown-linux-gnu",
+        &destination,
+        &managed_dir,
+    );
+    assert_eq!(state, ManagedBootstrapState::NeedsInstall);
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn assess_managed_bootstrap_state_reports_healthy_binary_after_version_check() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("uv");
+    write_executable(
+        &destination,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.1.0"
+  exit 0
+fi
+exit 2
+"#,
+    )
+    .expect("write executable");
+
+    let state = assess_managed_bootstrap_state(
+        "uv",
+        "x86_64-unknown-linux-gnu",
+        &destination,
+        &managed_dir,
+    );
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedHealthy {
+            detail: "managed binary passed --version health check".to_string()
+        }
+    );
+}
+
+#[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_git_launcher_without_payload() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+    std::fs::write(&destination, "@echo off\r\n").expect("write git launcher");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git launcher exists but MinGit payload is missing under {}",
+                managed_dir.join("git-portable").display()
+            )
+        }
+    );
 }
 
 #[test]
