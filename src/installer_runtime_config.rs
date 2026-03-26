@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::time::Duration;
 
 use github_kit::GitHubApiRequestOptions;
@@ -189,7 +189,7 @@ impl DownloadPolicy {
 }
 
 fn dedupe_strings(values: Vec<String>) -> Vec<String> {
-    let mut unique = BTreeSet::new();
+    let mut unique = HashSet::new();
     values
         .into_iter()
         .filter(|value| unique.insert(value.clone()))

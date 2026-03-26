@@ -156,6 +156,71 @@ fn runtime_config_does_not_prepend_official_package_index_when_explicit_indexes_
 }
 
 #[test]
+fn runtime_config_preserves_explicit_source_order_while_deduping() {
+    if std::env::var_os("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES").is_some()
+        || std::env::var_os("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES").is_some()
+        || std::env::var_os("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS").is_some()
+    {
+        return;
+    }
+    let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
+        mirror_prefixes: vec![
+            "https://mirror-b.example/releases".to_string(),
+            "https://mirror-a.example/releases".to_string(),
+            "https://mirror-b.example/releases".to_string(),
+        ],
+        package_indexes: vec![
+            "https://index-b.example/simple".to_string(),
+            "https://index-a.example/simple".to_string(),
+            "https://index-b.example/simple".to_string(),
+        ],
+        python_install_mirrors: vec![
+            "https://python-b.example".to_string(),
+            "https://python-a.example".to_string(),
+            "https://python-b.example".to_string(),
+        ],
+        ..ExecutionRequest::default()
+    });
+
+    assert_eq!(
+        cfg.download_sources.mirror_prefixes,
+        vec![
+            "https://mirror-b.example/releases".to_string(),
+            "https://mirror-a.example/releases".to_string(),
+        ]
+    );
+    assert_eq!(
+        cfg.package_indexes.indexes,
+        vec![
+            "https://index-b.example/simple".to_string(),
+            "https://index-a.example/simple".to_string(),
+        ]
+    );
+    assert_eq!(
+        cfg.python_mirrors.install_mirrors,
+        vec![
+            "https://python-b.example".to_string(),
+            "https://python-a.example".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn install_plan_contract_rejects_unknown_fields_during_deserialization() {
+    let err = serde_json::from_str::<InstallPlan>(
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "uv", "unexpected": true }
+  ]
+}"#,
+    )
+    .expect_err("unknown fields should fail during deserialization");
+
+    assert!(err.to_string().contains("unexpected"));
+}
+
+#[test]
 fn installer_errors_preserve_freeform_user_text() {
     let err = validate_plan(
         &InstallPlan {
