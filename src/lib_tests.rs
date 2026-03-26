@@ -23,8 +23,7 @@ use crate::application::bootstrap_use_case::{
 };
 use crate::builtin_tools::{
     gh_release_asset_suffix_for_target, install_gh_from_public_release,
-    install_git_from_public_release, normalize_requested_tools,
-    replace_mingit_installation,
+    install_git_from_public_release, normalize_requested_tools, replace_mingit_installation,
     select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
@@ -836,7 +835,10 @@ fn replace_mingit_installation_swaps_staging_and_cleans_backup() -> anyhow::Resu
     let staging_root = temp.path().join("git-portable.stage");
     let backup_root = temp.path().join("git-portable.backup");
 
-    let old_git = portable_root.join("PortableGit").join("cmd").join("git.exe");
+    let old_git = portable_root
+        .join("PortableGit")
+        .join("cmd")
+        .join("git.exe");
     std::fs::create_dir_all(old_git.parent().expect("old git parent"))?;
     std::fs::write(&old_git, b"OLD-GIT")?;
 

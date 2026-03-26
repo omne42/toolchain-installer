@@ -39,7 +39,7 @@ pub(crate) fn gateway_candidate_for_git_release_asset(
 fn gateway_base_for_git_release(cfg: &InstallerRuntimeConfig) -> Option<&str> {
     cfg.gateway
         .use_for_git_release()
-        .then(|| cfg.gateway.base.as_deref())
+        .then_some(cfg.gateway.base.as_deref())
         .flatten()
 }
 
