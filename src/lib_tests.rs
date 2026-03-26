@@ -35,7 +35,7 @@ use crate::error::ExitCode;
 use crate::external_gateway::{
     infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
 };
-use crate::install_plan::install_plan_validation::validate_plan;
+use crate::install_plan::install_plan_validation::{validate_plan, validate_plan_with_managed_dir};
 use crate::installer_runtime_config::{
     DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
     GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
@@ -1364,10 +1364,11 @@ fn validate_plan_rejects_destination_conflicts() {
             },
         ],
     };
-    let err = validate_plan(
+    let err = validate_plan_with_managed_dir(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
     )
     .expect_err("destination conflicts should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
@@ -1406,13 +1407,181 @@ fn validate_plan_rejects_equivalent_destinations_after_normalization() {
             },
         ],
     };
-    let err = validate_plan(
+    let err = validate_plan_with_managed_dir(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
     )
     .expect_err("normalized destination conflicts should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_npm_global_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("http-server".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "npm-demo".to_string(),
+                method: "npm_global".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("http-server".to_string()),
+                destination: None,
+                package: Some("http-server@14.1.1".to_string()),
+                manager: Some("pnpm".to_string()),
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
+    )
+    .expect_err("npm_global conflict should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_go_install_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("hello".to_string()),
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "go-demo".to_string(),
+                method: "go_install".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("hello".to_string()),
+                destination: None,
+                package: Some("example.com/hello@v1.0.0".to_string()),
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain"),
+    )
+    .expect_err("go_install conflict should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_uv_python_install_root_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "python-demo".to_string(),
+                method: "uv_python".to_string(),
+                version: Some("3.13.12".to_string()),
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "archive-demo".to_string(),
+                method: "archive_tree_release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.zip".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some(".uv-python".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
+    )
+    .expect_err("uv_python install root conflict should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn public_validate_install_plan_stays_structure_only_without_managed_dir_context() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "cargo-demo".to_string(),
+                method: "cargo_install".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("demo".to_string()),
+                destination: None,
+                package: Some("demo".to_string()),
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+
+    crate::validate_install_plan(&plan, Some("x86_64-unknown-linux-gnu"))
+        .expect("public validator should not guess managed_dir-dependent conflicts");
 }
 
 #[test]

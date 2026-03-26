@@ -26,7 +26,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `plan.items[*].id` 必须全局唯一；重复 `id` 会在执行前返回退出码 `2`。
 - `method` 必须是受支持的方法名；未知方法会在执行前直接返回退出码 `2`。
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
-- 解析后的目标路径若发生冲突，会在执行前返回退出码 `2`，不会依赖执行顺序“碰巧覆盖”。
+- 纯库 API `validate_install_plan()` 只做 schema、字段组合、宿主/目标约束和重复 `id` 校验；它不知道 `managed_dir`，因此不会擅自猜测依赖目标目录的全局路径冲突。
+- CLI 与 `validate_install_plan_with_request()` 会在结构校验通过后，再结合真实 `managed_dir` 做全局目标路径冲突校验；若解析后的目标路径发生冲突，会在执行前返回退出码 `2`，不会依赖执行顺序“碰巧覆盖”。
 - `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
 
 ## 方法清单
@@ -128,7 +129,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `workspace_package` 必须显式给出 `destination`，不会默认写入 `managed_dir`。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
-- 所有可解析出最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径。
+- 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径。
+- `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，因此它也参与与该路径相关的冲突校验。
 
 ## 来源探测与回退
 
