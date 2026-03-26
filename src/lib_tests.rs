@@ -1053,6 +1053,117 @@ fn validate_plan_rejects_parent_components_in_destination() {
 }
 
 #[test]
+fn validate_plan_rejects_absolute_destination() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("/tmp/escape".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("absolute destination should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_duplicate_item_ids() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-a.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-b.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("duplicate item ids should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "demo-a".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-a.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("bin/shared-demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "demo-b".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-b.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("bin/shared-demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("destination conflicts should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
 fn validate_plan_rejects_non_http_release_url() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),

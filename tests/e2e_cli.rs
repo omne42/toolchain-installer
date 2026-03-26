@@ -404,6 +404,63 @@ fn relative_release_destination_is_resolved_under_managed_dir() {
 }
 
 #[test]
+fn absolute_release_destination_returns_usage_exit_code() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args([
+        "--method",
+        "release",
+        "--id",
+        "demo-release",
+        "--url",
+        "http://127.0.0.1:9/demo.tar.gz",
+        "--destination",
+        "/tmp/escape",
+    ])
+    .assert()
+    .code(2);
+}
+
+#[test]
+fn duplicate_plan_item_ids_return_usage_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "release", "url": "https://example.com/a.tar.gz" },
+    { "id": "demo", "method": "release", "url": "https://example.com/b.tar.gz" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
+#[test]
+fn conflicting_plan_destinations_return_usage_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo-a", "method": "release", "url": "https://example.com/a.tar.gz", "destination": "bin/shared-demo" },
+    { "id": "demo-b", "method": "release", "url": "https://example.com/b.tar.gz", "destination": "bin/shared-demo" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
+#[test]
 fn archive_release_json_includes_archive_match() {
     let archive_name = "demo-release.tar.gz";
     let archive_bytes = make_tar_gz_archive(&[(
