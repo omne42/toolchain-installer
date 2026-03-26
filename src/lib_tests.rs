@@ -24,6 +24,7 @@ use crate::application::bootstrap_use_case::{
 use crate::builtin_tools::{
     gh_release_asset_suffix_for_target, install_gh_from_public_release,
     install_git_from_public_release, normalize_requested_tools,
+    replace_mingit_installation,
     select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
@@ -761,6 +762,29 @@ async fn install_git_from_public_release_preserves_existing_install_on_failed_up
     assert!(!tmp.path().join("git-portable.backup").exists());
 
     handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[test]
+fn replace_mingit_installation_swaps_staging_and_cleans_backup() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let portable_root = temp.path().join("git-portable");
+    let staging_root = temp.path().join("git-portable.stage");
+    let backup_root = temp.path().join("git-portable.backup");
+
+    let old_git = portable_root.join("PortableGit").join("cmd").join("git.exe");
+    std::fs::create_dir_all(old_git.parent().expect("old git parent"))?;
+    std::fs::write(&old_git, b"OLD-GIT")?;
+
+    let new_git = staging_root.join("PortableGit").join("cmd").join("git.exe");
+    std::fs::create_dir_all(new_git.parent().expect("new git parent"))?;
+    std::fs::write(&new_git, b"NEW-GIT")?;
+
+    replace_mingit_installation(&portable_root, &staging_root, &backup_root)?;
+
+    assert_eq!(std::fs::read(&old_git)?, b"NEW-GIT");
+    assert!(!staging_root.exists());
+    assert!(!backup_root.exists());
     Ok(())
 }
 
