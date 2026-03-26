@@ -851,6 +851,64 @@ EOF
 
 #[cfg(unix)]
 #[test]
+fn npm_global_does_not_report_success_from_unrelated_stale_binary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+/bin/mkdir -p "$npm_config_prefix"
+exit 0
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let stale_binary = managed_dir.join("stale").join("http-server");
+    if let Some(parent) = stale_binary.parent() {
+        std::fs::create_dir_all(parent).expect("create stale parent");
+    }
+    write_executable(
+        &stale_binary,
+        r#"#!/bin/sh
+echo "stale"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-stale",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert_eq!(
+        std::fs::read_to_string(&stale_binary).expect("read stale"),
+        "#!/bin/sh\necho \"stale\"\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn npm_global_pnpm_prepends_pnpm_home_to_path() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
