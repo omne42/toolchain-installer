@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 
@@ -11,8 +11,6 @@ use crate::plan_items::ResolvedPlanItem;
 use super::item_destination_resolution::effective_destination_for_item;
 use super::resolved_plan_item::resolve_plan_item;
 
-const VALIDATION_MANAGED_DIR: &str = "__toolchain_installer_validation__/bin";
-
 pub fn validate_install_plan(
     plan: &InstallPlan,
     requested_target_triple: Option<&str>,
@@ -21,9 +19,7 @@ pub fn validate_install_plan(
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
     let target_triple = resolve_target_triple(requested_target_triple, &host_triple);
-    let validation_managed_dir = PathBuf::from(VALIDATION_MANAGED_DIR);
-    validate_plan_with_managed_dir(plan, &host_triple, &target_triple, &validation_managed_dir)
-        .map(|_| ())
+    validate_plan_structure(plan, &host_triple, &target_triple).map(|_| ())
 }
 
 pub fn validate_install_plan_with_request(
@@ -34,9 +30,10 @@ pub fn validate_install_plan_with_request(
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
     let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
+    let resolved_items = validate_plan_structure(plan, &host_triple, &target_triple)?;
     let managed_dir = resolve_managed_toolchain_dir(request.managed_dir.as_deref(), &target_triple)
         .ok_or_else(|| InstallerError::install("cannot resolve managed toolchain directory"))?;
-    validate_plan_with_managed_dir(plan, &host_triple, &target_triple, &managed_dir).map(|_| ())
+    validate_destination_conflicts(&resolved_items, &target_triple, &managed_dir)
 }
 
 #[cfg(test)]
@@ -45,15 +42,25 @@ pub(crate) fn validate_plan(
     host_triple: &str,
     target_triple: &str,
 ) -> InstallerResult<Vec<ResolvedPlanItem>> {
-    let validation_managed_dir = PathBuf::from(VALIDATION_MANAGED_DIR);
-    validate_plan_with_managed_dir(plan, host_triple, target_triple, &validation_managed_dir)
+    validate_plan_structure(plan, host_triple, target_triple)
 }
 
+#[cfg(test)]
 pub(crate) fn validate_plan_with_managed_dir(
     plan: &InstallPlan,
     host_triple: &str,
     target_triple: &str,
     managed_dir: &Path,
+) -> InstallerResult<Vec<ResolvedPlanItem>> {
+    let resolved_items = validate_plan_structure(plan, host_triple, target_triple)?;
+    validate_destination_conflicts(&resolved_items, target_triple, managed_dir)?;
+    Ok(resolved_items)
+}
+
+pub(crate) fn validate_plan_structure(
+    plan: &InstallPlan,
+    host_triple: &str,
+    target_triple: &str,
 ) -> InstallerResult<Vec<ResolvedPlanItem>> {
     if let Some(schema_version) = plan.schema_version
         && schema_version != PLAN_SCHEMA_VERSION
@@ -74,7 +81,6 @@ pub(crate) fn validate_plan_with_managed_dir(
         .map(|item| resolve_plan_item(item, host_triple, target_triple))
         .collect::<InstallerResult<Vec<_>>>()?;
     validate_unique_ids(&resolved_items)?;
-    validate_destination_conflicts(&resolved_items, target_triple, managed_dir)?;
     Ok(resolved_items)
 }
 
@@ -91,7 +97,7 @@ fn validate_unique_ids(items: &[ResolvedPlanItem]) -> InstallerResult<()> {
     Ok(())
 }
 
-fn validate_destination_conflicts(
+pub(crate) fn validate_destination_conflicts(
     items: &[ResolvedPlanItem],
     target_triple: &str,
     managed_dir: &Path,
