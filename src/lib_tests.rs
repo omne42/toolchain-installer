@@ -24,6 +24,7 @@ use crate::application::bootstrap_use_case::{
 use crate::builtin_tools::{
     gh_release_asset_suffix_for_target, install_gh_from_public_release,
     install_git_from_public_release, normalize_requested_tools,
+    replace_mingit_installation,
     select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
@@ -35,7 +36,7 @@ use crate::error::ExitCode;
 use crate::external_gateway::{
     infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
 };
-use crate::install_plan::install_plan_validation::validate_plan;
+use crate::install_plan::install_plan_validation::{validate_plan, validate_plan_with_managed_dir};
 use crate::installer_runtime_config::{
     DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
     GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
@@ -284,7 +285,71 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_launcher_without_pa
         state,
         ManagedBootstrapState::ManagedBroken {
             detail: format!(
-                "managed git launcher exists but MinGit payload is missing under {}",
+                "managed git launcher at {} does not point to a MinGit payload",
+                destination.display()
+            )
+        }
+    );
+}
+
+#[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let payload = managed_dir
+        .join("git-portable")
+        .join("PortableGit")
+        .join("mingw64")
+        .join("bin");
+    std::fs::create_dir_all(&payload).expect("create payload dir");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\mingw64\\bin\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+    std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git payload is missing required runtime {}",
+                payload.join("msys-2.0.dll").display()
+            )
+        }
+    );
+}
+
+#[test]
+fn assess_managed_bootstrap_state_reports_healthy_windows_git_launcher() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let payload = managed_dir
+        .join("git-portable")
+        .join("PortableGit")
+        .join("mingw64")
+        .join("bin");
+    std::fs::create_dir_all(&payload).expect("create payload dir");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\mingw64\\bin\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+    std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
+    std::fs::write(payload.join("msys-2.0.dll"), b"dll").expect("write runtime");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedHealthy {
+            detail: format!(
+                "managed git launcher points to healthy MinGit payload {} under {}",
+                payload.join("git.exe").display(),
                 managed_dir.join("git-portable").display()
             )
         }
@@ -761,6 +826,29 @@ async fn install_git_from_public_release_preserves_existing_install_on_failed_up
     assert!(!tmp.path().join("git-portable.backup").exists());
 
     handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[test]
+fn replace_mingit_installation_swaps_staging_and_cleans_backup() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let portable_root = temp.path().join("git-portable");
+    let staging_root = temp.path().join("git-portable.stage");
+    let backup_root = temp.path().join("git-portable.backup");
+
+    let old_git = portable_root.join("PortableGit").join("cmd").join("git.exe");
+    std::fs::create_dir_all(old_git.parent().expect("old git parent"))?;
+    std::fs::write(&old_git, b"OLD-GIT")?;
+
+    let new_git = staging_root.join("PortableGit").join("cmd").join("git.exe");
+    std::fs::create_dir_all(new_git.parent().expect("new git parent"))?;
+    std::fs::write(&new_git, b"NEW-GIT")?;
+
+    replace_mingit_installation(&portable_root, &staging_root, &backup_root)?;
+
+    assert_eq!(std::fs::read(&old_git)?, b"NEW-GIT");
+    assert!(!staging_root.exists());
+    assert!(!backup_root.exists());
     Ok(())
 }
 
@@ -1364,10 +1452,11 @@ fn validate_plan_rejects_destination_conflicts() {
             },
         ],
     };
-    let err = validate_plan(
+    let err = validate_plan_with_managed_dir(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
     )
     .expect_err("destination conflicts should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
@@ -1406,13 +1495,181 @@ fn validate_plan_rejects_equivalent_destinations_after_normalization() {
             },
         ],
     };
-    let err = validate_plan(
+    let err = validate_plan_with_managed_dir(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
     )
     .expect_err("normalized destination conflicts should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_npm_global_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("http-server".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "npm-demo".to_string(),
+                method: "npm_global".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("http-server".to_string()),
+                destination: None,
+                package: Some("http-server@14.1.1".to_string()),
+                manager: Some("pnpm".to_string()),
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
+    )
+    .expect_err("npm_global conflict should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_go_install_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("hello".to_string()),
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "go-demo".to_string(),
+                method: "go_install".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("hello".to_string()),
+                destination: None,
+                package: Some("example.com/hello@v1.0.0".to_string()),
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain"),
+    )
+    .expect_err("go_install conflict should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_uv_python_install_root_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "python-demo".to_string(),
+                method: "uv_python".to_string(),
+                version: Some("3.13.12".to_string()),
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: None,
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "archive-demo".to_string(),
+                method: "archive_tree_release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.zip".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some(".uv-python".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
+    )
+    .expect_err("uv_python install root conflict should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn public_validate_install_plan_stays_structure_only_without_managed_dir_context() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "cargo-demo".to_string(),
+                method: "cargo_install".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("demo".to_string()),
+                destination: None,
+                package: Some("demo".to_string()),
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+
+    crate::validate_install_plan(&plan, Some("x86_64-unknown-linux-gnu"))
+        .expect("public validator should not guess managed_dir-dependent conflicts");
 }
 
 #[test]

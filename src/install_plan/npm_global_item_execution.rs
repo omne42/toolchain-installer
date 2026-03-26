@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use omne_process_primitives::{
     HostRecipeRequest, command_path_exists, resolve_command_path, run_host_recipe,
@@ -18,6 +20,12 @@ struct NpmGlobalRecipe {
     source: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileFingerprint {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
 pub(crate) fn execute_npm_global_item(
     item: &NpmGlobalPlanItem,
     target_triple: &str,
@@ -30,6 +38,13 @@ pub(crate) fn execute_npm_global_item(
         target_triple,
         managed_dir,
     )?;
+    let preinstall_state = capture_installation_state(
+        &recipe.binary_path,
+        &item.package_spec,
+        &item.binary_name,
+        recipe.fallback_package_dir.as_deref(),
+        recipe.fallback_search_root.as_deref(),
+    );
     run_host_recipe(
         &HostRecipeRequest::new(recipe.program.as_ref(), &recipe.args).with_env(&recipe.env),
     )
@@ -57,6 +72,20 @@ pub(crate) fn execute_npm_global_item(
             ))
         })?,
     };
+    if !installation_result_is_fresh(
+        &preinstall_state,
+        &destination,
+        &item.package_spec,
+        &item.binary_name,
+        recipe.fallback_package_dir.as_deref(),
+        recipe.fallback_search_root.as_deref(),
+    ) {
+        return Err(OperationError::install(format!(
+            "npm_global install for `{}` did not update the expected binary path {}; refusing to treat a stale managed file as a fresh install",
+            item.package_spec,
+            destination.display()
+        )));
+    }
 
     if !command_path_exists(&destination) {
         return Err(OperationError::install(format!(
@@ -205,6 +234,74 @@ fn resolve_npm_global_destination(
     }
 
     None
+}
+
+fn capture_installation_state(
+    binary_path: &Path,
+    package: &str,
+    binary_name: &str,
+    fallback_package_dir: Option<&Path>,
+    fallback_search_root: Option<&Path>,
+) -> HashMap<PathBuf, Option<FileFingerprint>> {
+    let mut paths = candidate_binary_paths(binary_path, binary_name);
+    if let Some(package_dir) = fallback_package_dir {
+        let manifest_path = package_dir.join("package.json");
+        paths.push(manifest_path.clone());
+        if let Some(destination) = resolve_package_bin_script(package_dir, package, binary_name) {
+            paths.push(destination);
+        }
+    }
+    if let Some(root) = fallback_search_root {
+        paths.extend(find_matching_binary_paths_under_dir(root, binary_name));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .map(|path| {
+            let fingerprint = file_fingerprint(&path);
+            (path, fingerprint)
+        })
+        .collect()
+}
+
+fn installation_result_is_fresh(
+    preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>,
+    destination: &Path,
+    package: &str,
+    binary_name: &str,
+    fallback_package_dir: Option<&Path>,
+    fallback_search_root: Option<&Path>,
+) -> bool {
+    if path_changed(preinstall_state, destination) {
+        return true;
+    }
+
+    if let Some(package_dir) = fallback_package_dir
+        && resolve_package_bin_script(package_dir, package, binary_name).as_deref()
+            == Some(destination)
+        && path_changed(preinstall_state, &package_dir.join("package.json"))
+    {
+        return true;
+    }
+
+    if let Some(root) = fallback_search_root
+        && destination.starts_with(root)
+    {
+        return path_changed(preinstall_state, destination);
+    }
+
+    false
+}
+
+fn path_changed(preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>, path: &Path) -> bool {
+    let Some(current) = file_fingerprint(path) else {
+        return false;
+    };
+    match preinstall_state.get(path) {
+        Some(Some(previous)) => previous != &current,
+        Some(None) | None => true,
+    }
 }
 
 fn npm_global_package_dir(prefix_root: &Path, package: &str) -> PathBuf {
@@ -397,11 +494,22 @@ fn npm_package_name(package: &str) -> &str {
 }
 
 fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf> {
+    find_matching_binary_paths_under_dir(root, binary_name)
+        .into_iter()
+        .find(|path| command_path_exists(path))
+}
+
+fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<PathBuf> {
     let mut stack = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
     while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir).ok()?;
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries {
-            let entry = entry.ok()?;
+            let Ok(entry) = entry else {
+                continue;
+            };
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
@@ -411,13 +519,13 @@ fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf
                 .file_name()
                 .and_then(|value| value.to_str())
                 .is_some_and(|value| binary_name_matches(value, binary_name))
-                && command_path_exists(&path)
             {
-                return Some(path);
+                matches.push(path);
             }
         }
     }
-    None
+    matches.sort();
+    matches
 }
 
 fn prepend_path_env(path: &Path) -> OperationResult<String> {
@@ -445,18 +553,31 @@ fn global_binary_filename(
 }
 
 fn find_binary_at_path(binary_path: &Path, binary_name: &str) -> Option<PathBuf> {
-    if binary_path.is_file() && command_path_exists(binary_path) {
-        return Some(binary_path.to_path_buf());
-    }
+    candidate_binary_paths(binary_path, binary_name)
+        .into_iter()
+        .find(|candidate| candidate.is_file() && command_path_exists(candidate))
+}
 
-    let parent = binary_path.parent()?;
+fn candidate_binary_paths(binary_path: &Path, binary_name: &str) -> Vec<PathBuf> {
+    let mut paths = vec![binary_path.to_path_buf()];
+    let Some(parent) = binary_path.parent() else {
+        return paths;
+    };
     for candidate_name in candidate_binary_names(binary_name) {
         let candidate = parent.join(candidate_name);
-        if candidate.is_file() && command_path_exists(&candidate) {
-            return Some(candidate);
+        if !paths.contains(&candidate) {
+            paths.push(candidate);
         }
     }
-    None
+    paths
+}
+
+fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(FileFingerprint {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+    })
 }
 
 fn candidate_binary_names(binary_name: &str) -> Vec<String> {
@@ -489,8 +610,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_npm_global_recipe, find_binary_at_path, npm_global_package_dir,
-        package_bin_relative_path, resolve_npm_global_destination, resolve_package_bin_script,
+        build_npm_global_recipe, capture_installation_state, file_fingerprint, find_binary_at_path,
+        npm_global_package_dir, package_bin_relative_path, resolve_npm_global_destination,
+        resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
 
@@ -702,6 +824,40 @@ mod tests {
                 None,
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn capture_installation_state_tracks_manifest_and_manifest_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        let package_dir = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"http-server","bin":{"http-server":"bin/http-server"}}"#,
+        )
+        .expect("write manifest");
+        std::fs::write(package_dir.join("bin").join("http-server"), "demo").expect("write bin");
+
+        let captured = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            None,
+        );
+        assert!(captured.contains_key(&package_dir.join("package.json")));
+        assert!(captured.contains_key(&package_dir.join("bin").join("http-server")));
+        assert!(
+            captured
+                .get(&package_dir.join("bin").join("http-server"))
+                .is_some_and(|fingerprint| fingerprint
+                    == &file_fingerprint(&package_dir.join("bin").join("http-server")))
         );
     }
 
