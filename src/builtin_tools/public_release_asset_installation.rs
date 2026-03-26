@@ -228,8 +228,8 @@ async fn download_and_install_mingit_bundle(
         OperationError::install(format!("git executable not under staging dir: {err}"))
     })?;
     let final_git = portable_root.join(relative_git);
-    write_mingit_launcher(destination, managed_dir, &final_git)?;
     replace_mingit_installation(&portable_root, &staging_root, &backup_root)?;
+    write_mingit_launcher(destination, managed_dir, &final_git)?;
 
     Ok(InstallSource::new(
         selected.url,

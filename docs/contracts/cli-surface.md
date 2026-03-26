@@ -89,7 +89,7 @@
   "items": [
     {
       "tool": "git",
-      "status": "present|installed|failed|unsupported",
+      "status": "present|installed|broken|failed|unsupported",
       "source": "https://...",
       "source_kind": "gateway|canonical|mirror|managed|system_package|pip|python_mirror|package_index",
       "archive_match": {
@@ -108,6 +108,7 @@
 
 - `download_failed`
 - `install_failed`
+- `managed_install_broken`
 - `usage_error`
 
 ## 退出码
@@ -131,6 +132,7 @@
 - stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
 - `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
+- `broken` 表示检测到已有托管安装存在，但健康检查失败且本次重装也没有修复它；调用方应把它视为失败。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
 - `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。
 

@@ -259,11 +259,13 @@ fn max_download_bytes_flag_limits_release_downloads() {
     let handle = spawn_mock_http_server(listener, routes, 1);
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let destination = temp.path().join("demo.bin");
+    let managed_dir = temp.path().join("managed");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
             "--max-download-bytes",
             "4",
             "--method",
@@ -273,8 +275,8 @@ fn max_download_bytes_flag_limits_release_downloads() {
             "--url",
             &format!("http://{addr}/demo.bin"),
             "--destination",
+            "demo.bin",
         ])
-        .arg(&destination)
         .assert()
         .code(3)
         .get_output()
@@ -547,7 +549,7 @@ fn archive_tree_release_extracts_directory_tree() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
@@ -561,8 +563,8 @@ fn archive_tree_release_extracts_directory_tree() {
             "--url",
             &format!("http://{addr}/{archive_name}"),
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -608,7 +610,7 @@ fn archive_tree_release_extracts_tar_symlinks() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
@@ -622,8 +624,8 @@ fn archive_tree_release_extracts_tar_symlinks() {
             "--url",
             &format!("http://{addr}/{archive_name}"),
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -659,7 +661,7 @@ fn archive_tree_release_extracts_zip_tree_without_top_level_directory() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
@@ -673,8 +675,8 @@ fn archive_tree_release_extracts_zip_tree_without_top_level_directory() {
             "--url",
             &format!("http://{addr}/{archive_name}"),
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -714,7 +716,7 @@ fn archive_tree_release_retries_mirror_after_invalid_canonical_archive() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
-    let destination = temp.path().join("tree");
+    let destination = managed_dir.join("tree");
     std::fs::create_dir_all(&destination).expect("create destination");
     std::fs::write(destination.join("old.txt"), "stale").expect("write stale marker");
 
@@ -733,8 +735,8 @@ fn archive_tree_release_retries_mirror_after_invalid_canonical_archive() {
             "--url",
             &canonical_url,
             "--destination",
+            "tree",
         ])
-        .arg(&destination)
         .assert()
         .success()
         .get_output()
@@ -880,6 +882,9 @@ fn npm_global_falls_back_to_installed_package_binary() {
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
 /bin/mkdir -p "$npm_config_prefix/lib/node_modules/http-server/bin"
+/bin/cat > "$npm_config_prefix/lib/node_modules/http-server/package.json" <<'EOF'
+{"name":"http-server","bin":{"http-server":"bin/http-server"}}
+EOF
 /bin/cat > "$npm_config_prefix/lib/node_modules/http-server/bin/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
