@@ -34,6 +34,15 @@ pub(crate) enum GoInstallSource {
     PackageSpec(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CargoInstallSource {
+    LocalPath(PathBuf),
+    RegistryPackage {
+        package: String,
+        version: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ReleasePlanItem {
     pub(crate) id: String,
@@ -85,8 +94,7 @@ pub(crate) struct WorkspacePackagePlanItem {
 #[derive(Debug, Clone)]
 pub(crate) struct CargoInstallPlanItem {
     pub(crate) id: String,
-    pub(crate) package: String,
-    pub(crate) version: Option<String>,
+    pub(crate) source: CargoInstallSource,
     pub(crate) binary_name: String,
 }
 

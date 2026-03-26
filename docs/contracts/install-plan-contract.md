@@ -122,7 +122,10 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `release.url` 仅允许 `http` 或 `https`。
 - `archive_tree_release.url` 仅允许 `http` 或 `https`，且资产名必须是受支持的 `.tar.gz`、`.tar.xz` 或 `.zip`。
 - `destination` 若为相对路径，会解析到 `managed_dir` 下。
-- 任意 `destination` 都禁止使用绝对路径，也禁止包含 `..`，避免写出 `managed_dir` 边界。
+- Unix 风格绝对路径如 `/tmp/demo` 会被拒绝，避免绕过托管目录边界。
+- 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
+- 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo` 这类 root-relative 路径。
+- Windows 绝对路径如 `C:\tools\demo.exe` 会按绝对路径处理，不会被错误拼到 `managed_dir` 下。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
@@ -131,6 +134,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径。
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，因此它也参与与该路径相关的冲突校验。
+- `uv_python` 只有在 `managed_dir` 下实际发现匹配版本的 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0` 不构成成功条件。
 
 ## 来源探测与回退
 
@@ -142,6 +146,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_python`
   - 会先尝试官方 Python 下载来源，失败后再按顺序回退到 `--python-mirror` 或 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供的备用站。
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
+- `release`、`archive_tree_release`
+  - 资产类型判断基于 URL 的 path 最后一段，不把 query string 当成资产名的一部分；`tool.tar.gz?download=1` 仍按 `tool.tar.gz` 处理。
 - `release`
   - 通过内置来源规则、镜像前缀与可达性结果确定下载候选顺序。
   - `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 的重复值只去重，不重排显式顺序。

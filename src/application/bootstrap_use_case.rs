@@ -20,6 +20,7 @@ use crate::contracts::{
     OUTPUT_SCHEMA_VERSION,
 };
 use crate::error::{InstallerResult, OperationError, OperationResult};
+use crate::install_plan::item_destination_resolution::validate_managed_path_boundary;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::install_uv_from_public_release;
 
@@ -76,6 +77,19 @@ async fn bootstrap_builtin_tool(
     }
 
     let destination = bootstrap_destination(tool, target_triple, binary_ext, managed_dir);
+    if let Err(detail) = validate_managed_path_boundary(&destination, managed_dir) {
+        return BootstrapItem {
+            tool: tool.to_string(),
+            status: BootstrapStatus::Failed,
+            source: None,
+            source_kind: None,
+            archive_match: None,
+            destination: Some(destination.display().to_string()),
+            detail: Some(detail),
+            error_code: Some("install_failed".to_string()),
+            failure_code: Some(crate::error::ExitCode::Install),
+        };
+    }
     let managed_state =
         assess_managed_bootstrap_state(tool, target_triple, &destination, managed_dir);
     if let ManagedBootstrapState::ManagedHealthy { detail } = &managed_state {

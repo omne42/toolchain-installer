@@ -2,3 +2,4 @@
 /scripts/__pycache__/
 /fixtures/cargo-install-fixture/target/
 /tools/source-layout-check/target/
+.artifact

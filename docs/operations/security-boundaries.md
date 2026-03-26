@@ -28,7 +28,9 @@
 8. 最小日志
    - 只记录必要诊断字段，避免泄露凭证或敏感头。
 9. 路径约束
-   - plan 中的 `destination` 禁止使用绝对路径，也禁止包含 `..`。
+   - Unix 风格绝对路径如 `/tmp/demo` 会直接拒绝，不能借此绕过托管目录。
+   - plan 中的 `destination` 禁止包含 `..`。
+   - 同时拒绝 Windows drive-relative 路径如 `C:foo`，以及 Windows root-relative 路径如 `\foo`。
    - 相对路径只会解析到 `managed_dir` 下。
    - 解析后若两个 item 指向同一目标路径，plan 会在执行前直接拒绝。
 
