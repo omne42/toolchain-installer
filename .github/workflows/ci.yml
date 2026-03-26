@@ -37,8 +37,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -63,8 +61,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,8 +89,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -152,8 +146,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -180,8 +172,6 @@ jobs:
         with:
           repo-owner: ${{ github.repository_owner }}
           token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
-          foundation-ref: feat/toolchain-installer-shared-primitives
-          runtime-ref: feat/toolchain-installer-shared-primitives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
