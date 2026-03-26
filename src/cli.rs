@@ -128,9 +128,7 @@ enum Commands {
 
 pub(crate) async fn run() -> Result<(), InstallerError> {
     let cli = RootCli::parse();
-    let args = match cli.command {
-        Commands::Bootstrap(args) => args,
-    };
+    let Commands::Bootstrap(args) = cli.command;
     let execution_request = args.build_execution_request();
     let result = if args.method.is_some() {
         let plan = args.build_direct_plan()?;
