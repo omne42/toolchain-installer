@@ -33,9 +33,10 @@ pub(crate) async fn execute_release_item(
     let gateway = infer_gateway_candidate_for_git_release(cfg, &url);
     let expected_sha = item.sha256.as_ref();
 
-    let asset_name = url
-        .rsplit('/')
-        .next()
+    let asset_name = item
+        .url
+        .path_segments()
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
         .map(str::to_string)
         .unwrap_or_else(|| format!("{}.bin", item.id));
     let candidates = build_download_candidates(

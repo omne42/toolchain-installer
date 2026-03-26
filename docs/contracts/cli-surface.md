@@ -28,6 +28,7 @@
   - 限制单次 release / bootstrap 下载的最大响应体大小，必须为正整数。
 - `--plan-file <path>`
   - 执行 plan 文件。
+  - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
 - `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`

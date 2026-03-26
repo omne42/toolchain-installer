@@ -3,10 +3,13 @@ use crate::contracts::{
     build_failed_bootstrap_item,
 };
 use crate::error::InstallerResult;
+use crate::error::OperationError;
 use crate::install_plan::install_plan_validation::{
     validate_destination_conflicts, validate_plan_structure,
 };
-use crate::install_plan::item_destination_resolution::effective_destination_for_item;
+use crate::install_plan::item_destination_resolution::{
+    effective_destination_for_item, validate_managed_path_boundary,
+};
 use crate::install_plan::item_method_dispatch::execute_plan_item;
 use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 
@@ -26,9 +29,25 @@ pub async fn apply_install_plan(
 
     let mut items = Vec::new();
     for item in &resolved_items {
-        let destination =
-            effective_destination_for_item(item, &ctx.target_triple, &ctx.managed_dir)
-                .map(|path| path.display().to_string());
+        let destination_path =
+            effective_destination_for_item(item, &ctx.target_triple, &ctx.managed_dir);
+        let destination = destination_path
+            .as_ref()
+            .map(|path| path.display().to_string());
+        if let Some(path) = destination_path.as_ref()
+            && let Err(detail) = validate_managed_path_boundary(path, &ctx.managed_dir)
+        {
+            let err = OperationError::install(detail);
+            let (detail, error_code, exit_code) = err.into_failure_parts();
+            items.push(build_failed_bootstrap_item(
+                item.id().to_string(),
+                destination,
+                detail,
+                error_code,
+                exit_code,
+            ));
+            continue;
+        }
         let bootstrap_item = match execute_plan_item(
             item,
             &ctx.target_triple,

@@ -1087,6 +1087,144 @@ async fn apply_install_plan_installs_archive_release_and_reports_archive_match()
     Ok(())
 }
 
+#[tokio::test]
+async fn apply_install_plan_installs_archive_release_when_url_has_query() -> anyhow::Result<()> {
+    let archive_name = "demo-query.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[(
+        "demo-query/bin/demo",
+        b"#!/bin/sh\necho archive-demo-query\n".as_slice(),
+        0o755,
+    )])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    routes.insert(
+        format!("/asset/{archive_name}?download=1"),
+        routes[&format!("/asset/{archive_name}")].clone(),
+    );
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo-release".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some(format!("{base}/asset/{archive_name}?download=1")),
+            sha256: None,
+            archive_binary: None,
+            binary_name: Some("demo".to_string()),
+            destination: Some("demo".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir.clone()),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(
+        result.items[0].status,
+        BootstrapStatus::Installed,
+        "detail={:?}",
+        result.items[0].detail
+    );
+    assert_eq!(
+        result.items[0]
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::TarGz, "demo-query/bin/demo"))
+    );
+    let installed = std::fs::read_to_string(managed_dir.join("demo"))?;
+    assert!(installed.contains("archive-demo-query"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_install_plan_installs_archive_tree_release_when_url_has_query() -> anyhow::Result<()>
+{
+    let archive_name = "demo-tree.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[
+        (
+            "demo-tree/bin/demo",
+            b"#!/bin/sh\necho tree\n".as_slice(),
+            0o755,
+        ),
+        ("demo-tree/LICENSE", b"license\n".as_slice(), 0o644),
+    ])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    routes.insert(
+        format!("/asset/{archive_name}?download=1"),
+        routes[&format!("/asset/{archive_name}")].clone(),
+    );
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo-tree".to_string(),
+            method: "archive_tree_release".to_string(),
+            version: None,
+            url: Some(format!("{base}/asset/{archive_name}?download=1")),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("tree".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir.clone()),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(
+        result.items[0].status,
+        BootstrapStatus::Installed,
+        "detail={:?}",
+        result.items[0].detail
+    );
+    assert!(
+        managed_dir
+            .join("tree")
+            .join("demo-tree")
+            .join("bin")
+            .join("demo")
+            .exists()
+    );
+    assert!(
+        managed_dir
+            .join("tree")
+            .join("demo-tree")
+            .join("LICENSE")
+            .exists()
+    );
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
 #[test]
 fn install_binary_from_tar_xz_uses_hint() -> anyhow::Result<()> {
     let archive = make_tar_xz_archive(&[(
@@ -1959,6 +2097,54 @@ exit 2
     assert!(
         err.detail()
             .contains("no managed Python executable matching `3.13.12` was found")
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn apply_install_plan_rejects_destination_escape_via_symlink() -> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&managed_dir)?;
+    std::fs::create_dir_all(&outside)?;
+    symlink(&outside, managed_dir.join("escape"))?;
+
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo-release".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.bin".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: Some("demo".to_string()),
+            destination: Some("escape/demo".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+
+    let result = crate::apply_install_plan(
+        &plan,
+        &ExecutionRequest {
+            managed_dir: Some(managed_dir.clone()),
+            ..ExecutionRequest::default()
+        },
+    )
+    .await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Failed);
+    assert!(
+        result.items[0]
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("escapes via symlink component")
     );
     Ok(())
 }

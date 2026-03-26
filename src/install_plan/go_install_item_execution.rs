@@ -25,21 +25,23 @@ pub(crate) fn execute_go_install_item(
     let env = vec![("GOBIN".to_string(), managed_dir.display().to_string())];
     let resolved_package = match &item.source {
         GoInstallSource::LocalPath(package_path) => {
-            let working_directory = if package_path.is_dir() {
-                package_path.as_path()
-            } else {
-                package_path.parent().ok_or_else(|| {
-                    OperationError::install(format!(
-                        "cannot determine go_install working directory for {}",
-                        package_path.display()
-                    ))
-                })?
-            };
+            if !package_path.exists() {
+                return Err(OperationError::install(format!(
+                    "go_install local path does not exist: {}",
+                    package_path.display()
+                )));
+            }
+            if !package_path.is_dir() {
+                return Err(OperationError::install(format!(
+                    "go_install local path must be a directory: {}",
+                    package_path.display()
+                )));
+            }
             let args = vec!["install".to_string(), ".".to_string()];
             run_host_recipe(
                 &HostRecipeRequest::new("go".as_ref(), &args)
                     .with_env(&env)
-                    .with_working_directory(working_directory),
+                    .with_working_directory(package_path),
             )
             .map_err(OperationError::from_host_recipe)?;
             package_path.display().to_string()

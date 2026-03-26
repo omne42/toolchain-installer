@@ -24,16 +24,13 @@ pub(crate) async fn execute_archive_tree_release_item(
         .destination
         .as_deref()
         .map(|destination| {
-            if destination.is_absolute() {
-                destination.to_path_buf()
-            } else {
-                managed_dir.join(destination)
-            }
+            super::item_destination_resolution::resolve_destination_path(destination, managed_dir)
         })
         .unwrap_or_else(|| managed_dir.join(&item.id));
-    let asset_name = url
-        .rsplit('/')
-        .next()
+    let asset_name = item
+        .url
+        .path_segments()
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
         .map(str::to_string)
         .unwrap_or_else(|| format!("{}.archive", item.id));
     if !is_archive_tree_asset_name(&asset_name) {

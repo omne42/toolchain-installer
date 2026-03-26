@@ -6,7 +6,7 @@ use omne_process_primitives::{
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
-use crate::plan_items::CargoInstallPlanItem;
+use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
 use super::item_destination_resolution::resolve_cargo_install_destination;
 
@@ -25,19 +25,33 @@ pub(crate) fn execute_cargo_install_item(
     let destination = resolve_cargo_install_destination(item, target_triple, managed_dir);
 
     let mut args = vec!["install".to_string()];
-    let package_path = Path::new(&item.package);
-    let source = if package_path.exists() {
-        args.push("--path".to_string());
-        args.push(package_path.display().to_string());
-        format!("cargo:path:{}", package_path.display())
-    } else {
-        args.push("--locked".to_string());
-        args.push(item.package.clone());
-        if let Some(version) = item.version.as_deref() {
-            args.push("--version".to_string());
-            args.push(version.to_string());
+    let source = match &item.source {
+        CargoInstallSource::LocalPath(package_path) => {
+            if !package_path.exists() {
+                return Err(OperationError::install(format!(
+                    "cargo_install local path does not exist: {}",
+                    package_path.display()
+                )));
+            }
+            if !package_path.is_dir() {
+                return Err(OperationError::install(format!(
+                    "cargo_install local path must be a directory: {}",
+                    package_path.display()
+                )));
+            }
+            args.push("--path".to_string());
+            args.push(package_path.display().to_string());
+            format!("cargo:path:{}", package_path.display())
         }
-        format!("cargo:crate:{}", item.package)
+        CargoInstallSource::RegistryPackage { package, version } => {
+            args.push("--locked".to_string());
+            args.push(package.clone());
+            if let Some(version) = version.as_deref() {
+                args.push("--version".to_string());
+                args.push(version.to_string());
+            }
+            format!("cargo:crate:{package}")
+        }
     };
     args.push("--root".to_string());
     args.push(install_root.display().to_string());

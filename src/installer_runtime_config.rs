@@ -222,3 +222,68 @@ fn parse_nonempty_env(name: &str) -> Option<String> {
         .map(|raw| raw.trim().to_string())
         .filter(|value| !value.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_source_policy_preserves_request_order_while_deduping() {
+        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
+            mirror_prefixes: vec![
+                "https://mirror-b.example/".to_string(),
+                "https://mirror-a.example/".to_string(),
+                "https://mirror-b.example/".to_string(),
+            ],
+            ..ExecutionRequest::default()
+        });
+
+        assert_eq!(
+            cfg.download_sources.mirror_prefixes,
+            vec![
+                "https://mirror-b.example/".to_string(),
+                "https://mirror-a.example/".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn package_index_policy_preserves_request_order_while_deduping() {
+        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
+            package_indexes: vec![
+                "https://mirror-b.example/simple".to_string(),
+                "https://mirror-a.example/simple".to_string(),
+                "https://mirror-b.example/simple".to_string(),
+            ],
+            ..ExecutionRequest::default()
+        });
+
+        assert_eq!(
+            cfg.package_indexes.indexes,
+            vec![
+                "https://mirror-b.example/simple".to_string(),
+                "https://mirror-a.example/simple".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn python_mirror_policy_preserves_request_order_while_deduping() {
+        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
+            python_install_mirrors: vec![
+                "https://mirror-b.example/python".to_string(),
+                "https://mirror-a.example/python".to_string(),
+                "https://mirror-b.example/python".to_string(),
+            ],
+            ..ExecutionRequest::default()
+        });
+
+        assert_eq!(
+            cfg.python_mirrors.install_mirrors,
+            vec![
+                "https://mirror-b.example/python".to_string(),
+                "https://mirror-a.example/python".to_string(),
+            ]
+        );
+    }
+}
