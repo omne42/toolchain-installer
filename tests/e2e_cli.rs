@@ -990,6 +990,136 @@ echo "stale"
 
 #[cfg(unix)]
 #[test]
+fn npm_global_rejects_stale_manifest_binary_when_install_did_not_refresh_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+package_dir="$npm_config_prefix/lib/node_modules/http-server"
+/bin/mkdir -p "$package_dir/bin"
+if [ ! -f "$package_dir/package.json" ]; then
+  /bin/cat > "$package_dir/package.json" <<'EOF'
+{"name":"http-server","bin":{"http-server":"bin/http-server"}}
+EOF
+fi
+exit 0
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let package_dir = managed_dir
+        .join("lib")
+        .join("node_modules")
+        .join("http-server");
+    std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+    std::fs::write(
+        package_dir.join("package.json"),
+        r#"{"name":"http-server","bin":{"http-server":"bin/http-server"}}"#,
+    )
+    .expect("write manifest");
+    write_executable(
+        &package_dir.join("bin").join("http-server"),
+        r#"#!/bin/sh
+echo "stale"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-manifest-stale",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_global_manifest_path_beats_nested_dependency_binary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+package_dir="$npm_config_prefix/lib/node_modules/http-server"
+/bin/mkdir -p "$package_dir/bin"
+/bin/mkdir -p "$package_dir/node_modules/other/bin"
+/bin/cat > "$package_dir/package.json" <<'EOF'
+{"name":"http-server","bin":{"http-server":"bin/http-server"}}
+EOF
+/bin/cat > "$package_dir/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "primary"
+EOF
+/bin/cat > "$package_dir/node_modules/other/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "nested"
+EOF
+/bin/chmod +x "$package_dir/bin/http-server"
+/bin/chmod +x "$package_dir/node_modules/other/bin/http-server"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-nested-dep",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = managed_dir
+        .join("lib")
+        .join("node_modules")
+        .join("http-server")
+        .join("bin")
+        .join("http-server");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn npm_global_pnpm_prepends_pnpm_home_to_path() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
