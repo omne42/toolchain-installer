@@ -61,6 +61,9 @@ pub(crate) async fn install_gh_from_public_release(
         &cfg.download_sources.mirror_prefixes,
         None,
     );
+    let archive_binary_hint = target_triple
+        .contains("windows")
+        .then(|| format!("bin/gh{binary_ext}"));
     let downloaded = download_and_install_binary_from_archive(
         client,
         &candidates,
@@ -70,7 +73,7 @@ pub(crate) async fn install_gh_from_public_release(
             asset_name: &asset.name,
             binary_name: &format!("gh{binary_ext}"),
             tool_name: "gh",
-            archive_binary_hint: Some(&format!("bin/gh{binary_ext}")),
+            archive_binary_hint: archive_binary_hint.as_deref(),
             expected_sha256: Some(&expected_sha),
             max_download_bytes: cfg.download.max_download_bytes,
         },

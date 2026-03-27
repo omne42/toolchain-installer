@@ -47,6 +47,8 @@ pub(crate) async fn install_uv_from_public_release(
         &cfg.download_sources.mirror_prefixes,
         None,
     );
+    let archive_binary_hint =
+        uv_archive_binary_hint(&asset.name, executable_suffix_for_target(target_triple));
     let downloaded = download_and_install_binary_from_archive(
         client,
         &candidates,
@@ -56,10 +58,7 @@ pub(crate) async fn install_uv_from_public_release(
             asset_name: &asset.name,
             binary_name: &format!("uv{}", executable_suffix_for_target(target_triple)),
             tool_name: "uv",
-            archive_binary_hint: Some(&format!(
-                "uv{}",
-                executable_suffix_for_target(target_triple)
-            )),
+            archive_binary_hint: archive_binary_hint.as_deref(),
             expected_sha256: Some(&expected_sha),
             max_download_bytes: cfg.download.max_download_bytes,
         },
@@ -88,6 +87,18 @@ fn select_uv_asset_for_target<'a>(
     };
     let name = format!("uv-{target_triple}{archive_ext}");
     assets.iter().find(|asset| asset.name == name)
+}
+
+fn uv_archive_binary_hint(asset_name: &str, binary_ext: &str) -> Option<String> {
+    let root = archive_root_name(asset_name)?;
+    Some(format!("{root}/uv{binary_ext}"))
+}
+
+fn archive_root_name(asset_name: &str) -> Option<&str> {
+    asset_name
+        .strip_suffix(".tar.gz")
+        .or_else(|| asset_name.strip_suffix(".tar.xz"))
+        .or_else(|| asset_name.strip_suffix(".zip"))
 }
 
 async fn fetch_latest_release_metadata(

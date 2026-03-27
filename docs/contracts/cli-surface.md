@@ -130,6 +130,7 @@
 
 - `schema_version` 升级前必须保持向后兼容。
 - 已有输出字段只能追加，不能重命名或删除。
+- `status=present` 只表示宿主机上已经发现可实际执行的同名命令；PATH 中同名但不可执行的普通文件不会被当成已安装。
 - 调用方应依赖 `status`、`detail` 与 `error_code`，不要解析 stderr 文本。
 - stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
 - `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
