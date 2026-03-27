@@ -1363,6 +1363,118 @@ async fn apply_install_plan_installs_archive_release_when_url_has_query() -> any
 }
 
 #[tokio::test]
+async fn apply_install_plan_installs_archive_release_with_relative_archive_binary_hint()
+-> anyhow::Result<()> {
+    let archive_name = "node-v22.14.0-linux-x64.tar.xz";
+    let archive_bytes = make_tar_xz_archive(&[(
+        "node-v22.14.0-linux-x64/bin/node",
+        b"#!/bin/sh\necho node-relative-hint\n".as_slice(),
+        0o755,
+    )])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "node-release".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some(format!("{base}/asset/{archive_name}")),
+            sha256: None,
+            archive_binary: Some("bin/node".to_string()),
+            binary_name: Some("node".to_string()),
+            destination: Some("node".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir.clone()),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.items[0]
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((
+            BootstrapArchiveFormat::TarXz,
+            "node-v22.14.0-linux-x64/bin/node"
+        ))
+    );
+    let installed = std::fs::read_to_string(managed_dir.join("node"))?;
+    assert!(installed.contains("node-relative-hint"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_install_plan_installs_archive_release_with_unrooted_archive_binary_fallback()
+-> anyhow::Result<()> {
+    let archive_name = "7z2600-linux-x64.tar.xz";
+    let archive_bytes =
+        make_tar_xz_archive(&[("7zz", b"#!/bin/sh\necho root-7zz\n".as_slice(), 0o755)])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes.clone());
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "7zip-release".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some(format!("{base}/asset/{archive_name}")),
+            sha256: None,
+            archive_binary: Some("7zz".to_string()),
+            binary_name: Some("7zz".to_string()),
+            destination: Some("7zz".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir.clone()),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.items[0]
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::TarXz, "7zz"))
+    );
+    let installed = std::fs::read_to_string(managed_dir.join("7zz"))?;
+    assert!(installed.contains("root-7zz"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
 async fn apply_install_plan_installs_archive_tree_release_when_url_has_query() -> anyhow::Result<()>
 {
     let archive_name = "demo-tree.tar.gz";

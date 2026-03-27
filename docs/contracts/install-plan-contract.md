@@ -127,6 +127,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo` 这类 root-relative 路径。
 - 托管落盘方法的 Windows 绝对路径如 `C:\tools\demo.exe` 同样会被拒绝；只有 `workspace_package` 会把绝对目录当作工作区路径原样使用。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
+- `release.archive_binary` 表示 archive 内目标二进制的相对路径；installer 会先规范斜杠，并在常见“单一根目录” archive 上自动补齐该根目录，兼容 shared runtime 当前要求的精确 archive 路径匹配。
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
