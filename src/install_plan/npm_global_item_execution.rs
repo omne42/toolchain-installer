@@ -291,8 +291,7 @@ fn installation_result_is_acceptable(
         && resolve_package_bin_script(package_dir, package, binary_name).as_deref()
             == Some(destination)
     {
-        return path_changed(preinstall_state, &package_dir.join("package.json"))
-            || destination_preexisted(preinstall_state, destination);
+        return path_changed(preinstall_state, &package_dir.join("package.json"));
     }
 
     if let Some(root) = fallback_search_root
