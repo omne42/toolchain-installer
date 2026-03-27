@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 
@@ -102,19 +102,34 @@ pub(crate) fn validate_destination_conflicts(
     target_triple: &str,
     managed_dir: &Path,
 ) -> InstallerResult<()> {
-    let mut destinations = HashMap::new();
+    let mut destinations: Vec<(PathBuf, String)> = Vec::new();
     for item in items {
         let Some(destination) = effective_destination_for_item(item, target_triple, managed_dir)
         else {
             continue;
         };
-        if let Some(existing_id) = destinations.insert(destination.clone(), item.id().to_string()) {
-            return Err(InstallerError::usage(format!(
-                "install plan items `{existing_id}` and `{}` resolve to the same destination `{}`",
-                item.id(),
-                destination.display()
-            )));
+        for (existing_destination, existing_id) in &destinations {
+            if *existing_destination == destination {
+                return Err(InstallerError::usage(format!(
+                    "install plan items `{existing_id}` and `{}` resolve to the same destination `{}`",
+                    item.id(),
+                    destination.display()
+                )));
+            }
+            if destinations_overlap(existing_destination, &destination) {
+                return Err(InstallerError::usage(format!(
+                    "install plan items `{existing_id}` and `{}` resolve to overlapping destinations `{}` and `{}`",
+                    item.id(),
+                    existing_destination.display(),
+                    destination.display()
+                )));
+            }
         }
+        destinations.push((destination, item.id().to_string()));
     }
     Ok(())
+}
+
+fn destinations_overlap(existing: &Path, candidate: &Path) -> bool {
+    candidate.starts_with(existing) || existing.starts_with(candidate)
 }

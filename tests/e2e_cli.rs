@@ -1353,13 +1353,33 @@ EOF
         .stdout
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
-    let expected = temp.path().join("bin").join("demo-cargo");
+    let expected = managed_dir.join("bin").join("demo-cargo");
     assert_eq!(json["items"][0]["status"], "installed");
     assert_eq!(
         json["items"][0]["destination"],
         expected.display().to_string()
     );
     assert!(expected.exists());
+}
+
+#[test]
+fn conflicting_nested_plan_destinations_return_usage_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("nested-conflict-plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "sdk-tree", "method": "archive_tree_release", "url": "https://example.com/sdk.tar.gz", "destination": "sdk" },
+    { "id": "sdk-launcher", "method": "release", "url": "https://example.com/sdk-launcher.tar.gz", "destination": "sdk/bin/demo" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
 }
 
 #[test]
