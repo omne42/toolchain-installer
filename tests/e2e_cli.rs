@@ -427,7 +427,8 @@ fn relative_release_destination_is_resolved_under_managed_dir() {
     assert_eq!(
         json["items"][0]["destination"],
         managed_dir
-            .join("nested/demo-release")
+            .join("nested")
+            .join("demo-release")
             .display()
             .to_string()
     );
