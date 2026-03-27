@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub struct ExecutionRequest {
     pub target_triple: Option<String>,
     pub managed_dir: Option<PathBuf>,
+    pub plan_base_dir: Option<PathBuf>,
     pub mirror_prefixes: Vec<String>,
     pub package_indexes: Vec<String>,
     pub python_install_mirrors: Vec<String>,

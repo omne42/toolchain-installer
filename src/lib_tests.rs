@@ -35,7 +35,9 @@ use crate::error::ExitCode;
 use crate::external_gateway::{
     infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
 };
-use crate::install_plan::install_plan_validation::{validate_plan, validate_plan_with_managed_dir};
+use crate::install_plan::install_plan_validation::{
+    validate_plan, validate_plan_with_base_dir, validate_plan_with_managed_dir,
+};
 use crate::installer_runtime_config::{
     DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
     GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
@@ -1900,6 +1902,51 @@ fn validate_plan_rejects_go_install_destination_conflicts() {
 }
 
 #[test]
+fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "demo-a".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-a.zip".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("Foo.exe".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "demo-b".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo-b.zip".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("foo.exe".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+        Path::new("/tmp/toolchain"),
+    )
+    .expect_err("windows targets should treat case-folded destinations as conflicts");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(err.to_string().contains("same destination"));
+}
+
+#[test]
 fn validate_plan_rejects_nested_destination_conflicts() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
@@ -2022,6 +2069,86 @@ fn public_validate_install_plan_stays_structure_only_without_managed_dir_context
 
     crate::validate_install_plan(&plan, None)
         .expect("public validator should not guess managed_dir-dependent conflicts");
+}
+
+#[test]
+fn validate_plan_resolves_cargo_install_local_paths_against_plan_base_dir() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "cargo-demo".to_string(),
+            method: "cargo_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("tools/cargo-demo".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+    let plan_base_dir = Path::new("/tmp/install-plans/demo");
+
+    let resolved = validate_plan_with_base_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        plan_base_dir,
+    )
+    .expect("cargo local path should resolve");
+
+    match &resolved[0] {
+        crate::plan_items::ResolvedPlanItem::CargoInstall(item) => {
+            assert_eq!(
+                item.source,
+                crate::plan_items::CargoInstallSource::LocalPath(
+                    plan_base_dir.join("tools/cargo-demo")
+                )
+            );
+        }
+        other => panic!("unexpected resolved item: {other:?}"),
+    }
+}
+
+#[test]
+fn validate_plan_resolves_go_install_local_paths_against_plan_base_dir() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "go-demo".to_string(),
+            method: "go_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("./cmd/demo".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+    let plan_base_dir = Path::new("/tmp/install-plans/demo");
+
+    let resolved = validate_plan_with_base_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        plan_base_dir,
+    )
+    .expect("go local path should resolve");
+
+    match &resolved[0] {
+        crate::plan_items::ResolvedPlanItem::GoInstall(item) => {
+            assert_eq!(
+                item.source,
+                crate::plan_items::GoInstallSource::LocalPath(plan_base_dir.join("./cmd/demo"))
+            );
+        }
+        other => panic!("unexpected resolved item: {other:?}"),
+    }
 }
 
 #[test]

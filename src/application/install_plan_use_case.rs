@@ -23,7 +23,12 @@ pub async fn apply_install_plan(
         .map(str::to_string)
         .ok_or_else(|| crate::error::InstallerError::install("unsupported host platform/arch"))?;
     let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
-    let resolved_items = validate_plan_structure(plan, &host_triple, &target_triple)?;
+    let resolved_items = validate_plan_structure(
+        plan,
+        &host_triple,
+        &target_triple,
+        request.plan_base_dir.as_deref(),
+    )?;
     let ctx = ExecutionContext::for_install_plan(request)?;
     validate_destination_conflicts(&resolved_items, &ctx.target_triple, &ctx.managed_dir)?;
 
