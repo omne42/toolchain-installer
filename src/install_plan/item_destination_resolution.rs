@@ -166,14 +166,24 @@ pub(crate) fn validate_destination(
                 "plan item `{item_id}` destination `{raw_destination}` cannot use a Windows root-relative path such as `\\foo`"
             )));
         }
-        WindowsDestinationKind::Absolute | WindowsDestinationKind::NotWindows => {}
+        WindowsDestinationKind::Absolute => {
+            if windows_destination_has_no_file_name(raw_destination) {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{item_id}` destination `{raw_destination}` must include a file name"
+                )));
+            }
+            if windows_destination_has_parent_component(raw_destination) {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{item_id}` destination `{raw_destination}` cannot contain `..`"
+                )));
+            }
+            return Ok(PathBuf::from(raw_destination));
+        }
+        WindowsDestinationKind::NotWindows => {}
     }
 
     let path = PathBuf::from(raw_destination);
-    if raw_destination.starts_with('/')
-        || path.is_absolute()
-        || windows_kind == WindowsDestinationKind::Absolute
-    {
+    if raw_destination.starts_with('/') || path.is_absolute() {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
         )));
@@ -261,6 +271,16 @@ fn classify_windows_destination(raw: &str) -> WindowsDestinationKind {
     WindowsDestinationKind::NotWindows
 }
 
+fn windows_destination_has_no_file_name(raw: &str) -> bool {
+    raw.split(['\\', '/'])
+        .rfind(|component| !component.is_empty())
+        .is_none_or(|component| component == "." || component == "..")
+}
+
+fn windows_destination_has_parent_component(raw: &str) -> bool {
+    raw.split(['\\', '/']).any(|component| component == "..")
+}
+
 fn reject_symlink_path_component(candidate: &Path, managed_dir: &Path) -> Result<(), String> {
     let metadata = match std::fs::symlink_metadata(candidate) {
         Ok(metadata) => metadata,
@@ -343,9 +363,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_destination_rejects_windows_absolute_path() {
-        let err = validate_destination("demo", "C:\\tools\\demo.exe").expect_err("should reject");
-        assert!(err.to_string().contains("cannot be an absolute path"));
+    fn validate_destination_accepts_windows_absolute_path() {
+        let destination =
+            validate_destination("demo", "C:\\tools\\demo.exe").expect("should allow");
+        assert_eq!(destination, PathBuf::from("C:\\tools\\demo.exe"));
+    }
+
+    #[test]
+    fn validate_destination_rejects_parent_components_in_windows_absolute_path() {
+        let err =
+            validate_destination("demo", "C:\\tools\\..\\demo.exe").expect_err("should reject");
+        assert!(err.to_string().contains("cannot contain `..`"));
     }
 
     #[cfg(unix)]
