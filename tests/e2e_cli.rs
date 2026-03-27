@@ -1576,7 +1576,7 @@ edition = "2021"
         .stdout
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
-    let expected = temp.path().join("bin").join("demo-cli");
+    let expected = managed_dir.join("bin").join("demo-cli");
     assert_eq!(json["items"][0]["status"], "installed");
     assert_eq!(
         json["items"][0]["destination"],

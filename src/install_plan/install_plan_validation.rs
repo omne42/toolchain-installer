@@ -143,7 +143,6 @@ pub(crate) fn validate_destination_conflicts(
             }
         }
         destinations.push((destination, normalized_destination, item.id().to_string()));
-        destinations.push((destination, normalized_destination, item.id().to_string()));
     }
     Ok(())
 }
