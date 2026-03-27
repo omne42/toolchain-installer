@@ -48,10 +48,10 @@ use crate::managed_toolchain::managed_root_dir::{
     default_managed_dir_under_data_root, resolve_managed_toolchain_dir,
 };
 use crate::managed_toolchain::{
-    execute_uv_python_item, execute_uv_tool_item, find_managed_python_executable,
-    install_uv_from_public_release, managed_uv_is_healthy,
+    execute_managed_toolchain_item, execute_uv_python_item, execute_uv_tool_item,
+    find_managed_python_executable, install_uv_from_public_release, managed_uv_is_healthy,
 };
-use crate::plan_items::{UvPythonPlanItem, UvToolPlanItem};
+use crate::plan_items::{ManagedUvPlanItem, ResolvedPlanItem, UvPythonPlanItem, UvToolPlanItem};
 
 fn test_runtime_config() -> InstallerRuntimeConfig {
     InstallerRuntimeConfig {
@@ -1053,6 +1053,83 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     );
     let installed = std::fs::read_to_string(&destination)?;
     assert!(installed.contains("uv 0.11.0"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[tokio::test]
+async fn execute_managed_uv_item_reinstalls_broken_existing_binary() -> anyhow::Result<()> {
+    let archive_name = "uv-x86_64-unknown-linux-gnu.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[(
+        "uv-x86_64-unknown-linux-gnu/uv",
+        b"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo uv 0.11.0\n  exit 0\nfi\nexit 2\n"
+            .as_slice(),
+        0o755,
+    )])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "0.11.0",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": format!("{base}/asset/{archive_name}"),
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/astral-sh/uv/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  exit 42\nfi\nexit 42\n",
+    )?;
+
+    let result = execute_managed_toolchain_item(
+        &ResolvedPlanItem::Uv(ManagedUvPlanItem {
+            id: "uv".to_string(),
+        }),
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await?;
+    assert_eq!(result.status, BootstrapStatus::Installed);
+    assert_eq!(result.source_kind, Some(BootstrapSourceKind::Canonical));
+    assert!(
+        result
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("reinstalled managed uv after broken binary")
+    );
+    assert!(std::fs::read_to_string(managed_dir.join("uv"))?.contains("uv 0.11.0"));
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2505,6 +2582,71 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
+async fn execute_uv_python_item_requires_exact_patch_match() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+    )?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  install_root="$UV_PYTHON_INSTALL_DIR/cpython-3.13.1-linux-x86_64-gnu/bin"
+  mkdir -p "$install_root"
+  cat > "$install_root/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.1"
+EOF
+  chmod +x "$install_root/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13.1".to_string(),
+        version: "3.13.1".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await?;
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(
+            managed_python_installation_dir(&managed_dir)
+                .join("cpython-3.13.1-linux-x86_64-gnu")
+                .join("bin")
+                .join("python3.13")
+                .display()
+                .to_string()
+                .as_str()
+        )
+    );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
 async fn execute_uv_python_item_fails_when_no_matching_interpreter_is_created() -> anyhow::Result<()>
 {
     let tmp = tempfile::tempdir()?;
@@ -2681,22 +2823,8 @@ async fn execute_uv_tool_item_reinstalls_broken_managed_uv_before_install() -> a
     let archive_name = "uv-x86_64-unknown-linux-gnu.tar.gz";
     let archive_bytes = make_tar_gz_archive(&[(
         "uv-x86_64-unknown-linux-gnu/uv",
-        br#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  cat > "$UV_TOOL_BIN_DIR/ruff" <<'EOF'
-#!/bin/sh
-echo "ruff 0.1.0"
-EOF
-  chmod +x "$UV_TOOL_BIN_DIR/ruff"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
+        b"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo uv 0.11.0\n  exit 0\nfi\nif [ \"$1\" = \"tool\" ] && [ \"$2\" = \"install\" ]; then\n  mkdir -p \"$UV_TOOL_BIN_DIR\"\n  cat > \"$UV_TOOL_BIN_DIR/ruff\" <<'EOF'\n#!/bin/sh\necho \"ruff 0.1.0\"\nEOF\n  chmod +x \"$UV_TOOL_BIN_DIR/ruff\"\n  exit 0\nfi\necho \"unexpected args: $*\" >&2\nexit 2\n"
+            .as_slice(),
         0o755,
     )])?;
     let digest = sha256_hex(&archive_bytes);
@@ -2906,71 +3034,6 @@ exit 2
     .await
     .expect_err("missing managed binary should fail");
     assert!(err.to_string().contains("expected managed binary"));
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
-#[tokio::test]
-async fn execute_uv_tool_item_rejects_stale_preexisting_binary_when_install_does_not_refresh_it()
--> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    write_executable(
-        &managed_dir.join("uv"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-    )?;
-    std::fs::write(managed_dir.join("ruff-lsp"), "stale-binary")?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let item = UvToolPlanItem {
-        id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
-        python: None,
-        binary_name: "ruff-lsp".to_string(),
-    };
-    let cfg = InstallerRuntimeConfig {
-        package_indexes: PackageIndexPolicy {
-            indexes: vec![index],
-        },
-        ..test_runtime_config()
-    };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-
-    let err = execute_uv_tool_item(
-        &item,
-        "x86_64-unknown-linux-gnu",
-        &managed_dir,
-        &cfg,
-        &client,
-    )
-    .await
-    .expect_err("stale managed binary must not satisfy install success");
-    assert!(err.to_string().contains("expected managed binary"));
-    assert_eq!(
-        std::fs::read_to_string(managed_dir.join("ruff-lsp"))?,
-        "stale-binary"
-    );
-
     handle.join().expect("mock server thread join");
     Ok(())
 }
