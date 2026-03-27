@@ -329,6 +329,74 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
 }
 
 #[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escapes_managed_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+    std::fs::create_dir_all(&outside).expect("create outside dir");
+    std::fs::write(outside.join("git.exe"), b"MZ").expect("write outside git.exe");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0..\\outside\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    match state {
+        ManagedBootstrapState::ManagedBroken { detail } => {
+            assert_eq!(
+                detail.replace('\\', "/"),
+                "managed git launcher points outside managed root with payload target `../outside/git.exe`"
+            );
+        }
+        other => panic!("expected ManagedBroken state, got {other:?}"),
+    }
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_git_when_payload_fails_version_check() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let payload = managed_dir
+        .join("git-portable")
+        .join("PortableGit")
+        .join("mingw64")
+        .join("bin");
+    std::fs::create_dir_all(&payload).expect("create payload dir");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\mingw64\\bin\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+    write_executable(
+        &payload.join("git.exe"),
+        r#"#!/bin/sh
+exit 2
+"#,
+    )
+    .expect("write git.exe");
+    std::fs::write(payload.join("msys-2.0.dll"), b"dll").expect("write runtime");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git payload {} failed --version health check",
+                payload.join("git.exe").display()
+            )
+        }
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
 fn assess_managed_bootstrap_state_reports_healthy_windows_git_launcher() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
@@ -344,7 +412,17 @@ fn assess_managed_bootstrap_state_reports_healthy_windows_git_launcher() {
         "@echo off\r\n\"%~dp0git-portable\\PortableGit\\mingw64\\bin\\git.exe\" %*\r\n",
     )
     .expect("write launcher");
-    std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
+    write_executable(
+        &payload.join("git.exe"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "git version 2.53.0.windows.1"
+  exit 0
+fi
+exit 2
+"#,
+    )
+    .expect("write git.exe");
     std::fs::write(payload.join("msys-2.0.dll"), b"dll").expect("write runtime");
 
     let state =
