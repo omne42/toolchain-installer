@@ -203,7 +203,9 @@ fn validate_destination_path(
 
     let path = PathBuf::from(raw_destination);
     if matches!(policy, DestinationPolicy::Managed)
-        && (path.is_absolute() || windows_kind == WindowsDestinationKind::Absolute)
+        && (path.is_absolute()
+            || path.has_root()
+            || windows_kind == WindowsDestinationKind::Absolute)
     {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
@@ -279,7 +281,7 @@ pub(crate) fn normalize_lexical_path(path: &Path) -> PathBuf {
 }
 
 fn destination_is_absolute(path: &Path) -> bool {
-    if path.is_absolute() {
+    if path.is_absolute() || path.has_root() {
         return true;
     }
     matches!(
