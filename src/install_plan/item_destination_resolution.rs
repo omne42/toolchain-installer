@@ -79,15 +79,22 @@ pub(crate) fn resolve_cargo_install_destination(
     target_triple: &str,
     managed_dir: &Path,
 ) -> PathBuf {
-    managed_dir
-        .parent()
-        .unwrap_or(managed_dir)
-        .join("bin")
-        .join(format!(
-            "{}{}",
-            item.binary_name,
-            executable_suffix_for_target(target_triple)
-        ))
+    cargo_install_root(managed_dir).join("bin").join(format!(
+        "{}{}",
+        item.binary_name,
+        executable_suffix_for_target(target_triple)
+    ))
+}
+
+pub(crate) fn cargo_install_root(managed_dir: &Path) -> PathBuf {
+    if managed_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value == "bin")
+    {
+        return managed_dir.parent().unwrap_or(managed_dir).to_path_buf();
+    }
+    managed_dir.to_path_buf()
 }
 
 pub(crate) fn resolve_npm_global_destination(
@@ -294,6 +301,31 @@ mod tests {
         assert!(
             err.to_string().contains("Windows root-relative path"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn cargo_install_root_stays_within_custom_managed_dir() {
+        let managed_dir = Path::new("/tmp/custom-managed");
+        assert_eq!(
+            cargo_install_root(managed_dir),
+            managed_dir,
+            "custom managed_dir should remain the cargo install root"
+        );
+        assert_eq!(
+            resolve_cargo_install_destination(
+                &CargoInstallPlanItem {
+                    id: "demo".to_string(),
+                    source: crate::plan_items::CargoInstallSource::RegistryPackage {
+                        package: "demo".to_string(),
+                        version: None,
+                    },
+                    binary_name: "demo".to_string(),
+                },
+                "x86_64-unknown-linux-gnu",
+                managed_dir,
+            ),
+            managed_dir.join("bin").join("demo")
         );
     }
 

@@ -1824,6 +1824,50 @@ fn validate_plan_rejects_go_install_destination_conflicts() {
 }
 
 #[test]
+fn validate_plan_rejects_nested_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "sdk-tree".to_string(),
+                method: "archive_tree_release".to_string(),
+                version: None,
+                url: Some("https://example.com/sdk.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("sdk".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "sdk-launcher".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/sdk-launcher.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("sdk/bin/demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
+    )
+    .expect_err("nested destination conflicts should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(err.to_string().contains("overlapping destinations"));
+}
+
+#[test]
 fn validate_plan_rejects_uv_python_install_root_conflicts() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),

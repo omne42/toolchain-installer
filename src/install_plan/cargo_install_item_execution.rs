@@ -8,7 +8,7 @@ use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
 use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
-use super::item_destination_resolution::resolve_cargo_install_destination;
+use super::item_destination_resolution::{cargo_install_root, resolve_cargo_install_destination};
 
 pub(crate) fn execute_cargo_install_item(
     item: &CargoInstallPlanItem,
@@ -18,10 +18,7 @@ pub(crate) fn execute_cargo_install_item(
     if !command_exists("cargo") {
         return Err(OperationError::install("cargo command not found"));
     }
-    let install_root = managed_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| OperationError::install("cannot determine cargo install root"))?;
+    let install_root = cargo_install_root(managed_dir);
     let destination = resolve_cargo_install_destination(item, target_triple, managed_dir);
 
     let mut args = vec!["install".to_string()];

@@ -131,8 +131,9 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，不会默认写入 `managed_dir`。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
+- `cargo_install` 若 `managed_dir` 本身不是 `bin/` 目录，结果二进制会落到 `managed_dir/bin/<binary>`，不会越过调用方给定的托管根。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
-- 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径。
+- 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径，也不能出现父子路径重叠。
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，因此它也参与与该路径相关的冲突校验。
 - `uv_python` 只有在 `managed_dir` 下实际发现匹配版本的 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0` 不构成成功条件。
 
