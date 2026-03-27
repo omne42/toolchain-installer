@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::{detect_host_platform, executable_suffix_for_target};
@@ -223,7 +223,10 @@ fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
             ),
         };
     };
-    let executable = managed_dir.join(&relative_target);
+    let executable = match managed_windows_git_payload_path(managed_dir, &relative_target) {
+        Ok(executable) => executable,
+        Err(detail) => return ManagedBootstrapState::ManagedBroken { detail },
+    };
     if !executable.exists() {
         return ManagedBootstrapState::ManagedBroken {
             detail: format!(
@@ -242,6 +245,14 @@ fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
                 ),
             };
         }
+    }
+    if !managed_binary_reports_version(&executable) {
+        return ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git payload {} failed --version health check",
+                executable.display()
+            ),
+        };
     }
 
     ManagedBootstrapState::ManagedHealthy {
@@ -268,6 +279,26 @@ fn launcher_target_from_script(script: &str) -> Option<PathBuf> {
         }
         (!relative.as_os_str().is_empty()).then_some(relative)
     })
+}
+
+fn managed_windows_git_payload_path(
+    managed_dir: &Path,
+    relative_target: &Path,
+) -> Result<PathBuf, String> {
+    if relative_target.is_absolute()
+        || relative_target.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "managed git launcher points outside managed root with payload target `{}`",
+            relative_target.display()
+        ));
+    }
+    Ok(managed_dir.join(relative_target))
 }
 
 fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
