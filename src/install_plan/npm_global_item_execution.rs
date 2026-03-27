@@ -72,8 +72,9 @@ pub(crate) fn execute_npm_global_item(
             ))
         })?,
     };
-    if !installation_result_is_fresh(
+    if !installation_result_is_acceptable(
         &preinstall_state,
+        &recipe.binary_path,
         &destination,
         &item.package_spec,
         &item.binary_name,
@@ -265,8 +266,9 @@ fn capture_installation_state(
         .collect()
 }
 
-fn installation_result_is_fresh(
+fn installation_result_is_acceptable(
     preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>,
+    binary_path: &Path,
     destination: &Path,
     package: &str,
     binary_name: &str,
@@ -277,21 +279,39 @@ fn installation_result_is_fresh(
         return true;
     }
 
+    if destination_preexisted(preinstall_state, destination)
+        && candidate_binary_paths(binary_path, binary_name)
+            .iter()
+            .any(|candidate| candidate == destination)
+    {
+        return true;
+    }
+
     if let Some(package_dir) = fallback_package_dir
         && resolve_package_bin_script(package_dir, package, binary_name).as_deref()
             == Some(destination)
-        && path_changed(preinstall_state, &package_dir.join("package.json"))
     {
-        return true;
+        return path_changed(preinstall_state, &package_dir.join("package.json"))
+            || destination_preexisted(preinstall_state, destination);
     }
 
     if let Some(root) = fallback_search_root
         && destination.starts_with(root)
     {
-        return path_changed(preinstall_state, destination);
+        return destination_preexisted(preinstall_state, destination);
     }
 
     false
+}
+
+fn destination_preexisted(
+    preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>,
+    destination: &Path,
+) -> bool {
+    preinstall_state
+        .get(destination)
+        .is_some_and(|fingerprint| fingerprint.is_some())
+        && command_path_exists(destination)
 }
 
 fn path_changed(preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>, path: &Path) -> bool {
@@ -434,14 +454,14 @@ fn package_bin_relative_path(
     let package_basename = package_name.rsplit('/').next().unwrap_or(package_name);
     let bin = manifest.get("bin")?;
     match bin {
-        serde_json::Value::String(path) => Some(PathBuf::from(path)),
+        serde_json::Value::String(path) => sanitize_package_bin_relative_path(path),
         serde_json::Value::Object(entries) => {
             if let Some(path) = entries
                 .get(binary_name)
                 .or_else(|| entries.get(package_basename))
                 .and_then(|value| value.as_str())
             {
-                return Some(PathBuf::from(path));
+                return sanitize_package_bin_relative_path(path);
             }
 
             if entries.len() == 1 {
@@ -449,12 +469,27 @@ fn package_bin_relative_path(
                     .values()
                     .next()
                     .and_then(|value| value.as_str())
-                    .map(PathBuf::from);
+                    .and_then(sanitize_package_bin_relative_path);
             }
             None
         }
         _ => None,
     }
+}
+
+fn sanitize_package_bin_relative_path(raw: &str) -> Option<PathBuf> {
+    let path = Path::new(raw);
+    let mut sanitized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(segment) => sanitized.push(segment),
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    (!sanitized.as_os_str().is_empty()).then_some(sanitized)
 }
 
 fn resolve_package_bin_script(
@@ -611,8 +646,8 @@ mod tests {
 
     use super::{
         build_npm_global_recipe, capture_installation_state, file_fingerprint, find_binary_at_path,
-        npm_global_package_dir, package_bin_relative_path, resolve_npm_global_destination,
-        resolve_package_bin_script,
+        installation_result_is_acceptable, npm_global_package_dir, package_bin_relative_path,
+        resolve_npm_global_destination, resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
 
@@ -708,6 +743,18 @@ mod tests {
         let path = package_bin_relative_path(&manifest, "@scope/http-server@14.1.1", "http-server")
             .expect("bin path");
         assert_eq!(path, PathBuf::from("dist/http-server.js"));
+    }
+
+    #[test]
+    fn package_bin_relative_path_rejects_parent_escape() {
+        let manifest = json!({
+            "name": "http-server",
+            "bin": "../outside/http-server"
+        });
+
+        assert!(
+            package_bin_relative_path(&manifest, "http-server@14.1.1", "http-server").is_none()
+        );
     }
 
     #[test]
@@ -859,6 +906,38 @@ mod tests {
                 .is_some_and(|fingerprint| fingerprint
                     == &file_fingerprint(&package_dir.join("bin").join("http-server")))
         );
+    }
+
+    #[test]
+    fn installation_result_accepts_unchanged_idempotent_binary_at_canonical_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        std::fs::create_dir_all(binary_path.parent().expect("binary parent"))
+            .expect("create binary parent");
+        std::fs::write(&binary_path, "#!/bin/sh\nexit 0\n").expect("write binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+        }
+
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
+        );
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
+        ));
     }
 
     fn host_target_triple() -> &'static str {
