@@ -4,19 +4,13 @@ use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
-use crate::plan_items::{ResolvedPlanItem, WorkspacePackagePlanItem};
-
-use super::item_destination_resolution::effective_destination_for_item;
+use crate::plan_items::WorkspacePackagePlanItem;
 
 pub(crate) fn execute_workspace_package_item(
     item: &WorkspacePackagePlanItem,
-    managed_dir: &Path,
+    _managed_dir: &Path,
 ) -> OperationResult<BootstrapItem> {
-    let resolved_item = ResolvedPlanItem::WorkspacePackage(item.clone());
-    let workspace_dir = effective_destination_for_item(&resolved_item, "", managed_dir)
-        .ok_or_else(|| {
-            OperationError::install("workspace_package method requires `destination`")
-        })?;
+    let workspace_dir = item.destination.clone();
     if !workspace_dir.join("package.json").exists() {
         return Err(OperationError::install(format!(
             "workspace_package requires an existing package.json under {}",

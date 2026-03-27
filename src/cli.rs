@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 use toolchain_installer::{
@@ -187,20 +187,15 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
     Ok(())
 }
 
-fn resolve_plan_base_dir(plan_file: &std::path::Path) -> Result<PathBuf, InstallerError> {
-    let canonical_plan = std::fs::canonicalize(plan_file).map_err(|err| {
-        InstallerError::usage(format!(
-            "canonicalize plan file `{}` failed: {err}",
-            plan_file.display()
-        ))
-    })?;
-    canonical_plan
+fn resolve_plan_base_dir(plan_file: &Path) -> Result<PathBuf, InstallerError> {
+    let parent = plan_file
         .parent()
-        .map(std::path::Path::to_path_buf)
-        .ok_or_else(|| {
-            InstallerError::usage(format!(
-                "plan file `{}` has no parent directory",
-                canonical_plan.display()
-            ))
-        })
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if parent.is_absolute() {
+        return Ok(parent.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(parent))
+        .map_err(|err| InstallerError::usage(format!("resolve plan base directory failed: {err}")))
 }

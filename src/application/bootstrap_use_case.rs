@@ -77,7 +77,7 @@ async fn bootstrap_builtin_tool(
     }
 
     let destination = bootstrap_destination(tool, target_triple, binary_ext, managed_dir);
-    if let Err(detail) = validate_managed_path_boundary(&destination, managed_dir) {
+    if let Err(detail) = validate_managed_path_boundary(&destination, managed_dir, false) {
         return BootstrapItem {
             tool: tool.to_string(),
             status: BootstrapStatus::Failed,

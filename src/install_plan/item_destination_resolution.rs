@@ -50,11 +50,13 @@ pub(crate) fn effective_destination_for_item(
             target_triple,
             managed_dir,
         )),
-        ResolvedPlanItem::WorkspacePackage(item) => {
-            Some(resolve_destination_path(&item.destination, managed_dir))
-        }
+        ResolvedPlanItem::WorkspacePackage(item) => Some(normalize_lexical_path(&item.destination)),
         _ => None,
     }
+}
+
+pub(crate) fn allow_leaf_symlink_in_managed_destination(item: &ResolvedPlanItem) -> bool {
+    matches!(item, ResolvedPlanItem::NpmGlobal(_))
 }
 
 pub(crate) fn resolve_release_destination(
@@ -154,6 +156,23 @@ pub(crate) fn validate_destination(
     item_id: &str,
     raw_destination: &str,
 ) -> InstallerResult<PathBuf> {
+    let path = validate_destination_path(item_id, raw_destination, DestinationPolicy::Managed)?;
+    Ok(normalize_lexical_path(&path))
+}
+
+pub(crate) fn validate_workspace_destination(
+    item_id: &str,
+    raw_destination: &str,
+) -> InstallerResult<PathBuf> {
+    let path = validate_destination_path(item_id, raw_destination, DestinationPolicy::Workspace)?;
+    Ok(normalize_lexical_path(&path))
+}
+
+fn validate_destination_path(
+    item_id: &str,
+    raw_destination: &str,
+    policy: DestinationPolicy,
+) -> InstallerResult<PathBuf> {
     let windows_kind = classify_windows_destination(raw_destination);
     match windows_kind {
         WindowsDestinationKind::DriveRelative => {
@@ -183,7 +202,9 @@ pub(crate) fn validate_destination(
     }
 
     let path = PathBuf::from(raw_destination);
-    if raw_destination.starts_with('/') || path.is_absolute() {
+    if matches!(policy, DestinationPolicy::Managed)
+        && (path.is_absolute() || windows_kind == WindowsDestinationKind::Absolute)
+    {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
         )));
@@ -206,14 +227,25 @@ pub(crate) fn validate_destination(
 
 pub(crate) fn resolve_destination_path(path: &Path, managed_dir: &Path) -> PathBuf {
     if destination_is_absolute(path) {
-        return path.to_path_buf();
+        return normalize_lexical_path(path);
     }
-    managed_dir.join(path)
+    normalize_lexical_path(&managed_dir.join(path))
+}
+
+pub(crate) fn resolve_plan_relative_path(path: &Path, plan_base_dir: Option<&Path>) -> PathBuf {
+    if destination_is_absolute(path) {
+        return normalize_lexical_path(path);
+    }
+    if let Some(base_dir) = plan_base_dir {
+        return normalize_lexical_path(&base_dir.join(path));
+    }
+    normalize_lexical_path(path)
 }
 
 pub(crate) fn validate_managed_path_boundary(
     destination: &Path,
     managed_dir: &Path,
+    allow_leaf_symlink: bool,
 ) -> Result<(), String> {
     if !destination.starts_with(managed_dir) {
         return Ok(());
@@ -223,12 +255,27 @@ pub(crate) fn validate_managed_path_boundary(
     let relative = destination
         .strip_prefix(managed_dir)
         .map_err(|err| format!("cannot compute managed-relative destination: {err}"))?;
+    let components: Vec<_> = relative.components().collect();
     let mut current = managed_dir.to_path_buf();
-    for component in relative.components() {
+    for (index, component) in components.iter().enumerate() {
         current.push(component.as_os_str());
+        if allow_leaf_symlink && index + 1 == components.len() {
+            continue;
+        }
         reject_symlink_path_component(&current, managed_dir)?;
     }
     Ok(())
+}
+
+pub(crate) fn normalize_lexical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        if matches!(component, std::path::Component::CurDir) {
+            continue;
+        }
+        normalized.push(component.as_os_str());
+    }
+    normalized
 }
 
 fn destination_is_absolute(path: &Path) -> bool {
@@ -247,6 +294,12 @@ enum WindowsDestinationKind {
     DriveRelative,
     RootRelative,
     NotWindows,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DestinationPolicy {
+    Managed,
+    Workspace,
 }
 
 fn classify_windows_destination(raw: &str) -> WindowsDestinationKind {
@@ -376,6 +429,20 @@ mod tests {
         assert!(err.to_string().contains("cannot contain `..`"));
     }
 
+    #[test]
+    fn validate_workspace_destination_accepts_absolute_path() {
+        let destination =
+            validate_workspace_destination("demo", "/workspace/app").expect("absolute workspace");
+        assert_eq!(destination, PathBuf::from("/workspace/app"));
+    }
+
+    #[test]
+    fn resolve_plan_relative_path_uses_plan_base_directory() {
+        let path =
+            resolve_plan_relative_path(Path::new("./packages/app"), Some(Path::new("/repo")));
+        assert_eq!(path, PathBuf::from("/repo/packages/app"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn validate_managed_path_boundary_rejects_symlink_component() {
@@ -388,9 +455,36 @@ mod tests {
         std::fs::create_dir_all(&outside).expect("create outside dir");
         symlink(&outside, managed_dir.join("link")).expect("create symlink");
 
-        let err =
-            validate_managed_path_boundary(&managed_dir.join("link").join("demo"), &managed_dir)
-                .expect_err("should reject symlink escape");
+        let err = validate_managed_path_boundary(
+            &managed_dir.join("link").join("demo"),
+            &managed_dir,
+            false,
+        )
+        .expect_err("should reject symlink escape");
         assert!(err.contains("escapes via symlink component"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_managed_path_boundary_allows_leaf_symlink_when_requested() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = tmp.path().join("managed");
+        let package_dir = managed_dir
+            .join("lib")
+            .join("node_modules")
+            .join("demo")
+            .join("bin");
+        std::fs::create_dir_all(&package_dir).expect("create package dir");
+        std::fs::create_dir_all(managed_dir.join("bin")).expect("create bin dir");
+        symlink(
+            package_dir.join("demo"),
+            managed_dir.join("bin").join("demo"),
+        )
+        .expect("create symlink");
+
+        validate_managed_path_boundary(&managed_dir.join("bin").join("demo"), &managed_dir, true)
+            .expect("leaf symlink should be allowed");
     }
 }
