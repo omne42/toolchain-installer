@@ -217,12 +217,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_destination_conflicts_still_rejects_overlapping_directories() {
+    fn validate_destination_conflicts_rejects_overlapping_default_archive_tree_destination() {
         let plan = InstallPlan {
             schema_version: Some(PLAN_SCHEMA_VERSION),
             items: vec![
-                archive_tree_release_item("python-tree", "bin/python"),
-                release_item("python-bin", "bin/python/python3"),
+                archive_tree_release_item("python-tree", None),
+                release_item("python-bin", "python-tree/bin/python3"),
             ],
         };
 
@@ -232,7 +232,55 @@ mod tests {
             "x86_64-unknown-linux-gnu",
             Path::new("/tmp/managed"),
         )
-        .expect_err("overlapping destinations should still fail");
+        .expect_err("default archive_tree_release destination should reserve its directory tree");
+
+        assert!(
+            err.to_string()
+                .contains("resolve to overlapping destinations")
+        );
+    }
+
+    #[test]
+    fn validate_destination_conflicts_rejects_uv_python_install_root_overlap() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                uv_python_item("python", "3.13.12"),
+                release_item("python-shim", ".uv-python/cpython-3.13.12/bin/python3"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("uv_python should reserve the managed .uv-python tree");
+
+        assert!(
+            err.to_string()
+                .contains("resolve to overlapping destinations")
+        );
+    }
+
+    #[test]
+    fn validate_destination_conflicts_rejects_case_only_overlaps_on_windows() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                archive_tree_release_item("python-tree", Some("Bin/Python")),
+                release_item("python-bin", "bin/python/python.exe"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+            Path::new(r"C:\managed"),
+        )
+        .expect_err("Windows targets should reject case-only overlapping destinations");
 
         assert!(
             err.to_string()
@@ -256,7 +304,7 @@ mod tests {
         }
     }
 
-    fn archive_tree_release_item(id: &str, destination: &str) -> InstallPlanItem {
+    fn archive_tree_release_item(id: &str, destination: Option<&str>) -> InstallPlanItem {
         InstallPlanItem {
             id: id.to_string(),
             method: "archive_tree_release".to_string(),
@@ -265,7 +313,23 @@ mod tests {
             sha256: None,
             archive_binary: None,
             binary_name: None,
-            destination: Some(destination.to_string()),
+            destination: destination.map(str::to_string),
+            package: None,
+            manager: None,
+            python: None,
+        }
+    }
+
+    fn uv_python_item(id: &str, version: &str) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "uv_python".to_string(),
+            version: Some(version.to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
             package: None,
             manager: None,
             python: None,

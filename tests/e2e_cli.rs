@@ -29,6 +29,34 @@ fn bootstrap_with_unknown_tool_returns_unsupported_status() {
     assert_eq!(json["items"][0]["status"], "unsupported");
 }
 
+#[cfg(unix)]
+#[test]
+fn bootstrap_unknown_tool_ignores_plain_path_file_and_stays_unsupported() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plain = temp.path().join("demo-tool");
+    std::fs::write(&plain, "not executable").expect("write plain file");
+    let mut permissions = std::fs::metadata(&plain)
+        .expect("stat plain file")
+        .permissions();
+    permissions.set_mode(0o644);
+    std::fs::set_permissions(&plain, permissions).expect("chmod plain file");
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", temp.path())
+        .args(["--json", "--tool", "demo-tool"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["tool"], "demo-tool");
+    assert_eq!(json["items"][0]["status"], "unsupported");
+}
+
 #[test]
 fn direct_method_with_unknown_strategy_returns_usage_exit_code() {
     let mut cmd = bootstrap_cmd();

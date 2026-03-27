@@ -3,8 +3,7 @@ use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::{detect_host_platform, executable_suffix_for_target};
 use omne_process_primitives::{
-    HostRecipeRequest, command_available, resolve_command_path_or_standard_location,
-    run_host_recipe,
+    HostRecipeRequest, resolve_command_path_or_standard_location, run_host_recipe,
 };
 use omne_system_package_primitives::default_system_package_install_recipes_for_os;
 
@@ -62,7 +61,7 @@ async fn bootstrap_builtin_tool(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> BootstrapItem {
-    if command_available(tool) {
+    if host_command_is_spawnable(tool) {
         return BootstrapItem {
             tool: tool.to_string(),
             status: BootstrapStatus::Present,
@@ -327,6 +326,10 @@ fn managed_binary_reports_version(path: &Path) -> bool {
     output.status.success()
 }
 
+fn host_command_is_spawnable(tool: &str) -> bool {
+    resolve_command_path_or_standard_location(tool).is_some()
+}
+
 fn bootstrap_destination(
     tool: &str,
     target_triple: &str,
@@ -408,9 +411,7 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
             &recipe.args,
         )) {
             Ok(_) => {
-                if resolve_command_path_or_standard_location("git").is_some()
-                    || command_available("git")
-                {
+                if host_command_is_spawnable("git") {
                     return Ok(InstallSource::new(
                         format!("system:{}", recipe.program),
                         BootstrapSourceKind::SystemPackage,
