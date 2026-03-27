@@ -1131,7 +1131,7 @@ def phase_workspace_package(binary: Path, workspace: Path) -> None:
                 "--package",
                 spec["package"],
                 "--destination",
-                workspace_name,
+                str(workspace_dir),
                 "--manager",
                 spec["manager"],
             ],
