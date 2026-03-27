@@ -149,6 +149,7 @@ pub(crate) fn validate_destination_conflicts(
 
 fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<String> {
     let windows_target = target_triple.contains("windows");
+    let case_insensitive_target = windows_target || target_triple.contains("darwin");
     let windows_path;
     let comparable_path = if windows_target {
         windows_path = path.to_string_lossy().replace('\\', "/");
@@ -167,7 +168,7 @@ fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<Str
             }
             std::path::Component::Normal(segment) => {
                 let value = segment.to_string_lossy();
-                Some(if windows_target {
+                Some(if case_insensitive_target {
                     value.to_ascii_lowercase()
                 } else {
                     value.into_owned()
@@ -184,4 +185,90 @@ fn destinations_overlap(existing: &[String], candidate: &[String]) -> bool {
 
 fn is_component_prefix(prefix: &[String], candidate: &[String]) -> bool {
     candidate.starts_with(prefix)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::contracts::{InstallPlan, InstallPlanItem, PLAN_SCHEMA_VERSION};
+
+    use super::validate_plan_with_managed_dir;
+
+    #[test]
+    fn validate_destination_conflicts_rejects_case_only_collisions_on_macos() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                release_item("ruff-upper", "bin/Ruff"),
+                release_item("ruff-lower", "bin/ruff"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "aarch64-apple-darwin",
+            "aarch64-apple-darwin",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("macOS should reject case-only destination collisions");
+
+        assert!(err.to_string().contains("resolve to the same destination"));
+    }
+
+    #[test]
+    fn validate_destination_conflicts_still_rejects_overlapping_directories() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                archive_tree_release_item("python-tree", "bin/python"),
+                release_item("python-bin", "bin/python/python3"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("overlapping destinations should still fail");
+
+        assert!(
+            err.to_string()
+                .contains("resolve to overlapping destinations")
+        );
+    }
+
+    fn release_item(id: &str, destination: &str) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.invalid/tool".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some(destination.to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }
+    }
+
+    fn archive_tree_release_item(id: &str, destination: &str) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "archive_tree_release".to_string(),
+            version: None,
+            url: Some("https://example.invalid/tool.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some(destination.to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }
+    }
 }
