@@ -1493,6 +1493,115 @@ EOF
 
 #[cfg(unix)]
 #[test]
+fn cargo_install_rejects_stale_binary_when_install_creates_nothing() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_cargo = fake_bin_dir.join("cargo");
+    write_executable(&fake_cargo, "#!/bin/sh\nexit 0\n");
+
+    let managed_dir = temp.path().join("custom-managed");
+    let stale_binary = managed_dir.join("bin").join("demo-cargo");
+    std::fs::create_dir_all(stale_binary.parent().expect("stale parent"))
+        .expect("create stale parent");
+    write_executable(
+        &stale_binary,
+        r#"#!/bin/sh
+echo "stale"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "cargo_install",
+            "--id",
+            "demo-cargo",
+            "--package",
+            "demo-cargo-crate",
+            "--binary-name",
+            "demo-cargo",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert_eq!(
+        std::fs::read_to_string(&stale_binary).expect("read stale"),
+        "#!/bin/sh\necho \"stale\"\n"
+    );
+    assert!(
+        !stale_binary
+            .with_file_name("demo-cargo.toolchain-installer-backup")
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn go_install_rejects_stale_binary_when_install_creates_nothing() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_go = fake_bin_dir.join("go");
+    write_executable(&fake_go, "#!/bin/sh\nexit 0\n");
+
+    let managed_dir = temp.path().join("custom-managed");
+    let stale_binary = managed_dir.join("demo-go");
+    std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+    write_executable(
+        &stale_binary,
+        r#"#!/bin/sh
+echo "stale"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "go_install",
+            "--id",
+            "demo-go",
+            "--package",
+            "example.com/demo@latest",
+            "--binary-name",
+            "demo-go",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert_eq!(
+        std::fs::read_to_string(&stale_binary).expect("read stale"),
+        "#!/bin/sh\necho \"stale\"\n"
+    );
+    assert!(
+        !stale_binary
+            .with_file_name("demo-go.toolchain-installer-backup")
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn plan_file_resolves_local_paths_relative_to_plan_directory() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
