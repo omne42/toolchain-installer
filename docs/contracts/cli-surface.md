@@ -38,6 +38,7 @@
   - `uv_python` 直接参数模式下的 Python 版本。
 - `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
   - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
+  - `--archive-binary` 传的是 archive 内目标二进制的相对路径；installer 会规范斜杠，并在常见单根目录 archive 上自动补齐根目录后再做精确匹配。
   - `uv_tool` 额外允许 `--binary-name`，用于声明托管目录下期望出现的可执行文件名。
 - `--package`、`--manager`
   - `system_package`、`apt`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component` 或 `go_install` 模式字段。

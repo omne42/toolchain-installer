@@ -224,6 +224,22 @@ def require_installed(item: dict, *, phase: str) -> Path:
     return destination_path
 
 
+def require_installed_or_present_host_binary(
+    item: dict, *, phase: str, command_name: str
+) -> Path:
+    status = item.get("status")
+    if status == "installed":
+        return require_installed(item, phase=phase)
+    if status != "present":
+        raise SmokeError(f"{phase} expected installed/present status, got {status}: {item}")
+    resolved = shutil.which(command_name)
+    if not resolved:
+        raise SmokeError(
+            f"{phase} returned present but cannot resolve host command `{command_name}`"
+        )
+    return Path(resolved)
+
+
 def executable_suffix(target_triple: str) -> str:
     return ".exe" if "windows" in target_triple else ""
 
@@ -706,9 +722,11 @@ def phase_bootstrap_gh(binary: Path, target_triple: str, workspace: Path) -> Non
         attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
-    destination = require_installed(item, phase=GH_BOOTSTRAP_PHASE)
-    verify_version_contains(destination, "--version", expected_fragment="gh version")
-    print(f"{GH_BOOTSTRAP_PHASE}: ok -> {destination}", flush=True)
+    gh_binary = require_installed_or_present_host_binary(
+        item, phase=GH_BOOTSTRAP_PHASE, command_name="gh"
+    )
+    verify_version_contains(gh_binary, "--version", expected_fragment="gh version")
+    print(f"{GH_BOOTSTRAP_PHASE}: ok -> {gh_binary}", flush=True)
 
 
 def phase_bootstrap_uv(binary: Path, target_triple: str, workspace: Path) -> None:
@@ -720,9 +738,11 @@ def phase_bootstrap_uv(binary: Path, target_triple: str, workspace: Path) -> Non
         attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
-    destination = require_installed(item, phase=UV_BOOTSTRAP_PHASE)
-    verify_version_contains(destination, "--version", expected_fragment="uv ")
-    print(f"{UV_BOOTSTRAP_PHASE}: ok -> {destination}", flush=True)
+    uv_binary = require_installed_or_present_host_binary(
+        item, phase=UV_BOOTSTRAP_PHASE, command_name="uv"
+    )
+    verify_version_contains(uv_binary, "--version", expected_fragment="uv ")
+    print(f"{UV_BOOTSTRAP_PHASE}: ok -> {uv_binary}", flush=True)
 
 
 def phase_release_gh(binary: Path, target_triple: str, workspace: Path) -> None:
@@ -884,6 +904,13 @@ def phase_bootstrap_git(binary: Path, target_triple: str, workspace: Path) -> No
         attempts=DOWNLOAD_ATTEMPTS,
     )
     item = single_item(result)
+    if item.get("status") == "present":
+        git_binary = require_installed_or_present_host_binary(
+            item, phase=GIT_BOOTSTRAP_PHASE, command_name="git"
+        )
+        verify_version_contains(git_binary, "--version", expected_fragment="git version")
+        print(f"{GIT_BOOTSTRAP_PHASE}: ok -> {git_binary}", flush=True)
+        return
     if item.get("status") != "installed":
         raise SmokeError(f"{GIT_BOOTSTRAP_PHASE} expected installed status, got: {item}")
     if "windows" in target_triple:
