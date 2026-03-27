@@ -1650,6 +1650,42 @@ fn validate_plan_rejects_absolute_destination() {
 }
 
 #[test]
+fn validate_plan_accepts_windows_absolute_destination() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("C:\\tools\\demo.exe".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let validated = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect("windows absolute destination should stay valid");
+    assert_eq!(validated.len(), 1);
+    match &validated[0] {
+        crate::plan_items::ResolvedPlanItem::Release(item) => {
+            assert_eq!(
+                item.destination.as_deref(),
+                Some(std::path::Path::new("C:\\tools\\demo.exe"))
+            );
+        }
+        other => panic!("unexpected resolved item: {other:?}"),
+    }
+}
+
+#[test]
 fn validate_plan_rejects_duplicate_item_ids() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
