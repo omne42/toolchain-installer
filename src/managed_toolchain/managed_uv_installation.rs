@@ -7,7 +7,7 @@ use omne_process_primitives::command_path_exists;
 
 use crate::artifact::InstallSource;
 use crate::contracts::{BootstrapItem, BootstrapSourceKind};
-use crate::error::OperationResult;
+use crate::error::{OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::bootstrap_item_construction::build_installed_bootstrap_item_from_install_source;
 use crate::managed_toolchain::install_uv_from_public_release;
@@ -58,14 +58,18 @@ pub(super) async fn ensure_managed_uv(
     }
 
     let source = install_uv_from_public_release(target_triple, &destination, cfg, client).await?;
-    let detail = if managed_uv_exists {
-        Some(format!(
-            "reinstalled managed uv at {} after failed --version health check",
+    if !managed_uv_is_healthy(&destination) {
+        return Err(OperationError::install(format!(
+            "downloaded managed uv at {} but it failed --version health check",
             destination.display()
-        ))
-    } else {
-        None
-    };
+        )));
+    }
+    let detail = managed_uv_exists.then(|| {
+        format!(
+            "reinstalled managed uv after broken binary at {} failed --version health check",
+            destination.display()
+        )
+    });
     Ok((
         ManagedUvCommand {
             program: destination,
