@@ -22,6 +22,7 @@ pub(crate) fn resolve_plan_item(
     item: &InstallPlanItem,
     host_triple: &str,
     target_triple: &str,
+    plan_base_dir: Option<&std::path::Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     let id = require_non_empty(item.id.as_str(), "id", "plan item")?;
 
@@ -52,9 +53,9 @@ pub(crate) fn resolve_plan_item(
         PlanMethod::Pip => resolve_pip_plan_item(item, id),
         PlanMethod::NpmGlobal => resolve_npm_global_plan_item(item, id),
         PlanMethod::WorkspacePackage => resolve_workspace_package_plan_item(item, id),
-        PlanMethod::CargoInstall => resolve_cargo_install_plan_item(item, id),
+        PlanMethod::CargoInstall => resolve_cargo_install_plan_item(item, id, plan_base_dir),
         PlanMethod::RustupComponent => resolve_rustup_component_plan_item(item, id),
-        PlanMethod::GoInstall => resolve_go_install_plan_item(item, id),
+        PlanMethod::GoInstall => resolve_go_install_plan_item(item, id, plan_base_dir),
         PlanMethod::ManagedToolchain(method) => {
             resolve_managed_toolchain_plan_item(item, id, method)
         }
@@ -272,6 +273,7 @@ fn resolve_workspace_package_plan_item(
 fn resolve_cargo_install_plan_item(
     item: &InstallPlanItem,
     id: String,
+    plan_base_dir: Option<&std::path::Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
         &id,
@@ -294,7 +296,7 @@ fn resolve_cargo_install_plan_item(
         binary_name: optional_trimmed_owned(item.binary_name.as_deref())
             .unwrap_or_else(|| id.clone()),
         id,
-        source: resolve_cargo_install_source(&package, version),
+        source: resolve_cargo_install_source(&package, version, plan_base_dir),
     }))
 }
 
@@ -328,6 +330,7 @@ fn resolve_rustup_component_plan_item(
 fn resolve_go_install_plan_item(
     item: &InstallPlanItem,
     id: String,
+    plan_base_dir: Option<&std::path::Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
         &id,
@@ -346,7 +349,7 @@ fn resolve_go_install_plan_item(
         item.id.as_str(),
     )?;
     let source = if looks_like_explicit_go_local_path(&package) {
-        GoInstallSource::LocalPath(PathBuf::from(&package))
+        GoInstallSource::LocalPath(resolve_local_plan_path(&package, plan_base_dir))
     } else if package.contains('@') {
         GoInstallSource::PackageSpec(package)
     } else {
@@ -462,13 +465,31 @@ fn build_versioned_package_spec(package: &str, version: Option<&str>) -> String 
     package.to_string()
 }
 
-fn resolve_cargo_install_source(package: &str, version: Option<&str>) -> CargoInstallSource {
+fn resolve_cargo_install_source(
+    package: &str,
+    version: Option<&str>,
+    plan_base_dir: Option<&std::path::Path>,
+) -> CargoInstallSource {
     if looks_like_explicit_cargo_local_path(package) {
-        return CargoInstallSource::LocalPath(PathBuf::from(package));
+        return CargoInstallSource::LocalPath(resolve_local_plan_path(package, plan_base_dir));
     }
     CargoInstallSource::RegistryPackage {
         package: package.to_string(),
         version: version.map(ToString::to_string),
+    }
+}
+
+fn resolve_local_plan_path(package: &str, plan_base_dir: Option<&std::path::Path>) -> PathBuf {
+    let candidate = PathBuf::from(package);
+    if candidate.is_absolute()
+        || package.starts_with('\\')
+        || looks_like_windows_drive_path(package)
+    {
+        return candidate;
+    }
+    match plan_base_dir {
+        Some(base_dir) => base_dir.join(candidate),
+        None => candidate,
     }
 }
 
@@ -620,6 +641,7 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
+            None,
         )
         .expect("resolved");
 
@@ -651,6 +673,7 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
+            None,
         )
         .expect("resolved");
 
@@ -680,6 +703,7 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
+            None,
         )
         .expect("resolved");
 
@@ -715,6 +739,7 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
+            None,
         )
         .expect("resolved");
 
@@ -747,6 +772,7 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
+            None,
         )
         .expect("resolved");
 
@@ -779,6 +805,7 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
+            None,
         )
         .expect("resolved");
 
@@ -811,6 +838,7 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
+            None,
         )
         .expect("resolved");
 

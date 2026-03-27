@@ -61,6 +61,7 @@ impl BootstrapArgs {
         ExecutionRequest {
             target_triple: self.target_triple.clone(),
             managed_dir: self.managed_dir.clone(),
+            plan_base_dir: None,
             mirror_prefixes: self.mirror_prefixes.clone(),
             package_indexes: self.package_indexes.clone(),
             python_install_mirrors: self.python_install_mirrors.clone(),
@@ -129,12 +130,13 @@ enum Commands {
 pub(crate) async fn run() -> Result<(), InstallerError> {
     let cli = RootCli::parse();
     let Commands::Bootstrap(args) = cli.command;
-    let execution_request = args.build_execution_request();
     let result = if args.method.is_some() {
+        let execution_request = args.build_execution_request();
         let plan = args.build_direct_plan()?;
         validate_install_plan_with_request(&plan, &execution_request)?;
         toolchain_installer::apply_install_plan(&plan, &execution_request).await?
     } else if let Some(plan_file) = args.plan_file.as_ref() {
+        let plan_base_dir = resolve_plan_base_dir(plan_file)?;
         let text = std::fs::read_to_string(plan_file).map_err(|err| {
             InstallerError::usage(format!(
                 "read plan file `{}` failed: {err}",
@@ -147,6 +149,8 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
                 plan_file.display()
             ))
         })?;
+        let mut execution_request = args.build_execution_request();
+        execution_request.plan_base_dir = Some(plan_base_dir);
         validate_install_plan_with_request(&plan, &execution_request)?;
         toolchain_installer::apply_install_plan(&plan, &execution_request).await?
     } else {
@@ -181,4 +185,22 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
         std::process::exit(code.as_i32());
     }
     Ok(())
+}
+
+fn resolve_plan_base_dir(plan_file: &std::path::Path) -> Result<PathBuf, InstallerError> {
+    let canonical_plan = std::fs::canonicalize(plan_file).map_err(|err| {
+        InstallerError::usage(format!(
+            "canonicalize plan file `{}` failed: {err}",
+            plan_file.display()
+        ))
+    })?;
+    canonical_plan
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| {
+            InstallerError::usage(format!(
+                "plan file `{}` has no parent directory",
+                canonical_plan.display()
+            ))
+        })
 }
