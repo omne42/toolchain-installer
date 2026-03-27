@@ -2565,17 +2565,16 @@ exit 2
     )
     .await?;
     assert_eq!(result.status, BootstrapStatus::Installed);
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(
-            managed_python_installation_dir(&managed_dir)
-                .join("cpython-3.13.12-linux-x86_64-gnu")
-                .join("bin")
-                .join("python3.13")
-                .display()
-                .to_string()
-                .as_str()
-        )
+    let destination = PathBuf::from(result.destination.expect("python destination"));
+    assert!(destination.exists(), "expected managed python to exist");
+    let version_output = std::process::Command::new(&destination)
+        .arg("--version")
+        .output()?;
+    let stdout = String::from_utf8_lossy(&version_output.stdout);
+    let stderr = String::from_utf8_lossy(&version_output.stderr);
+    assert!(
+        stdout.contains("Python 3.13.12") || stderr.contains("Python 3.13.12"),
+        "unexpected python version output: stdout={stdout:?} stderr={stderr:?}"
     );
     Ok(())
 }
