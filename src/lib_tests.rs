@@ -1058,6 +1058,70 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow::Result<()> {
+    let archive_name = "uv-x86_64-pc-windows-msvc.zip";
+    let archive_bytes = make_zip_archive(&[("uv.exe", b"mock-windows-uv".as_slice(), 0o755)])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "0.11.0",
+        "body": "x".repeat(20 * 1024),
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": format!("{base}/asset/{archive_name}"),
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/astral-sh/uv/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 3);
+
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: Vec::new(),
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("uv.exe");
+
+    let source =
+        install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+            .await?;
+    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
+    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
+    assert_eq!(
+        source
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::Zip, "uv.exe"))
+    );
+    let installed = std::fs::read(&destination)?;
+    assert_eq!(installed, b"mock-windows-uv");
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[tokio::test]
 async fn execute_managed_uv_item_reinstalls_broken_existing_binary() -> anyhow::Result<()> {
