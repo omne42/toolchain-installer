@@ -5,7 +5,7 @@ use omne_host_info_primitives::executable_suffix_for_target;
 
 use super::managed_environment_layout::managed_python_installation_dir;
 
-pub(super) fn find_managed_python_executable(
+pub(crate) fn find_managed_python_executable(
     managed_dir: &Path,
     version: &str,
     target_triple: &str,
@@ -24,17 +24,18 @@ pub(super) fn find_managed_python_executable(
         }
     }
 
-    let entries = std::fs::read_dir(managed_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if !name.starts_with("python") {
-            continue;
-        }
-        if executable_reports_python_version(&path, version) {
-            return Some(path);
+    if let Ok(entries) = std::fs::read_dir(managed_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("python") {
+                continue;
+            }
+            if executable_reports_python_version(&path, version) {
+                return Some(path);
+            }
         }
     }
 
@@ -58,10 +59,14 @@ fn find_python_under_installation_dir(
     let mut best_match: Option<PathBuf> = None;
     let mut stack = vec![installation_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir).ok()?;
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            let file_type = entry.file_type().ok()?;
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             if file_type.is_dir() {
                 stack.push(path);
                 continue;
@@ -113,8 +118,23 @@ fn executable_reports_python_version(path: &Path, version: &str) -> bool {
     if !output.status.success() {
         return false;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
-    combined.contains(version)
+    python_version_output_matches(&output.stdout, version)
+        || python_version_output_matches(&output.stderr, version)
+}
+
+fn python_version_output_matches(output: &[u8], expected_version: &str) -> bool {
+    let output = String::from_utf8_lossy(output);
+    output.lines().any(|line| {
+        let mut segments = line.split_whitespace();
+        matches!(
+            (segments.next(), segments.next(), segments.next()),
+            (Some("Python"), Some(version), None)
+                if python_version_matches_requirement(version, expected_version)
+        )
+    })
+}
+
+fn python_version_matches_requirement(reported_version: &str, expected_version: &str) -> bool {
+    reported_version == expected_version
+        || reported_version.starts_with(&format!("{expected_version}."))
 }

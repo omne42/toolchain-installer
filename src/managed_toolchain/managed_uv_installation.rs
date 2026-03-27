@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use omne_process_primitives::command_path_exists;
 
@@ -41,22 +42,47 @@ pub(super) async fn ensure_managed_uv(
     client: &reqwest::Client,
 ) -> OperationResult<(ManagedUvCommand, Option<String>)> {
     let destination = managed_uv_binary_path(target_triple, managed_dir);
-    if command_path_exists(&destination) {
+    let managed_uv_exists = command_path_exists(&destination);
+    if managed_uv_exists && managed_uv_is_healthy(&destination) {
         return Ok((
             ManagedUvCommand {
                 program: destination,
                 source: InstallSource::new("managed", BootstrapSourceKind::Managed),
             },
-            Some("managed uv already exists".to_string()),
+            Some("managed uv passed --version health check".to_string()),
         ));
     }
 
     let source = install_uv_from_public_release(target_triple, &destination, cfg, client).await?;
+    let detail = if managed_uv_exists {
+        Some(format!(
+            "reinstalled managed uv at {} after failed --version health check",
+            destination.display()
+        ))
+    } else {
+        None
+    };
     Ok((
         ManagedUvCommand {
             program: destination,
             source,
         },
-        None,
+        detail,
     ))
+}
+
+pub(crate) fn managed_uv_is_healthy(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let output = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    output.status.success()
 }

@@ -55,6 +55,10 @@ pub(crate) async fn execute_managed_toolchain_item(
 }
 
 #[cfg(test)]
+pub(crate) use managed_python_executable_discovery::find_managed_python_executable;
+#[cfg(test)]
+pub(crate) use managed_uv_installation::managed_uv_is_healthy;
+#[cfg(test)]
 pub(crate) use uv_python_installation::execute_uv_python_item;
 #[cfg(test)]
 pub(crate) use uv_tool_installation::execute_uv_tool_item;

@@ -23,6 +23,7 @@
 - `--package-index` 与 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES` 一旦提供，就由这些显式索引定义候选顺序；installer 不再把官方 PyPI 隐式插到最前面。
 - 显式索引会按调用方给出的顺序去重，不会被内部集合重排。
 - 安装前先做可达性探测，再按可达结果优先尝试显式索引。
+- 对外 JSON 结果里的 `source` 会脱敏显式索引 URL，不回显用户信息、query 或 fragment。
 
 ## `uv_python` 方法
 
@@ -30,6 +31,7 @@
 - `--python-mirror` 与 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 追加备用镜像。
 - 显式 Python mirror 会按传入顺序去重，回退顺序与调用方声明保持一致。
 - 当前宿主环境内的可达性结果决定最终使用哪个来源。
+- 对外 JSON 结果里的 `source` 会脱敏显式镜像 URL，不回显用户信息、query 或 fragment。
 
 ## 网关边界
 
