@@ -273,8 +273,7 @@ fn classify_windows_destination(raw: &str) -> WindowsDestinationKind {
 
 fn windows_destination_has_no_file_name(raw: &str) -> bool {
     raw.split(['\\', '/'])
-        .filter(|component| !component.is_empty())
-        .next_back()
+        .rfind(|component| !component.is_empty())
         .is_none_or(|component| component == "." || component == "..")
 }
 
