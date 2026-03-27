@@ -290,6 +290,26 @@ exit 0
     assert!(!managed_uv_is_healthy(&managed_uv));
 }
 
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn managed_uv_is_healthy_times_out_hung_version_probe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_uv = tmp.path().join("uv");
+    write_executable(
+        &managed_uv,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  sleep 30
+  exit 0
+fi
+exit 0
+"#,
+    )
+    .expect("write executable");
+
+    assert!(!managed_uv_is_healthy(&managed_uv));
+}
+
 #[test]
 fn assess_managed_bootstrap_state_reports_broken_windows_git_launcher_without_payload() {
     let tmp = tempfile::tempdir().expect("tempdir");

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use omne_process_primitives::command_path_exists;
 
@@ -17,6 +19,8 @@ pub(super) struct ManagedUvCommand {
     pub(super) program: PathBuf,
     pub(super) source: InstallSource,
 }
+
+const MANAGED_UV_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) async fn execute_uv_item(
     item: &ManagedUvPlanItem,
@@ -75,14 +79,34 @@ pub(crate) fn managed_uv_is_healthy(path: &Path) -> bool {
     if !path.exists() {
         return false;
     }
-    let output = Command::new(path)
+
+    let Ok(mut child) = Command::new(path)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .output();
-    let Ok(output) = output else {
+        .spawn()
+    else {
         return false;
     };
-    output.status.success()
+
+    let deadline = Instant::now() + MANAGED_UV_HEALTH_CHECK_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(100));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
