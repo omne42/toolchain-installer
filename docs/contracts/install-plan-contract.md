@@ -121,19 +121,20 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 - `release.url` 仅允许 `http` 或 `https`。
 - `archive_tree_release.url` 仅允许 `http` 或 `https`，且资产名必须是受支持的 `.tar.gz`、`.tar.xz` 或 `.zip`。
-- `destination` 若为相对路径，会解析到 `managed_dir` 下。
-- Unix 风格绝对路径如 `/tmp/demo` 会被拒绝，避免绕过托管目录边界。
+- 对 `release`、`archive_tree_release` 等托管落盘方法，`destination` 若为相对路径，会解析到 `managed_dir` 下。
+- 托管落盘方法的 Unix 风格绝对路径如 `/tmp/demo` 会被拒绝，避免绕过托管目录边界。
 - 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
 - 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo` 这类 root-relative 路径。
-- Windows 绝对路径如 `C:\tools\demo.exe` 会按绝对路径处理，不会被错误拼到 `managed_dir` 下。
+- 托管落盘方法的 Windows 绝对路径如 `C:\tools\demo.exe` 同样会被拒绝；只有 `workspace_package` 会把绝对目录当作工作区路径原样使用。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
-- `workspace_package` 必须显式给出 `destination`，不会默认写入 `managed_dir`。
+- `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `cargo_install` 若 `managed_dir` 本身不是 `bin/` 目录，结果二进制会落到 `managed_dir/bin/<binary>`，不会越过调用方给定的托管根。
+- plan 文件中的本地相对路径输入（例如 `cargo_install`/`go_install` 的本地包路径，以及 `workspace_package` 的相对工作区目录）按 plan 文件所在目录解析，而不是按 CLI 进程当前工作目录解析。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
-- 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径，也不能出现父子路径重叠。
+- 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一路径，也不能形成父子路径重叠，避免后执行项覆盖先执行项目录树。
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，因此它也参与与该路径相关的冲突校验。
 - `uv`、`uv_python`、`uv_tool` 只有在已有托管 `uv` 通过 `--version` 健康检查后才会直接复用；若托管 `uv` 文件存在但健康检查失败，会先自愈重装再继续执行。
 - `uv_python` 只有在 `managed_dir` 下实际发现匹配版本的 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0` 不构成成功条件。

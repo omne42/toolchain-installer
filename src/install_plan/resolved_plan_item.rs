@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use omne_integrity_primitives::{Sha256Digest, parse_sha256_user_input};
 use omne_system_package_primitives::SystemPackageManager;
@@ -13,7 +13,9 @@ use crate::plan_items::{
     SystemPackagePlanItem, UvPythonPlanItem, UvToolPlanItem, WorkspacePackagePlanItem,
 };
 
-use super::item_destination_resolution::validate_destination;
+use super::item_destination_resolution::{
+    resolve_plan_relative_path, validate_destination, validate_workspace_destination,
+};
 use super::plan_method::{
     ManagedToolchainMethod, PlanMethod, SUPPORTED_PLAN_METHODS, normalize_plan_method,
 };
@@ -22,7 +24,7 @@ pub(crate) fn resolve_plan_item(
     item: &InstallPlanItem,
     host_triple: &str,
     target_triple: &str,
-    plan_base_dir: Option<&std::path::Path>,
+    plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     let id = require_non_empty(item.id.as_str(), "id", "plan item")?;
 
@@ -52,7 +54,9 @@ pub(crate) fn resolve_plan_item(
         PlanMethod::Apt => resolve_apt_plan_item(item, id),
         PlanMethod::Pip => resolve_pip_plan_item(item, id),
         PlanMethod::NpmGlobal => resolve_npm_global_plan_item(item, id),
-        PlanMethod::WorkspacePackage => resolve_workspace_package_plan_item(item, id),
+        PlanMethod::WorkspacePackage => {
+            resolve_workspace_package_plan_item(item, id, plan_base_dir)
+        }
         PlanMethod::CargoInstall => resolve_cargo_install_plan_item(item, id, plan_base_dir),
         PlanMethod::RustupComponent => resolve_rustup_component_plan_item(item, id),
         PlanMethod::GoInstall => resolve_go_install_plan_item(item, id, plan_base_dir),
@@ -243,6 +247,7 @@ fn resolve_npm_global_plan_item(
 fn resolve_workspace_package_plan_item(
     item: &InstallPlanItem,
     id: String,
+    plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
         &id,
@@ -264,7 +269,11 @@ fn resolve_workspace_package_plan_item(
         WorkspacePackagePlanItem {
             package_spec: build_versioned_package_spec(&package, version),
             manager: parse_node_package_manager(&id, item.manager.as_deref(), "workspace_package")?,
-            destination: require_destination(&id, item.destination.as_deref())?,
+            destination: require_workspace_destination(
+                &id,
+                item.destination.as_deref(),
+                plan_base_dir,
+            )?,
             id,
         },
     ))
@@ -273,7 +282,7 @@ fn resolve_workspace_package_plan_item(
 fn resolve_cargo_install_plan_item(
     item: &InstallPlanItem,
     id: String,
-    plan_base_dir: Option<&std::path::Path>,
+    plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
         &id,
@@ -330,7 +339,7 @@ fn resolve_rustup_component_plan_item(
 fn resolve_go_install_plan_item(
     item: &InstallPlanItem,
     id: String,
-    plan_base_dir: Option<&std::path::Path>,
+    plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
         &id,
@@ -349,7 +358,10 @@ fn resolve_go_install_plan_item(
         item.id.as_str(),
     )?;
     let source = if looks_like_explicit_go_local_path(&package) {
-        GoInstallSource::LocalPath(resolve_local_plan_path(&package, plan_base_dir))
+        GoInstallSource::LocalPath(resolve_plan_relative_path(
+            Path::new(&package),
+            plan_base_dir,
+        ))
     } else if package.contains('@') {
         GoInstallSource::PackageSpec(package)
     } else {
@@ -468,28 +480,17 @@ fn build_versioned_package_spec(package: &str, version: Option<&str>) -> String 
 fn resolve_cargo_install_source(
     package: &str,
     version: Option<&str>,
-    plan_base_dir: Option<&std::path::Path>,
+    plan_base_dir: Option<&Path>,
 ) -> CargoInstallSource {
     if looks_like_explicit_cargo_local_path(package) {
-        return CargoInstallSource::LocalPath(resolve_local_plan_path(package, plan_base_dir));
+        return CargoInstallSource::LocalPath(resolve_plan_relative_path(
+            Path::new(package),
+            plan_base_dir,
+        ));
     }
     CargoInstallSource::RegistryPackage {
         package: package.to_string(),
         version: version.map(ToString::to_string),
-    }
-}
-
-fn resolve_local_plan_path(package: &str, plan_base_dir: Option<&std::path::Path>) -> PathBuf {
-    let candidate = PathBuf::from(package);
-    if candidate.is_absolute()
-        || package.starts_with('\\')
-        || looks_like_windows_drive_path(package)
-    {
-        return candidate;
-    }
-    match plan_base_dir {
-        Some(base_dir) => base_dir.join(candidate),
-        None => candidate,
     }
 }
 
@@ -580,12 +581,20 @@ fn parse_optional_destination(
         .transpose()
 }
 
-fn require_destination(item_id: &str, raw_destination: Option<&str>) -> InstallerResult<PathBuf> {
-    parse_optional_destination(item_id, raw_destination)?.ok_or_else(|| {
-        InstallerError::usage(format!(
-            "plan item `{item_id}` with method `workspace_package` requires `destination`"
-        ))
-    })
+fn require_workspace_destination(
+    item_id: &str,
+    raw_destination: Option<&str>,
+    plan_base_dir: Option<&Path>,
+) -> InstallerResult<PathBuf> {
+    optional_trimmed(raw_destination)
+        .map(|destination| validate_workspace_destination(item_id, destination))
+        .transpose()?
+        .map(|destination| resolve_plan_relative_path(&destination, plan_base_dir))
+        .ok_or_else(|| {
+            InstallerError::usage(format!(
+                "plan item `{item_id}` with method `workspace_package` requires `destination`"
+            ))
+        })
 }
 
 fn reject_disallowed_fields(item_id: &str, fields: &[(&str, Option<&str>)]) -> InstallerResult<()> {
@@ -814,7 +823,70 @@ mod tests {
         };
         assert_eq!(
             item.source,
-            GoInstallSource::LocalPath(PathBuf::from("./cmd/demo"))
+            GoInstallSource::LocalPath(PathBuf::from("cmd/demo"))
+        );
+    }
+
+    #[test]
+    fn resolve_workspace_package_uses_plan_base_dir_for_relative_destination() {
+        let item = InstallPlanItem {
+            id: "workspace-demo".to_string(),
+            method: "workspace_package".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("./frontend".to_string()),
+            package: Some("react".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::WorkspacePackage(item) = resolved else {
+            panic!("expected workspace_package plan item");
+        };
+        assert_eq!(item.destination, PathBuf::from("/repo/plans/frontend"));
+    }
+
+    #[test]
+    fn resolve_cargo_install_uses_plan_base_dir_for_local_path() {
+        let item = InstallPlanItem {
+            id: "cargo-demo".to_string(),
+            method: "cargo_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("./tools/demo".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::CargoInstall(item) = resolved else {
+            panic!("expected cargo_install plan item");
+        };
+        assert_eq!(
+            item.source,
+            CargoInstallSource::LocalPath(PathBuf::from("/repo/plans/tools/demo"))
         );
     }
 

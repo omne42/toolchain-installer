@@ -427,7 +427,8 @@ fn relative_release_destination_is_resolved_under_managed_dir() {
     assert_eq!(
         json["items"][0]["destination"],
         managed_dir
-            .join("nested/demo-release")
+            .join("nested")
+            .join("demo-release")
             .display()
             .to_string()
     );
@@ -812,6 +813,67 @@ fn workspace_package_requires_destination_field() {
     .code(2);
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_package_accepts_absolute_destination() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+workspace=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    workspace="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+[ -n "$workspace" ] || exit 9
+[ -f "$workspace/package.json" ] || exit 10
+/bin/mkdir -p "$workspace/node_modules/react"
+exit 0
+"#,
+    );
+
+    let workspace_dir = temp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).expect("create workspace dir");
+    std::fs::write(
+        workspace_dir.join("package.json"),
+        r#"{"name":"demo-workspace","private":true}"#,
+    )
+    .expect("write package.json");
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--method",
+            "workspace_package",
+            "--id",
+            "react",
+            "--package",
+            "react@18.3.1",
+            "--destination",
+        ])
+        .arg(&workspace_dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        workspace_dir.display().to_string()
+    );
+    assert!(workspace_dir.join("node_modules").join("react").exists());
+}
+
 #[test]
 fn npm_global_rejects_destination_field() {
     let mut cmd = bootstrap_cmd();
@@ -994,6 +1056,73 @@ echo "stale"
     assert_eq!(
         std::fs::read_to_string(&stale_binary).expect("read stale"),
         "#!/bin/sh\necho \"stale\"\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_global_allows_leaf_symlink_destination_on_repeat_install() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+package_dir="$npm_config_prefix/lib/node_modules/http-server"
+/bin/mkdir -p "$package_dir/bin" "$npm_config_prefix/bin"
+/bin/cat > "$package_dir/package.json" <<'EOF'
+{"name":"http-server","bin":{"http-server":"bin/http-server"}}
+EOF
+/bin/cat > "$package_dir/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "fresh $(date +%s%N)"
+EOF
+/bin/chmod +x "$package_dir/bin/http-server"
+/bin/ln -sfn ../lib/node_modules/http-server/bin/http-server "$npm_config_prefix/bin/http-server"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let args = [
+        "--json",
+        "--managed-dir",
+        managed_dir.to_str().expect("utf8 path"),
+        "--method",
+        "npm_global",
+        "--id",
+        "http-server",
+        "--package",
+        "http-server@14.1.1",
+        "--binary-name",
+        "http-server",
+    ];
+
+    let mut first = bootstrap_cmd();
+    first
+        .env("PATH", &fake_bin_dir)
+        .args(args)
+        .assert()
+        .success();
+
+    let mut second = bootstrap_cmd();
+    let output = second
+        .env("PATH", &fake_bin_dir)
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir
+            .join("bin")
+            .join("http-server")
+            .display()
+            .to_string()
     );
 }
 
@@ -1354,6 +1483,101 @@ EOF
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
     let expected = managed_dir.join("bin").join("demo-cargo");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+    assert!(expected.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn plan_file_resolves_local_paths_relative_to_plan_directory() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_cargo = fake_bin_dir.join("cargo");
+    write_executable(
+        &fake_cargo,
+        r#"#!/bin/sh
+root=""
+path=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--root" ]; then
+    root="$2"
+    shift 2
+    continue
+  fi
+  if [ "$1" = "--path" ]; then
+    path="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+[ -d "$path" ] || exit 9
+[ -f "$path/Cargo.toml" ] || exit 10
+[ -n "$root" ] || exit 11
+/bin/mkdir -p "$root/bin"
+/bin/cat > "$root/bin/demo-cli" <<'EOF'
+#!/bin/sh
+echo "demo-cli 0.1.0"
+EOF
+/bin/chmod +x "$root/bin/demo-cli"
+"#,
+    );
+
+    let plan_dir = temp.path().join("plan");
+    let package_dir = plan_dir.join("demo-crate");
+    let other_cwd = temp.path().join("other");
+    std::fs::create_dir_all(&package_dir).expect("create package dir");
+    std::fs::create_dir_all(&other_cwd).expect("create other cwd");
+    std::fs::write(
+        package_dir.join("Cargo.toml"),
+        r#"[package]
+name = "demo-cli"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )
+    .expect("write Cargo.toml");
+    let plan_path = plan_dir.join("plan.json");
+    std::fs::create_dir_all(&plan_dir).expect("create plan dir");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "demo-cli",
+      "method": "cargo_install",
+      "package": "./demo-crate",
+      "binary_name": "demo-cli"
+    }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let managed_dir = temp.path().join("managed");
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .current_dir(&other_cwd)
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--plan-file",
+        ])
+        .arg(&plan_path)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = managed_dir.join("bin").join("demo-cli");
     assert_eq!(json["items"][0]["status"], "installed");
     assert_eq!(
         json["items"][0]["destination"],

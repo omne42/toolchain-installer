@@ -29,6 +29,7 @@
 - `--plan-file <path>`
   - 执行 plan 文件。
   - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
+  - plan 中声明的本地相对路径按该 plan 文件所在目录解析，不按调用 CLI 时的当前工作目录解析。
 - `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`

@@ -1773,6 +1773,49 @@ fn validate_plan_rejects_destination_conflicts() {
 }
 
 #[test]
+fn validate_plan_rejects_parent_child_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "archive-demo".to_string(),
+                method: "archive_tree_release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.zip".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("tools".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.tar.gz".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("tools/demo".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/tmp/toolchain/bin"),
+    )
+    .expect_err("parent-child destination conflicts should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
 fn validate_plan_rejects_equivalent_destinations_after_normalization() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),

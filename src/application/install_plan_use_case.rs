@@ -8,7 +8,8 @@ use crate::install_plan::install_plan_validation::{
     validate_destination_conflicts, validate_plan_structure,
 };
 use crate::install_plan::item_destination_resolution::{
-    effective_destination_for_item, validate_managed_path_boundary,
+    allow_leaf_symlink_in_managed_destination, effective_destination_for_item,
+    validate_managed_path_boundary,
 };
 use crate::install_plan::item_method_dispatch::execute_plan_item;
 use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
@@ -40,7 +41,11 @@ pub async fn apply_install_plan(
             .as_ref()
             .map(|path| path.display().to_string());
         if let Some(path) = destination_path.as_ref()
-            && let Err(detail) = validate_managed_path_boundary(path, &ctx.managed_dir)
+            && let Err(detail) = validate_managed_path_boundary(
+                path,
+                &ctx.managed_dir,
+                allow_leaf_symlink_in_managed_destination(item),
+            )
         {
             let err = OperationError::install(detail);
             let (detail, error_code, exit_code) = err.into_failure_parts();
