@@ -345,12 +345,15 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escap
 
     let state =
         assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
-    assert_eq!(
-        state,
-        ManagedBootstrapState::ManagedBroken {
-            detail: "managed git launcher points outside managed root with payload target `../outside/git.exe`".to_string()
+    match state {
+        ManagedBootstrapState::ManagedBroken { detail } => {
+            assert_eq!(
+                detail.replace('\\', "/"),
+                "managed git launcher points outside managed root with payload target `../outside/git.exe`"
+            );
         }
-    );
+        other => panic!("expected ManagedBroken state, got {other:?}"),
+    }
 }
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
