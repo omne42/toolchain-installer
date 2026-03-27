@@ -46,7 +46,8 @@ use crate::managed_toolchain::managed_root_dir::{
     default_managed_dir_under_data_root, resolve_managed_toolchain_dir,
 };
 use crate::managed_toolchain::{
-    execute_uv_python_item, execute_uv_tool_item, install_uv_from_public_release,
+    execute_uv_python_item, execute_uv_tool_item, find_managed_python_executable,
+    install_uv_from_public_release, managed_uv_is_healthy,
 };
 use crate::plan_items::{UvPythonPlanItem, UvToolPlanItem};
 
@@ -268,6 +269,45 @@ exit 2
             detail: "managed binary passed --version health check".to_string()
         }
     );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn managed_uv_is_healthy_requires_successful_version_probe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_uv = tmp.path().join("uv");
+    write_executable(
+        &managed_uv,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  exit 2
+fi
+exit 0
+"#,
+    )
+    .expect("write executable");
+
+    assert!(!managed_uv_is_healthy(&managed_uv));
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn managed_uv_is_healthy_times_out_hung_version_probe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_uv = tmp.path().join("uv");
+    write_executable(
+        &managed_uv,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  sleep 30
+  exit 0
+fi
+exit 0
+"#,
+    )
+    .expect("write executable");
+
+    assert!(!managed_uv_is_healthy(&managed_uv));
 }
 
 #[test]
@@ -2091,9 +2131,12 @@ exit 2
         id: "python3.13.12".to_string(),
         version: "3.13.12".to_string(),
     };
+    let redacted_mirror = "https://mirror.example/python";
     let cfg = InstallerRuntimeConfig {
         python_mirrors: PythonMirrorPolicy {
-            install_mirrors: vec!["https://mirror.example/python".to_string()],
+            install_mirrors: vec![
+                "https://user:secret@mirror.example/python?token=abc".to_string(),
+            ],
         },
         ..test_runtime_config()
     };
@@ -2112,7 +2155,7 @@ exit 2
     assert_eq!(result.status, BootstrapStatus::Installed);
     assert_eq!(
         result.source.as_deref(),
-        Some("python-mirror:https://mirror.example/python")
+        Some(format!("python-mirror:{redacted_mirror}").as_str())
     );
     assert_eq!(result.source_kind, Some(BootstrapSourceKind::PythonMirror));
     assert_eq!(
@@ -2125,6 +2168,71 @@ exit 2
                 .as_str()
         )
     );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock python shim is unix-specific")]
+#[test]
+fn find_managed_python_executable_requires_exact_patch_version() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+    )?;
+
+    let found = find_managed_python_executable(&managed_dir, "3.13.1", "x86_64-unknown-linux-gnu");
+    assert!(found.is_none(), "3.13.12 must not satisfy 3.13.1");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn find_managed_python_executable_skips_unreadable_installation_subdirectory() -> anyhow::Result<()>
+{
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let install_root = managed_python_installation_dir(&managed_dir);
+    let blocked_dir = install_root.join("000-blocked");
+    let interpreter = install_root.join("999-good").join("bin").join("python3.13");
+    std::fs::create_dir_all(blocked_dir.join("bin"))?;
+    std::fs::create_dir_all(interpreter.parent().expect("python parent"))?;
+    write_executable(
+        &interpreter,
+        r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+    )?;
+
+    std::fs::set_permissions(&blocked_dir, std::fs::Permissions::from_mode(0o000))?;
+    let discovered =
+        find_managed_python_executable(&managed_dir, "3.13.12", "x86_64-unknown-linux-gnu");
+    std::fs::set_permissions(&blocked_dir, std::fs::Permissions::from_mode(0o755))?;
+
+    assert_eq!(discovered, Some(interpreter));
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock python shim is unix-specific")]
+#[test]
+fn find_managed_python_executable_accepts_latest_patch_for_family_version() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+    )?;
+
+    let found = find_managed_python_executable(&managed_dir, "3.13", "x86_64-unknown-linux-gnu");
+    assert_eq!(found, Some(managed_dir.join("python3.13")));
     Ok(())
 }
 
@@ -2319,7 +2427,7 @@ exit 2
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let addr = listener.local_addr()?;
     let base = format!("http://{addr}");
-    let backup_index = format!("{base}/mirror/simple");
+    let backup_index = format!("http://user:secret@{addr}/mirror/simple");
     let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
     routes.insert("/mirror/simple".to_string(), b"ok".to_vec());
     let handle = spawn_mock_http_server(listener, routes, 2);
@@ -2348,13 +2456,115 @@ exit 2
         &client,
     )
     .await?;
+    let redacted_backup_index = format!("{base}/mirror/simple");
     assert_eq!(
         result.source.as_deref(),
-        Some(format!("package-index:{backup_index}").as_str())
+        Some(format!("package-index:{redacted_backup_index}").as_str())
     );
     assert_eq!(result.source_kind, Some(BootstrapSourceKind::PackageIndex));
     let used_index = std::fs::read_to_string(&log_path)?;
     assert_eq!(used_index.trim(), backup_index);
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_reinstalls_broken_managed_uv_before_install() -> anyhow::Result<()> {
+    let archive_name = "uv-x86_64-unknown-linux-gnu.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[(
+        "uv-x86_64-unknown-linux-gnu/uv",
+        br#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  cat > "$UV_TOOL_BIN_DIR/ruff" <<'EOF'
+#!/bin/sh
+echo "ruff 0.1.0"
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+        0o755,
+    )])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "0.11.0",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": format!("{base}/asset/{archive_name}"),
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/astral-sh/uv/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 3);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+exit 2
+"#,
+    )?;
+
+    let item = UvToolPlanItem {
+        id: "ruff".to_string(),
+        package: "ruff".to_string(),
+        python: None,
+        binary_name: "ruff".to_string(),
+    };
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await?;
+    assert_eq!(result.status, BootstrapStatus::Installed);
+    assert!(
+        result
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("reinstalled managed uv")
+    );
+    assert!(managed_uv_is_healthy(&managed_dir.join("uv")));
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2490,6 +2700,71 @@ exit 2
     .await
     .expect_err("missing managed binary should fail");
     assert!(err.to_string().contains("expected managed binary"));
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_rejects_stale_preexisting_binary_when_install_does_not_refresh_it()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+    std::fs::write(managed_dir.join("ruff-lsp"), "stale-binary")?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await
+    .expect_err("stale managed binary must not satisfy install success");
+    assert!(err.to_string().contains("expected managed binary"));
+    assert_eq!(
+        std::fs::read_to_string(managed_dir.join("ruff-lsp"))?,
+        "stale-binary"
+    );
+
     handle.join().expect("mock server thread join");
     Ok(())
 }

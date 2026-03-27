@@ -135,7 +135,10 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一个目标路径，也不能出现父子路径重叠。
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，因此它也参与与该路径相关的冲突校验。
+- `uv`、`uv_python`、`uv_tool` 只有在已有托管 `uv` 通过 `--version` 健康检查后才会直接复用；若托管 `uv` 文件存在但健康检查失败，会先自愈重装再继续执行。
 - `uv_python` 只有在 `managed_dir` 下实际发现匹配版本的 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0` 不构成成功条件。
+- `uv_python` 的版本匹配按版本段比较：请求 `3.13` 可以接受托管目录里的 `3.13.x`，但请求 `3.13.1` 不会误接受 `3.13.12`。
+- `uv_tool` 若目标路径上已有同名旧二进制，installer 会先把旧文件挪到临时备份；只有本次 `uv tool install` 真正产出新的目标二进制后才算成功，失败时会恢复旧文件。
 
 ## 来源探测与回退
 
@@ -144,9 +147,11 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 当调用方显式提供了 `--package-index` 或 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES` 时，installer 不再隐式把官方 PyPI 插到最前面；显式索引顺序就是候选顺序。
   - 若显式索引、镜像或镜像前缀里出现重复值，只会保留第一次出现的位置，不会按字典序重排。
   - 安装前会探测显式索引的可达性，把可达源优先用于安装。
+  - 结果里的 `source` 会对显式索引做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
 - `uv_python`
   - 会先尝试官方 Python 下载来源，失败后再按顺序回退到 `--python-mirror` 或 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供的备用站。
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
+  - 结果里的 `source` 会对显式镜像做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
 - `release`、`archive_tree_release`
   - 资产类型判断基于 URL 的 path 最后一段，不把 query string 当成资产名的一部分；`tool.tar.gz?download=1` 仍按 `tool.tar.gz` 处理。
 - `release`

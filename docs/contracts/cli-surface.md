@@ -132,6 +132,7 @@
 - 调用方应依赖 `status`、`detail` 与 `error_code`，不要解析 stderr 文本。
 - stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
 - `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
+- 当 `source_kind=package_index|python_mirror` 且来源 URL 含凭证、query 或 fragment 时，`source` 会输出脱敏后的协议、主机和路径，而不是回显原始敏感 URL。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
 - `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。

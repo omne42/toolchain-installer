@@ -18,12 +18,10 @@ pub(super) fn python_installation_source_candidates(
         probe_url: None,
     }];
     for mirror in &cfg.python_mirrors.install_mirrors {
+        let mirror = mirror.trim();
         candidates.push(InstallationSourceCandidate {
-            label: format!("python-mirror:{mirror}"),
-            env: vec![(
-                "UV_PYTHON_INSTALL_MIRROR".to_string(),
-                mirror.trim().to_string(),
-            )],
+            label: format!("python-mirror:{}", redact_source_url(mirror)),
+            env: vec![("UV_PYTHON_INSTALL_MIRROR".to_string(), mirror.to_string())],
             probe_url: None,
         });
     }
@@ -36,10 +34,13 @@ pub(super) fn package_index_installation_source_candidates(
     cfg.package_indexes
         .indexes
         .iter()
-        .map(|index| InstallationSourceCandidate {
-            label: format!("package-index:{index}"),
-            env: vec![("UV_DEFAULT_INDEX".to_string(), index.trim().to_string())],
-            probe_url: Some(index.trim().to_string()),
+        .map(|index| {
+            let index = index.trim();
+            InstallationSourceCandidate {
+                label: format!("package-index:{}", redact_source_url(index)),
+                env: vec![("UV_DEFAULT_INDEX".to_string(), index.to_string())],
+                probe_url: Some(index.to_string()),
+            }
         })
         .collect()
 }
@@ -65,4 +66,15 @@ pub(super) async fn prioritize_reachable_installation_sources(
     }
     reachable.extend(deferred);
     reachable
+}
+
+fn redact_source_url(raw: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(raw) else {
+        return raw.to_string();
+    };
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
 }
