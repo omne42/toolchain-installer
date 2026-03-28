@@ -843,6 +843,16 @@ fn system_package_manager_accepts_only_canonical_names() {
     );
 }
 
+#[test]
+fn system_package_recipe_helpers_reject_invalid_package_names() {
+    assert!(
+        SystemPackageManager::AptGet
+            .try_install_recipe("git core")
+            .is_err()
+    );
+    assert!(try_default_system_package_install_recipes_for_os("linux", "../git").is_err());
+}
+
 #[tokio::test]
 async fn install_gh_from_public_release_mock_api() -> anyhow::Result<()> {
     let archive_name = "gh_9.9.9_linux_amd64.tar.gz";
