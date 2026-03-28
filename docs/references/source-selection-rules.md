@@ -25,6 +25,7 @@
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时都会触发重装，避免坏掉或挂起的 `uv` 卡住后续安装。
 - 安装前先做可达性探测，再按可达结果优先尝试显式索引。
 - 对外 JSON 结果里的 `source` 会脱敏显式索引 URL，不回显用户信息、query 或 fragment。
+- 宿主 shell 已存在的 `UV_*` 环境变量不会透传到托管 `uv tool install`；来源选择只由 installer 自己的托管环境和显式索引配置驱动。
 
 ## `uv_python` 方法
 
@@ -35,6 +36,7 @@
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时都会触发重装，避免坏掉或挂起的 `uv` 卡住后续安装。
 - 对外 JSON 结果里，官方来源会标成 `source_kind=canonical`，显式镜像才会标成 `python_mirror`。
 - 对外 JSON 结果里的 `source` 会脱敏显式镜像 URL，不回显用户信息、query 或 fragment。
+- 宿主 shell 已存在的 `UV_*` 环境变量不会透传到托管 `uv python install`；来源选择只由 installer 自己的托管环境和显式 mirror 配置驱动。
 
 ## 网关边界
 

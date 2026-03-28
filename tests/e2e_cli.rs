@@ -1858,6 +1858,64 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[test]
+fn uv_python_method_ignores_inherited_uv_environment() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir).expect("managed dir");
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  if [ -n "$UV_PYTHON_INSTALL_MIRROR" ]; then
+    echo "inherited mirror leaked" >&2
+    exit 17
+  fi
+  mkdir -p "$UV_PYTHON_BIN_DIR"
+  cat > "$UV_PYTHON_BIN_DIR/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$UV_PYTHON_BIN_DIR/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("UV_PYTHON_INSTALL_MIRROR", "https://host.example/python")
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "uv_python",
+            "--id",
+            "python3.13.12",
+            "--tool-version",
+            "3.13.12",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir.join("python3.13").display().to_string()
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[test]
 fn uv_tool_method_accepts_binary_name_and_explicit_package_index() {
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");
@@ -1929,6 +1987,79 @@ exit 2
         index
     );
     assert!(managed_dir.join("ruff-lsp").exists());
+
+    handle.join().expect("mock server thread join");
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[test]
+fn uv_tool_method_ignores_inherited_uv_environment() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir).expect("managed dir");
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  if [ -n "$UV_EXTRA_INDEX_URL" ]; then
+    echo "inherited extra index leaked" >&2
+    exit 19
+  fi
+  mkdir -p "$UV_TOOL_BIN_DIR"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "ruff-lsp 0.1.0"
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS", "1")
+        .env("UV_EXTRA_INDEX_URL", "https://host.example/simple")
+        .env_remove("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES")
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--package-index",
+            &index,
+            "--method",
+            "uv_tool",
+            "--id",
+            "ruff-lsp-installer",
+            "--package",
+            "ruff-lsp",
+            "--binary-name",
+            "ruff-lsp",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir.join("ruff-lsp").display().to_string()
+    );
 
     handle.join().expect("mock server thread join");
 }

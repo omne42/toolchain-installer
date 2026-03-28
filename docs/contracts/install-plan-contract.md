@@ -159,11 +159,13 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 若显式索引、镜像或镜像前缀里出现重复值，只会保留第一次出现的位置，不会按字典序重排。
   - 安装前会探测显式索引的可达性，把可达源优先用于安装。
   - 结果里的 `source` 会对显式索引做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
+  - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式索引配置，避免外部 shell 状态静默污染来源选择。
 - `uv_python`
   - 会先尝试官方 Python 下载来源，失败后再按顺序回退到 `--python-mirror` 或 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供的备用站。
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
   - 官方来源成功时，结果里的 `source_kind` 会是 `canonical`；只有显式镜像命中时才会是 `python_mirror`。
   - 结果里的 `source` 会对显式镜像做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
+  - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式 Python mirror 配置，避免外部 shell 状态静默污染来源选择。
 - `release`、`archive_tree_release`
   - 资产类型判断基于 URL 的 path 最后一段，不把 query string 当成资产名的一部分；`tool.tar.gz?download=1` 仍按 `tool.tar.gz` 处理。
 - `release`

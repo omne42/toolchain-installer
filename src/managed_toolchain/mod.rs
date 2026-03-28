@@ -2,6 +2,7 @@ mod bootstrap_item_construction;
 pub(crate) mod managed_environment_layout;
 mod managed_python_executable_discovery;
 pub(crate) mod managed_root_dir;
+mod managed_uv_host_execution;
 mod managed_uv_installation;
 mod source_candidate_attempts;
 mod uv_installation_source_candidates;
