@@ -27,7 +27,7 @@ pub(crate) fn resolve_plan_item(
     target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
-    let id = require_non_empty(item.id.as_str(), "id", "plan item")?;
+    let id = require_plan_item_id(item.id.as_str())?;
 
     let Some(normalized_method) = normalize_plan_method(&item.method) else {
         return Err(InstallerError::usage(format!(
@@ -49,20 +49,26 @@ pub(crate) fn resolve_plan_item(
     }
 
     match method {
-        PlanMethod::Release => resolve_release_plan_item(item, id),
-        PlanMethod::ArchiveTreeRelease => resolve_archive_tree_release_plan_item(item, id),
+        PlanMethod::Release => resolve_release_plan_item(item, id, target_triple),
+        PlanMethod::ArchiveTreeRelease => {
+            resolve_archive_tree_release_plan_item(item, id, target_triple)
+        }
         PlanMethod::SystemPackage => resolve_system_package_plan_item(item, id),
         PlanMethod::Apt => resolve_apt_plan_item(item, id),
         PlanMethod::Pip => resolve_pip_plan_item(item, id),
         PlanMethod::NpmGlobal => resolve_npm_global_plan_item(item, id),
         PlanMethod::WorkspacePackage => {
-            resolve_workspace_package_plan_item(item, id, plan_base_dir)
+            resolve_workspace_package_plan_item(item, id, target_triple, plan_base_dir)
         }
-        PlanMethod::CargoInstall => resolve_cargo_install_plan_item(item, id, plan_base_dir),
+        PlanMethod::CargoInstall => {
+            resolve_cargo_install_plan_item(item, id, target_triple, plan_base_dir)
+        }
         PlanMethod::RustupComponent => resolve_rustup_component_plan_item(item, id),
-        PlanMethod::GoInstall => resolve_go_install_plan_item(item, id, plan_base_dir),
+        PlanMethod::GoInstall => {
+            resolve_go_install_plan_item(item, id, target_triple, plan_base_dir)
+        }
         PlanMethod::ManagedToolchain(method) => {
-            resolve_managed_toolchain_plan_item(item, id, method)
+            resolve_managed_toolchain_plan_item(item, id, target_triple, method)
         }
         PlanMethod::Unknown => unreachable!("unsupported method should fail before resolve"),
     }
@@ -71,6 +77,7 @@ pub(crate) fn resolve_plan_item(
 fn resolve_release_plan_item(
     item: &InstallPlanItem,
     id: String,
+    target_triple: &str,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
         &id,
@@ -83,13 +90,14 @@ fn resolve_release_plan_item(
     )?;
     let url = require_http_url(&id, "release", item.url.as_deref())?;
     let sha256 = parse_optional_sha256(&id, item.sha256.as_deref())?;
-    let destination = parse_optional_destination(&id, item.destination.as_deref())?;
+    let destination = parse_optional_destination(&id, item.destination.as_deref(), target_triple)?;
+    let binary_name = parse_optional_binary_name(&id, item.binary_name.as_deref())?;
     Ok(ResolvedPlanItem::Release(ReleasePlanItem {
         id,
         url,
         sha256,
         archive_binary: optional_trimmed_owned(item.archive_binary.as_deref()),
-        binary_name: optional_trimmed_owned(item.binary_name.as_deref()),
+        binary_name,
         destination,
     }))
 }
@@ -97,6 +105,7 @@ fn resolve_release_plan_item(
 fn resolve_archive_tree_release_plan_item(
     item: &InstallPlanItem,
     id: String,
+    target_triple: &str,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
         &id,
@@ -112,7 +121,7 @@ fn resolve_archive_tree_release_plan_item(
     let url = require_http_url(&id, "archive_tree_release", item.url.as_deref())?;
     validate_archive_tree_release_asset_name(&id, &url)?;
     let sha256 = parse_optional_sha256(&id, item.sha256.as_deref())?;
-    let destination = parse_optional_destination(&id, item.destination.as_deref())?;
+    let destination = parse_optional_destination(&id, item.destination.as_deref(), target_triple)?;
     Ok(ResolvedPlanItem::ArchiveTreeRelease(
         ArchiveTreeReleasePlanItem {
             id,
@@ -237,10 +246,12 @@ fn resolve_npm_global_plan_item(
         item.id.as_str(),
     )?;
     let version = optional_trimmed(item.version.as_deref());
+    let package_spec = build_versioned_package_spec(&package, version);
     Ok(ResolvedPlanItem::NpmGlobal(NpmGlobalPlanItem {
-        package_spec: build_versioned_package_spec(&package, version),
+        package_spec,
         manager: parse_node_package_manager(&id, item.manager.as_deref(), "npm_global")?,
-        binary_name: optional_trimmed_owned(item.binary_name.as_deref())
+        binary_name: parse_optional_binary_name(&id, item.binary_name.as_deref())?
+            .or_else(|| default_binary_name_for_node_package(&package))
             .unwrap_or_else(|| id.clone()),
         id,
     }))
@@ -249,6 +260,7 @@ fn resolve_npm_global_plan_item(
 fn resolve_workspace_package_plan_item(
     item: &InstallPlanItem,
     id: String,
+    target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
@@ -274,6 +286,7 @@ fn resolve_workspace_package_plan_item(
             destination: require_workspace_destination(
                 &id,
                 item.destination.as_deref(),
+                target_triple,
                 plan_base_dir,
             )?,
             id,
@@ -284,6 +297,7 @@ fn resolve_workspace_package_plan_item(
 fn resolve_cargo_install_plan_item(
     item: &InstallPlanItem,
     id: String,
+    target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
@@ -303,11 +317,13 @@ fn resolve_cargo_install_plan_item(
         item.id.as_str(),
     )?;
     let version = optional_trimmed(item.version.as_deref());
+    let source = resolve_cargo_install_source(&package, version, plan_base_dir);
     Ok(ResolvedPlanItem::CargoInstall(CargoInstallPlanItem {
-        binary_name: optional_trimmed_owned(item.binary_name.as_deref())
-            .unwrap_or_else(|| id.clone()),
+        binary_name: parse_optional_binary_name(&id, item.binary_name.as_deref())?
+            .or_else(|| default_binary_name_for_cargo_source(&source))
+            .unwrap_or_else(|| default_binary_name_for_target(target_triple, &id)),
         id,
-        source: resolve_cargo_install_source(&package, version, plan_base_dir),
+        source,
     }))
 }
 
@@ -327,6 +343,7 @@ fn resolve_rustup_component_plan_item(
             ("python", item.python.as_deref()),
         ],
     )?;
+    let binary_name = parse_optional_binary_name(&id, item.binary_name.as_deref())?;
     Ok(ResolvedPlanItem::RustupComponent(RustupComponentPlanItem {
         id,
         component: require_non_empty(
@@ -334,13 +351,14 @@ fn resolve_rustup_component_plan_item(
             "package",
             item.id.as_str(),
         )?,
-        binary_name: optional_trimmed_owned(item.binary_name.as_deref()),
+        binary_name,
     }))
 }
 
 fn resolve_go_install_plan_item(
     item: &InstallPlanItem,
     id: String,
+    target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
@@ -370,9 +388,11 @@ fn resolve_go_install_plan_item(
         let version = optional_trimmed(item.version.as_deref()).unwrap_or("latest");
         GoInstallSource::PackageSpec(format!("{package}@{version}"))
     };
+    let binary_name = parse_optional_binary_name(&id, item.binary_name.as_deref())?
+        .or_else(|| default_binary_name_for_go_source(&source))
+        .unwrap_or_else(|| default_binary_name_for_target(target_triple, &id));
     Ok(ResolvedPlanItem::GoInstall(GoInstallPlanItem {
-        binary_name: optional_trimmed_owned(item.binary_name.as_deref())
-            .unwrap_or_else(|| id.clone()),
+        binary_name,
         id,
         source,
     }))
@@ -381,6 +401,7 @@ fn resolve_go_install_plan_item(
 fn resolve_managed_toolchain_plan_item(
     item: &InstallPlanItem,
     id: String,
+    target_triple: &str,
     method: ManagedToolchainMethod,
 ) -> InstallerResult<ResolvedPlanItem> {
     match method {
@@ -439,8 +460,13 @@ fn resolve_managed_toolchain_plan_item(
                     item.id.as_str(),
                 )?,
                 python: optional_trimmed_owned(item.python.as_deref()),
-                binary_name: optional_trimmed_owned(item.binary_name.as_deref())
-                    .unwrap_or_else(|| id.clone()),
+                binary_name: parse_optional_binary_name(&id, item.binary_name.as_deref())?
+                    .or_else(|| {
+                        item.package
+                            .as_deref()
+                            .and_then(default_binary_name_for_python_package)
+                    })
+                    .unwrap_or_else(|| default_binary_name_for_target(target_triple, &id)),
                 id,
             }))
         }
@@ -591,19 +617,21 @@ fn parse_optional_sha256(
 fn parse_optional_destination(
     item_id: &str,
     raw_destination: Option<&str>,
+    target_triple: &str,
 ) -> InstallerResult<Option<PathBuf>> {
     optional_trimmed(raw_destination)
-        .map(|destination| validate_destination(item_id, destination))
+        .map(|destination| validate_destination(item_id, destination, target_triple))
         .transpose()
 }
 
 fn require_workspace_destination(
     item_id: &str,
     raw_destination: Option<&str>,
+    target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<PathBuf> {
     optional_trimmed(raw_destination)
-        .map(|destination| validate_workspace_destination(item_id, destination))
+        .map(|destination| validate_workspace_destination(item_id, destination, target_triple))
         .transpose()?
         .map(|destination| resolve_plan_relative_path(&destination, plan_base_dir))
         .ok_or_else(|| {
@@ -611,6 +639,127 @@ fn require_workspace_destination(
                 "plan item `{item_id}` with method `workspace_package` requires `destination`"
             ))
         })
+}
+
+fn require_plan_item_id(raw: &str) -> InstallerResult<String> {
+    let id = require_non_empty(raw, "id", "plan item")?;
+    validate_leaf_name(&id, "id", &id)?;
+    Ok(id)
+}
+
+fn parse_optional_binary_name(
+    item_id: &str,
+    raw_binary_name: Option<&str>,
+) -> InstallerResult<Option<String>> {
+    optional_trimmed(raw_binary_name)
+        .map(|binary_name| {
+            validate_leaf_name(item_id, "binary_name", binary_name)?;
+            Ok(binary_name.to_string())
+        })
+        .transpose()
+}
+
+fn validate_leaf_name(item_id: &str, field_name: &str, value: &str) -> InstallerResult<()> {
+    if value == "." || value == ".." || looks_like_windows_drive_path(value) {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` `{field_name}` must be a plain file name, got `{value}`"
+        )));
+    }
+    if value.split(['/', '\\']).count() != 1 {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` `{field_name}` must not contain path separators"
+        )));
+    }
+    Ok(())
+}
+
+fn default_binary_name_for_target(_target_triple: &str, fallback: &str) -> String {
+    fallback.to_string()
+}
+
+fn default_binary_name_for_node_package(package: &str) -> Option<String> {
+    if node_package_spec_uses_explicit_source(package) {
+        return source_spec_leaf_name(package);
+    }
+    package_leaf_name(npm_package_name(package))
+}
+
+fn default_binary_name_for_cargo_source(source: &CargoInstallSource) -> Option<String> {
+    match source {
+        CargoInstallSource::RegistryPackage { package, .. } => package_leaf_name(package),
+        CargoInstallSource::LocalPath(path) => path_leaf_name(path),
+    }
+}
+
+fn default_binary_name_for_go_source(source: &GoInstallSource) -> Option<String> {
+    match source {
+        GoInstallSource::LocalPath(path) => path_leaf_name(path),
+        GoInstallSource::PackageSpec(spec) => {
+            let package = spec.rsplit_once('@').map(|(path, _)| path).unwrap_or(spec);
+            package_leaf_name(package)
+        }
+    }
+}
+
+fn default_binary_name_for_python_package(package: &str) -> Option<String> {
+    let trimmed = package.trim();
+    let package = trimmed
+        .split_once(" @ ")
+        .map(|(name, _)| name)
+        .unwrap_or(trimmed);
+    let package = package
+        .split_once(';')
+        .map(|(name, _)| name)
+        .unwrap_or(package)
+        .split_once('[')
+        .map(|(name, _)| name)
+        .unwrap_or(package);
+    let package = package
+        .split(['=', '<', '>', '!', '~', ' '])
+        .next()
+        .unwrap_or(package);
+    package_leaf_name(package)
+}
+
+fn package_leaf_name(package: &str) -> Option<String> {
+    let trimmed = package.trim().trim_end_matches('/');
+    let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed).trim();
+    if leaf.is_empty() || leaf == "." || leaf == ".." {
+        return None;
+    }
+    Some(leaf.to_string())
+}
+
+fn path_leaf_name(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(ToString::to_string)
+}
+
+fn npm_package_name(package: &str) -> &str {
+    let package = package.trim();
+    if package.starts_with('@') {
+        if let Some((name, _version)) = package.rsplit_once('@')
+            && name.contains('/')
+        {
+            return name;
+        }
+        return package;
+    }
+    package
+        .split_once('@')
+        .map(|(name, _)| name)
+        .unwrap_or(package)
+}
+
+fn source_spec_leaf_name(package: &str) -> Option<String> {
+    let (_, rest) = package.split_once(':')?;
+    let rest = rest.trim().trim_end_matches(".git").trim_end_matches('/');
+    let leaf = rest.rsplit(['/', '\\']).next().unwrap_or(rest).trim();
+    if leaf.is_empty() || leaf == "." || leaf == ".." {
+        return None;
+    }
+    Some(leaf.to_string())
 }
 
 fn require_uv_python_version(item_id: &str, raw_version: Option<&str>) -> InstallerResult<String> {
@@ -671,7 +820,7 @@ mod tests {
     #[test]
     fn resolve_npm_global_defaults_binary_name_and_manager() {
         let item = InstallPlanItem {
-            id: "ruff".to_string(),
+            id: "ruff-cli".to_string(),
             method: "npm_global".to_string(),
             version: Some("0.1.0".to_string()),
             url: None,
@@ -698,6 +847,36 @@ mod tests {
         assert_eq!(item.binary_name, "ruff");
         assert_eq!(item.package_spec, "ruff@0.1.0");
         assert_eq!(item.manager, NodePackageManager::Npm);
+    }
+
+    #[test]
+    fn resolve_npm_global_prefers_scoped_package_leaf_over_item_id() {
+        let item = InstallPlanItem {
+            id: "company-cli".to_string(),
+            method: "npm_global".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("@scope/tool".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::NpmGlobal(item) = resolved else {
+            panic!("expected npm_global plan item");
+        };
+        assert_eq!(item.binary_name, "tool");
     }
 
     #[test]
@@ -733,7 +912,7 @@ mod tests {
     #[test]
     fn resolve_cargo_install_treats_plain_package_name_as_registry_package() {
         let item = InstallPlanItem {
-            id: "ripgrep".to_string(),
+            id: "rg-cli".to_string(),
             method: "cargo_install".to_string(),
             version: Some("14.1.0".to_string()),
             url: None,
@@ -764,12 +943,13 @@ mod tests {
                 version: Some("14.1.0".to_string()),
             }
         );
+        assert_eq!(item.binary_name, "ripgrep");
     }
 
     #[test]
     fn resolve_go_install_treats_plain_package_name_as_remote_package() {
         let item = InstallPlanItem {
-            id: "ripgrep".to_string(),
+            id: "go-cli".to_string(),
             method: "go_install".to_string(),
             version: None,
             url: None,
@@ -797,12 +977,13 @@ mod tests {
             item.source,
             GoInstallSource::PackageSpec("ripgrep@latest".to_string())
         );
+        assert_eq!(item.binary_name, "ripgrep");
     }
 
     #[test]
     fn resolve_go_install_keeps_module_paths_as_remote_packages() {
         let item = InstallPlanItem {
-            id: "gofumpt".to_string(),
+            id: "formatter".to_string(),
             method: "go_install".to_string(),
             version: Some("v0.7.0".to_string()),
             url: None,
@@ -830,12 +1011,13 @@ mod tests {
             item.source,
             GoInstallSource::PackageSpec("mvdan.cc/gofumpt@v0.7.0".to_string())
         );
+        assert_eq!(item.binary_name, "gofumpt");
     }
 
     #[test]
     fn resolve_go_install_uses_explicit_local_path_syntax() {
         let item = InstallPlanItem {
-            id: "demo".to_string(),
+            id: "go-local".to_string(),
             method: "go_install".to_string(),
             version: None,
             url: None,
@@ -863,6 +1045,7 @@ mod tests {
             item.source,
             GoInstallSource::LocalPath(PathBuf::from("cmd/demo"))
         );
+        assert_eq!(item.binary_name, "demo");
     }
 
     #[test]
@@ -977,6 +1160,121 @@ mod tests {
             panic!("expected uv_python plan item");
         };
         assert_eq!(item.version, "3");
+    }
+
+    #[test]
+    fn resolve_uv_tool_defaults_binary_name_from_package() {
+        let item = InstallPlanItem {
+            id: "lint".to_string(),
+            method: "uv_tool".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("ruff".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::UvTool(item) = resolved else {
+            panic!("expected uv_tool plan item");
+        };
+        assert_eq!(item.binary_name, "ruff");
+    }
+
+    #[test]
+    fn resolve_release_rejects_item_id_with_path_separator() {
+        let item = InstallPlanItem {
+            id: "../escape".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: None,
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("path-like id should be rejected");
+        assert!(err.to_string().contains("must not contain path separators"));
+    }
+
+    #[test]
+    fn resolve_release_rejects_binary_name_with_path_separator() {
+        let item = InstallPlanItem {
+            id: "demo".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: Some("../escape".to_string()),
+            destination: None,
+            package: None,
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("path-like binary_name should be rejected");
+        assert!(err.to_string().contains("must not contain path separators"));
+    }
+
+    #[test]
+    fn resolve_release_normalizes_windows_relative_destination_for_windows_target() {
+        let item = InstallPlanItem {
+            id: "demo".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("bin\\demo.exe".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+            None,
+        )
+        .expect("windows destination");
+
+        let ResolvedPlanItem::Release(item) = resolved else {
+            panic!("expected release plan item");
+        };
+        assert_eq!(
+            item.destination,
+            Some(PathBuf::from("bin").join("demo.exe"))
+        );
     }
 
     #[test]

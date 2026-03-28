@@ -166,22 +166,35 @@ pub(crate) fn resolve_uv_tool_destination(
 pub(crate) fn validate_destination(
     item_id: &str,
     raw_destination: &str,
+    target_triple: &str,
 ) -> InstallerResult<PathBuf> {
-    let path = validate_destination_path(item_id, raw_destination, DestinationPolicy::Managed)?;
+    let path = validate_destination_path(
+        item_id,
+        raw_destination,
+        target_triple,
+        DestinationPolicy::Managed,
+    )?;
     Ok(normalize_lexical_path(&path))
 }
 
 pub(crate) fn validate_workspace_destination(
     item_id: &str,
     raw_destination: &str,
+    target_triple: &str,
 ) -> InstallerResult<PathBuf> {
-    let path = validate_destination_path(item_id, raw_destination, DestinationPolicy::Workspace)?;
+    let path = validate_destination_path(
+        item_id,
+        raw_destination,
+        target_triple,
+        DestinationPolicy::Workspace,
+    )?;
     Ok(normalize_lexical_path(&path))
 }
 
 fn validate_destination_path(
     item_id: &str,
     raw_destination: &str,
+    target_triple: &str,
     policy: DestinationPolicy,
 ) -> InstallerResult<PathBuf> {
     let windows_kind = classify_windows_destination(raw_destination);
@@ -197,6 +210,11 @@ fn validate_destination_path(
             )));
         }
         WindowsDestinationKind::Absolute => {
+            if matches!(policy, DestinationPolicy::Managed) {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
+                )));
+            }
             if windows_destination_has_no_file_name(raw_destination) {
                 return Err(InstallerError::usage(format!(
                     "plan item `{item_id}` destination `{raw_destination}` must include a file name"
@@ -207,21 +225,43 @@ fn validate_destination_path(
                     "plan item `{item_id}` destination `{raw_destination}` cannot contain `..`"
                 )));
             }
-            return Ok(PathBuf::from(raw_destination));
+            let path = PathBuf::from(raw_destination);
+            validate_parsed_destination(item_id, raw_destination, &path)?;
+            return Ok(path);
         }
         WindowsDestinationKind::NotWindows => {}
     }
 
-    let path = PathBuf::from(raw_destination);
-    if matches!(policy, DestinationPolicy::Managed)
-        && (path.is_absolute()
-            || path.has_root()
-            || windows_kind == WindowsDestinationKind::Absolute)
-    {
+    let path = if target_triple.contains("windows") {
+        parse_windows_relative_path(raw_destination)
+    } else {
+        PathBuf::from(raw_destination)
+    };
+    if matches!(policy, DestinationPolicy::Managed) && (path.is_absolute() || path.has_root()) {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
         )));
     }
+    validate_parsed_destination(item_id, raw_destination, &path)?;
+    Ok(path)
+}
+
+fn parse_windows_relative_path(raw_destination: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for component in raw_destination.split(['\\', '/']) {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        path.push(component);
+    }
+    path
+}
+
+fn validate_parsed_destination(
+    item_id: &str,
+    raw_destination: &str,
+    path: &Path,
+) -> InstallerResult<()> {
     if path.file_name().is_none() {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` must include a file name"
@@ -235,7 +275,7 @@ fn validate_destination_path(
             "plan item `{item_id}` destination `{raw_destination}` cannot contain `..`"
         )));
     }
-    Ok(path)
+    Ok(())
 }
 
 pub(crate) fn resolve_destination_path(path: &Path, managed_dir: &Path) -> PathBuf {
@@ -337,16 +377,6 @@ fn classify_windows_destination(raw: &str) -> WindowsDestinationKind {
     WindowsDestinationKind::NotWindows
 }
 
-fn windows_destination_has_no_file_name(raw: &str) -> bool {
-    raw.split(['\\', '/'])
-        .rfind(|component| !component.is_empty())
-        .is_none_or(|component| component == "." || component == "..")
-}
-
-fn windows_destination_has_parent_component(raw: &str) -> bool {
-    raw.split(['\\', '/']).any(|component| component == "..")
-}
-
 fn reject_symlink_path_component(candidate: &Path, managed_dir: &Path) -> Result<(), String> {
     let metadata = match std::fs::symlink_metadata(candidate) {
         Ok(metadata) => metadata,
@@ -368,13 +398,24 @@ fn reject_symlink_path_component(candidate: &Path, managed_dir: &Path) -> Result
     Ok(())
 }
 
+fn windows_destination_has_no_file_name(raw: &str) -> bool {
+    raw.split(['\\', '/'])
+        .rfind(|component| !component.is_empty())
+        .is_none_or(|component| component == "." || component == "..")
+}
+
+fn windows_destination_has_parent_component(raw: &str) -> bool {
+    raw.split(['\\', '/']).any(|component| component == "..")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn validate_destination_rejects_windows_drive_relative_path() {
-        let err = validate_destination("demo", "C:tool.exe").expect_err("should reject");
+        let err = validate_destination("demo", "C:tool.exe", "x86_64-pc-windows-msvc")
+            .expect_err("should reject");
         assert!(
             err.to_string().contains("Windows drive-relative path"),
             "unexpected error: {err}"
@@ -383,7 +424,8 @@ mod tests {
 
     #[test]
     fn validate_destination_rejects_windows_root_relative_path() {
-        let err = validate_destination("demo", "\\tool.exe").expect_err("should reject");
+        let err = validate_destination("demo", "\\tool.exe", "x86_64-pc-windows-msvc")
+            .expect_err("should reject");
         assert!(
             err.to_string().contains("Windows root-relative path"),
             "unexpected error: {err}"
@@ -458,29 +500,46 @@ mod tests {
 
     #[test]
     fn validate_destination_rejects_unix_absolute_path() {
-        let err = validate_destination("demo", "/tmp/demo").expect_err("should reject");
+        let err = validate_destination("demo", "/tmp/demo", "x86_64-unknown-linux-gnu")
+            .expect_err("should reject");
         assert!(err.to_string().contains("cannot be an absolute path"));
     }
 
     #[test]
-    fn validate_destination_accepts_windows_absolute_path() {
-        let destination =
-            validate_destination("demo", "C:\\tools\\demo.exe").expect("should allow");
-        assert_eq!(destination, PathBuf::from("C:\\tools\\demo.exe"));
+    fn validate_destination_rejects_windows_absolute_path_for_managed_installs() {
+        let err = validate_destination("demo", "C:\\tools\\demo.exe", "x86_64-pc-windows-msvc")
+            .expect_err("should reject");
+        assert!(err.to_string().contains("cannot be an absolute path"));
     }
 
     #[test]
     fn validate_destination_rejects_parent_components_in_windows_absolute_path() {
-        let err =
-            validate_destination("demo", "C:\\tools\\..\\demo.exe").expect_err("should reject");
+        let err = validate_workspace_destination(
+            "demo",
+            "C:\\tools\\..\\demo.exe",
+            "x86_64-pc-windows-msvc",
+        )
+        .expect_err("should reject");
         assert!(err.to_string().contains("cannot contain `..`"));
     }
 
     #[test]
     fn validate_workspace_destination_accepts_absolute_path() {
         let destination =
-            validate_workspace_destination("demo", "/workspace/app").expect("absolute workspace");
+            validate_workspace_destination("demo", "/workspace/app", "x86_64-unknown-linux-gnu")
+                .expect("absolute workspace");
         assert_eq!(destination, PathBuf::from("/workspace/app"));
+    }
+
+    #[test]
+    fn validate_destination_normalizes_windows_relative_path_for_windows_targets() {
+        let destination =
+            validate_destination("demo", "bin\\tools\\demo.exe", "x86_64-pc-windows-msvc")
+                .expect("windows relative destination");
+        assert_eq!(
+            destination,
+            PathBuf::from("bin").join("tools").join("demo.exe")
+        );
     }
 
     #[test]

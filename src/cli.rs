@@ -79,11 +79,6 @@ impl BootstrapArgs {
     }
 
     fn build_direct_plan(&self) -> Result<InstallPlan, InstallerError> {
-        if self.plan_file.is_some() {
-            return Err(InstallerError::usage(
-                "`--method` and `--plan-file` cannot be used together",
-            ));
-        }
         let id = self
             .id
             .clone()
@@ -113,6 +108,69 @@ impl BootstrapArgs {
             }],
         })
     }
+
+    fn validate_mode_args(&self) -> Result<(), InstallerError> {
+        if self.method.is_some() {
+            if self.plan_file.is_some() {
+                return Err(InstallerError::usage(
+                    "`--method` and `--plan-file` cannot be used together",
+                ));
+            }
+            return Ok(());
+        }
+
+        let direct_plan_flags = self.direct_plan_only_flags();
+        if direct_plan_flags.is_empty() {
+            return Ok(());
+        }
+
+        if self.plan_file.is_some() {
+            return Err(InstallerError::usage(format!(
+                "direct-plan flags cannot be used with `--plan-file`: {}",
+                direct_plan_flags.join(", ")
+            )));
+        }
+
+        Err(InstallerError::usage(format!(
+            "direct-plan flags require `--method`: {}",
+            direct_plan_flags.join(", ")
+        )))
+    }
+
+    fn direct_plan_only_flags(&self) -> Vec<&'static str> {
+        let mut flags = Vec::new();
+        if self.id.is_some() {
+            flags.push("--id");
+        }
+        if self.tool_version.is_some() {
+            flags.push("--tool-version");
+        }
+        if self.url.is_some() {
+            flags.push("--url");
+        }
+        if self.sha256.is_some() {
+            flags.push("--sha256");
+        }
+        if self.archive_binary.is_some() {
+            flags.push("--archive-binary");
+        }
+        if self.binary_name.is_some() {
+            flags.push("--binary-name");
+        }
+        if self.destination.is_some() {
+            flags.push("--destination");
+        }
+        if self.package.is_some() {
+            flags.push("--package");
+        }
+        if self.manager.is_some() {
+            flags.push("--manager");
+        }
+        if self.python.is_some() {
+            flags.push("--python");
+        }
+        flags
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -130,6 +188,7 @@ enum Commands {
 pub(crate) async fn run() -> Result<(), InstallerError> {
     let cli = RootCli::parse();
     let Commands::Bootstrap(args) = cli.command;
+    args.validate_mode_args()?;
     let result = if args.method.is_some() {
         let execution_request = args.build_execution_request();
         let plan = args.build_direct_plan()?;

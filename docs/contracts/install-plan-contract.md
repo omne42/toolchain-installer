@@ -24,6 +24,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `plan.items` 不能为空。
 - 顶层对象和每个 `items[]` 对象都启用严格未知字段校验；拼错字段名会在反序列化阶段直接失败，不会被静默吞掉。
 - `plan.items[*].id` 必须全局唯一；重复 `id` 会在执行前返回退出码 `2`。
+- `plan.items[*].id` 还是默认目标目录/文件名的兜底输入，因此必须是 plain leaf name，不能包含 `/`、`\`、`.`、`..` 或 `C:foo` 这类 path-like 片段；调用方不应再把 `id` 当作隐式子目录。
 - `method` 必须是受支持的方法名；未知方法会在执行前直接返回退出码 `2`。
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
 - 纯库 API `validate_install_plan()` 只做 schema、字段组合、宿主/目标约束和重复 `id` 校验；它不知道 `managed_dir`，因此不会擅自猜测依赖目标目录的全局路径冲突。
@@ -108,6 +109,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 允许 `version`，但当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
 - `uv_tool`
   - 允许 `package`、可选 `python`、可选 `binary_name`。
+  - 所有 `binary_name` 都必须是 plain file name；调用方如果想控制子目录，应使用对应方法允许的 `destination`，而不是把路径片段塞进 `binary_name`。
 
 ## 宿主与目标约束
 
@@ -134,10 +136,12 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `workspace_package` 不接受独立 `version` 字段；如需锁定版本，应直接把版本写进 `package` 自身。
 - 多个 `workspace_package` item 可以指向同一个 workspace；这表示对同一工作区重复执行依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
+- `npm_global`、`cargo_install`、`go_install`、`uv_tool` 若未显式提供 `binary_name`，installer 会优先从 `package` 或解析后的本地/远端来源推导默认二进制名；只有确实推不出来时才回退到 `id`。
 - Windows target 下，`npm_global` 的 `pnpm`/`bun` CLI 入口也按 `<binary>.cmd` 参与目标路径冲突校验，而不是按无后缀文件名比较。
 - `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的包元数据证明“请求的包名/版本当前确实已安装”；孤儿旧 binary 不会被当成成功安装。
 - `cargo_install` 若 `managed_dir` 本身不是 `bin/` 目录，结果二进制会落到 `managed_dir/bin/<binary>`，不会越过调用方给定的托管根。
 - plan 文件中的本地相对路径输入（例如 `cargo_install`/`go_install` 的本地包路径，以及 `workspace_package` 的相对工作区目录）按 plan 文件所在目录解析，而不是按 CLI 进程当前工作目录解析。
+- 当目标是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；`bin\\tool.exe` 和 `bin/tool.exe` 会落到同一个托管相对路径，不再依赖当前宿主机是否把反斜杠当普通字符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一路径，也不能形成父子路径重叠，避免后执行项覆盖先执行项目录树。
 - 对 Windows target，以及默认大小写不敏感的 macOS target，冲突校验会按保守大小写不敏感语义比较路径；`Bin/Python` 与 `bin/python` 这类目标会在执行前直接被拦下。
