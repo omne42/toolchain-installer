@@ -82,7 +82,9 @@ fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
 
                 return Some(VersionProbeOutput {
                     success: status.success(),
+                    #[cfg(test)]
                     stdout: stdout_bytes,
+                    #[cfg(test)]
                     stderr: stderr_bytes,
                 });
             }
