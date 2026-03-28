@@ -23,6 +23,11 @@ pub enum BootstrapSourceKind {
     Mirror,
     SystemPackage,
     Pip,
+    CargoInstall,
+    GoInstall,
+    NpmGlobal,
+    WorkspacePackage,
+    RustupComponent,
     PythonMirror,
     PackageIndex,
 }

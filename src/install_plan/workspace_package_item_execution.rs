@@ -3,7 +3,7 @@ use std::path::Path;
 
 use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
 
-use crate::contracts::{BootstrapItem, BootstrapStatus};
+use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
 use crate::plan_items::WorkspacePackagePlanItem;
 
@@ -57,7 +57,7 @@ pub(crate) fn execute_workspace_package_item(
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
         source: Some(format!("workspace:{manager}")),
-        source_kind: None,
+        source_kind: Some(BootstrapSourceKind::WorkspacePackage),
         archive_match: None,
         destination: Some(workspace_dir.display().to_string()),
         detail: None,
