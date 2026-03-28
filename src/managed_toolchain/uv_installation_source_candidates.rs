@@ -50,6 +50,40 @@ pub(super) fn package_index_installation_source_candidates(
         .collect()
 }
 
+pub(super) async fn prioritize_reachable_installation_sources(
+    client: &reqwest::Client,
+    candidates: Vec<InstallationSourceCandidate>,
+) -> Vec<InstallationSourceCandidate> {
+    let mut reachable = Vec::new();
+    let mut deferred = Vec::new();
+    for candidate in candidates {
+        match candidate.probe_url.as_deref() {
+            Some(url)
+                if probe_http_endpoint_detailed(client, url)
+                    .await
+                    .is_reachable() =>
+            {
+                reachable.push(candidate)
+            }
+            Some(_) => deferred.push(candidate),
+            None => reachable.push(candidate),
+        }
+    }
+    reachable.extend(deferred);
+    reachable
+}
+
+fn redact_source_url(raw: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(raw) else {
+        return raw.to_string();
+    };
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,38 +130,4 @@ mod tests {
         );
         assert_eq!(candidates[1].source_kind, BootstrapSourceKind::PythonMirror);
     }
-}
-
-pub(super) async fn prioritize_reachable_installation_sources(
-    client: &reqwest::Client,
-    candidates: Vec<InstallationSourceCandidate>,
-) -> Vec<InstallationSourceCandidate> {
-    let mut reachable = Vec::new();
-    let mut deferred = Vec::new();
-    for candidate in candidates {
-        match candidate.probe_url.as_deref() {
-            Some(url)
-                if probe_http_endpoint_detailed(client, url)
-                    .await
-                    .is_reachable() =>
-            {
-                reachable.push(candidate)
-            }
-            Some(_) => deferred.push(candidate),
-            None => reachable.push(candidate),
-        }
-    }
-    reachable.extend(deferred);
-    reachable
-}
-
-fn redact_source_url(raw: &str) -> String {
-    let Ok(mut url) = reqwest::Url::parse(raw) else {
-        return raw.to_string();
-    };
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
-    url.set_query(None);
-    url.set_fragment(None);
-    url.to_string()
 }
