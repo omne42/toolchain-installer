@@ -197,6 +197,17 @@ fn validate_destination_path(
     target_triple: &str,
     policy: DestinationPolicy,
 ) -> InstallerResult<PathBuf> {
+    if raw_destination.starts_with('/') {
+        if matches!(policy, DestinationPolicy::Managed) {
+            return Err(InstallerError::usage(format!(
+                "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
+            )));
+        }
+        let path = PathBuf::from(raw_destination);
+        validate_parsed_destination(item_id, raw_destination, &path)?;
+        return Ok(path);
+    }
+
     let windows_kind = classify_windows_destination(raw_destination);
     match windows_kind {
         WindowsDestinationKind::DriveRelative => {
@@ -501,6 +512,13 @@ mod tests {
     #[test]
     fn validate_destination_rejects_unix_absolute_path() {
         let err = validate_destination("demo", "/tmp/demo", "x86_64-unknown-linux-gnu")
+            .expect_err("should reject");
+        assert!(err.to_string().contains("cannot be an absolute path"));
+    }
+
+    #[test]
+    fn validate_destination_rejects_forward_slash_root_path_for_windows_targets() {
+        let err = validate_destination("demo", "/tools/demo.exe", "x86_64-pc-windows-msvc")
             .expect_err("should reject");
         assert!(err.to_string().contains("cannot be an absolute path"));
     }
