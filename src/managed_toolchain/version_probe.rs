@@ -13,6 +13,7 @@ pub(crate) fn binary_reports_version(path: &Path) -> bool {
     run_version_probe_with_retries(path).is_some_and(|probe| probe.success)
 }
 
+#[cfg(test)]
 pub(crate) fn python_binary_matches_version(path: &Path, expected_version: &str) -> bool {
     run_version_probe_with_retries(path).is_some_and(|probe| {
         probe.success
@@ -23,7 +24,9 @@ pub(crate) fn python_binary_matches_version(path: &Path, expected_version: &str)
 
 struct VersionProbeOutput {
     success: bool,
+    #[cfg(test)]
     stdout: Vec<u8>,
+    #[cfg(test)]
     stderr: Vec<u8>,
 }
 
@@ -93,6 +96,7 @@ fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
     }
 }
 
+#[cfg(test)]
 fn python_version_output_matches(output: &[u8], expected_version: &str) -> bool {
     let output = String::from_utf8_lossy(output);
     output.lines().any(|line| {
@@ -105,6 +109,7 @@ fn python_version_output_matches(output: &[u8], expected_version: &str) -> bool 
     })
 }
 
+#[cfg(test)]
 fn python_version_matches_requirement(reported_version: &str, expected_version: &str) -> bool {
     reported_version == expected_version
         || reported_version.starts_with(&format!("{expected_version}."))
