@@ -545,6 +545,27 @@ exit 42
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
+fn host_command_is_healthy_rejects_unknown_tool_even_when_host_binary_is_healthy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_executable(
+        &tmp.path().join("custom-tool"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "custom-tool 1.0.0"
+  exit 0
+fi
+exit 0
+"#,
+    )
+    .expect("write custom-tool");
+
+    with_path_prepend(tmp.path(), || {
+        assert!(!host_command_is_healthy("custom-tool"));
+    });
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
 fn bootstrap_reports_unsupported_tool_even_when_host_path_contains_same_name() -> anyhow::Result<()>
 {
     let tmp = tempfile::tempdir()?;
