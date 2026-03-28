@@ -105,7 +105,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv`
   - 不接受额外字段。
 - `uv_python`
-  - 允许 `version`。
+  - 允许 `version`，但当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
 - `uv_tool`
   - 允许 `package`、可选 `python`、可选 `binary_name`。
 
@@ -120,7 +120,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 ## 路径与 URL 约束
 
 - `release.url` 仅允许 `http` 或 `https`。
-- `archive_tree_release.url` 仅允许 `http` 或 `https`，且资产名必须是受支持的 `.tar.gz`、`.tar.xz` 或 `.zip`。
+- `archive_tree_release.url` 仅允许 `http` 或 `https`，且资产名必须是受支持的 `.tar.gz`、`.tar.xz` 或 `.zip`；不支持的资产名会在结构校验阶段直接以 usage error 拒绝。
 - 对 `release`、`archive_tree_release` 等托管落盘方法，`destination` 若为相对路径，会解析到 `managed_dir` 下。
 - 托管落盘方法的 Unix 风格绝对路径如 `/tmp/demo` 会被拒绝，避免绕过托管目录边界。
 - 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
@@ -131,8 +131,10 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
+- `workspace_package` 不接受独立 `version` 字段；如需锁定版本，应直接把版本写进 `package` 自身。
 - 多个 `workspace_package` item 可以指向同一个 workspace；这表示对同一工作区重复执行依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
+- Windows target 下，`npm_global` 的 `pnpm`/`bun` CLI 入口也按 `<binary>.cmd` 参与目标路径冲突校验，而不是按无后缀文件名比较。
 - `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的包元数据证明“请求的包名/版本当前确实已安装”；孤儿旧 binary 不会被当成成功安装。
 - `cargo_install` 若 `managed_dir` 本身不是 `bin/` 目录，结果二进制会落到 `managed_dir/bin/<binary>`，不会越过调用方给定的托管根。
 - plan 文件中的本地相对路径输入（例如 `cargo_install`/`go_install` 的本地包路径，以及 `workspace_package` 的相对工作区目录）按 plan 文件所在目录解析，而不是按 CLI 进程当前工作目录解析。
@@ -142,7 +144,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，因此它会继续拦截其他方法写入这棵子树；但多个 `uv_python` item 彼此不会仅因共享这块托管安装根就在执行前互相冲突。
 - `uv`、`uv_python`、`uv_tool` 只有在已有托管 `uv` 通过 `--version` 健康检查后才会直接复用；若托管 `uv` 文件存在但健康检查失败，会先自愈重装再继续执行。
 - `uv_python` 只有在 `managed_dir` 下实际发现匹配版本的 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0` 不构成成功条件。
-- `uv_python` 的版本匹配按版本段比较：请求 `3.13` 可以接受托管目录里的 `3.13.x`，但请求 `3.13.1` 不会误接受 `3.13.12`。
+- `uv_python` 的版本匹配按版本段比较：请求 `3` 可以接受托管目录里的任意 `3.x.y`，请求 `3.13` 可以接受 `3.13.x`，但请求 `3.13.1` 不会误接受 `3.13.12`。
 - `uv_tool` 若目标路径上已有同名旧二进制，installer 会先把旧文件挪到临时备份；只有本次 `uv tool install` 真正产出新的目标二进制后才算成功，失败时会恢复旧文件。
 
 ## 来源探测与回退

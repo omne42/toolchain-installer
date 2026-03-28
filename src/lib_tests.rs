@@ -2319,6 +2319,92 @@ fn validate_plan_rejects_npm_global_destination_conflicts() {
 }
 
 #[test]
+fn validate_plan_rejects_windows_pnpm_global_cmd_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.zip".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("http-server.cmd".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "pnpm-demo".to_string(),
+                method: "npm_global".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("http-server".to_string()),
+                destination: None,
+                package: Some("http-server@14.1.1".to_string()),
+                manager: Some("pnpm".to_string()),
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-pc-windows-msvc",
+        "x86_64-pc-windows-msvc",
+        Path::new(r"C:\toolchain"),
+    )
+    .expect_err("pnpm on Windows should reserve the .cmd entrypoint");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_windows_bun_global_cmd_destination_conflicts() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![
+            InstallPlanItem {
+                id: "release-demo".to_string(),
+                method: "release".to_string(),
+                version: None,
+                url: Some("https://example.com/demo.zip".to_string()),
+                sha256: None,
+                archive_binary: None,
+                binary_name: None,
+                destination: Some("bin/http-server.cmd".to_string()),
+                package: None,
+                manager: None,
+                python: None,
+            },
+            InstallPlanItem {
+                id: "bun-demo".to_string(),
+                method: "npm_global".to_string(),
+                version: None,
+                url: None,
+                sha256: None,
+                archive_binary: None,
+                binary_name: Some("http-server".to_string()),
+                destination: None,
+                package: Some("http-server@14.1.1".to_string()),
+                manager: Some("bun".to_string()),
+                python: None,
+            },
+        ],
+    };
+    let err = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-pc-windows-msvc",
+        "x86_64-pc-windows-msvc",
+        Path::new(r"C:\toolchain"),
+    )
+    .expect_err("bun on Windows should reserve the .cmd entrypoint under bin/");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
 fn validate_plan_rejects_go_install_destination_conflicts() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
@@ -2491,6 +2577,34 @@ fn validate_plan_rejects_uv_python_install_root_conflicts() {
     )
     .expect_err("uv_python install root conflict should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
+}
+
+#[test]
+fn validate_plan_rejects_non_archive_tree_asset_during_structure_validation() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "archive-demo".to_string(),
+            method: "archive_tree_release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.bin?download=1".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("non-archive asset should be rejected before execution");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(err.to_string().contains("supported archive asset"));
 }
 
 #[test]
@@ -2859,6 +2973,24 @@ echo "Python 3.13.12"
     Ok(())
 }
 
+#[cfg_attr(windows, ignore = "mock python shim is unix-specific")]
+#[test]
+fn find_managed_python_executable_accepts_major_only_selector() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+    )?;
+
+    let found = find_managed_python_executable(&managed_dir, "3", "x86_64-unknown-linux-gnu");
+    assert_eq!(found, Some(managed_dir.join("python3.13")));
+    Ok(())
+}
+
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
 async fn execute_uv_python_item_returns_real_interpreter_from_installation_dir()
@@ -2915,6 +3047,65 @@ exit 2
     assert!(
         stdout.contains("Python 3.13.12") || stderr.contains("Python 3.13.12"),
         "unexpected python version output: stdout={stdout:?} stderr={stderr:?}"
+    );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_python_item_accepts_major_only_selector() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  install_root="$UV_PYTHON_INSTALL_DIR/cpython-3.13.12-linux-x86_64-gnu/bin"
+  mkdir -p "$install_root"
+  cat > "$install_root/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$install_root/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3".to_string(),
+        version: "3".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await?;
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(
+            managed_python_installation_dir(&managed_dir)
+                .join("cpython-3.13.12-linux-x86_64-gnu")
+                .join("bin")
+                .join("python3.13")
+                .display()
+                .to_string()
+                .as_str()
+        )
     );
     Ok(())
 }

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use omne_artifact_install_primitives::is_archive_tree_asset_name;
 use omne_integrity_primitives::{Sha256Digest, parse_sha256_user_input};
 use omne_system_package_primitives::SystemPackageManager;
 use reqwest::Url;
@@ -109,6 +110,7 @@ fn resolve_archive_tree_release_plan_item(
         ],
     )?;
     let url = require_http_url(&id, "archive_tree_release", item.url.as_deref())?;
+    validate_archive_tree_release_asset_name(&id, &url)?;
     let sha256 = parse_optional_sha256(&id, item.sha256.as_deref())?;
     let destination = parse_optional_destination(&id, item.destination.as_deref())?;
     Ok(ResolvedPlanItem::ArchiveTreeRelease(
@@ -252,6 +254,7 @@ fn resolve_workspace_package_plan_item(
     reject_disallowed_fields(
         &id,
         &[
+            ("version", item.version.as_deref()),
             ("url", item.url.as_deref()),
             ("sha256", item.sha256.as_deref()),
             ("archive_binary", item.archive_binary.as_deref()),
@@ -264,10 +267,9 @@ fn resolve_workspace_package_plan_item(
         "package",
         item.id.as_str(),
     )?;
-    let version = optional_trimmed(item.version.as_deref());
     Ok(ResolvedPlanItem::WorkspacePackage(
         WorkspacePackagePlanItem {
-            package_spec: build_versioned_package_spec(&package, version),
+            package_spec: package,
             manager: parse_node_package_manager(&id, item.manager.as_deref(), "workspace_package")?,
             destination: require_workspace_destination(
                 &id,
@@ -414,11 +416,7 @@ fn resolve_managed_toolchain_plan_item(
                 ],
             )?;
             Ok(ResolvedPlanItem::UvPython(UvPythonPlanItem {
-                version: require_non_empty(
-                    item.version.as_deref().unwrap_or_default(),
-                    "version",
-                    item.id.as_str(),
-                )?,
+                version: require_uv_python_version(item.id.as_str(), item.version.as_deref())?,
                 id,
             }))
         }
@@ -559,6 +557,24 @@ fn require_http_url(item_id: &str, method: &str, raw_url: Option<&str>) -> Insta
     }
 }
 
+fn validate_archive_tree_release_asset_name(item_id: &str, url: &Url) -> InstallerResult<()> {
+    let asset_name = archive_tree_asset_name_from_url(url).ok_or_else(|| {
+        InstallerError::usage(format!(
+            "plan item `{item_id}` with method `archive_tree_release` requires a URL path ending in a supported archive asset"
+        ))
+    })?;
+    if is_archive_tree_asset_name(asset_name) {
+        return Ok(());
+    }
+    Err(InstallerError::usage(format!(
+        "plan item `{item_id}` with method `archive_tree_release` requires a supported archive asset, got `{asset_name}`"
+    )))
+}
+
+fn archive_tree_asset_name_from_url(url: &Url) -> Option<&str> {
+    url.path_segments()?.rfind(|segment| !segment.is_empty())
+}
+
 fn parse_optional_sha256(
     item_id: &str,
     raw_sha256: Option<&str>,
@@ -595,6 +611,28 @@ fn require_workspace_destination(
                 "plan item `{item_id}` with method `workspace_package` requires `destination`"
             ))
         })
+}
+
+fn require_uv_python_version(item_id: &str, raw_version: Option<&str>) -> InstallerResult<String> {
+    let version = optional_trimmed(raw_version).ok_or_else(|| {
+        InstallerError::usage(format!(
+            "plan item `{item_id}` requires non-empty `version`"
+        ))
+    })?;
+    if uv_python_version_selector_is_supported(version) {
+        return Ok(version.to_string());
+    }
+    Err(InstallerError::usage(format!(
+        "plan item `{item_id}` with method `uv_python` requires a numeric version selector like `3`, `3.13`, or `3.13.12`"
+    )))
+}
+
+fn uv_python_version_selector_is_supported(version: &str) -> bool {
+    let segments: Vec<_> = version.split('.').collect();
+    (1..=3).contains(&segments.len())
+        && segments
+            .iter()
+            .all(|segment| !segment.is_empty() && segment.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn reject_disallowed_fields(item_id: &str, fields: &[(&str, Option<&str>)]) -> InstallerResult<()> {
@@ -855,6 +893,119 @@ mod tests {
             panic!("expected workspace_package plan item");
         };
         assert_eq!(item.destination, PathBuf::from("/repo/plans/frontend"));
+    }
+
+    #[test]
+    fn resolve_workspace_package_rejects_version_field() {
+        let item = InstallPlanItem {
+            id: "workspace-demo".to_string(),
+            method: "workspace_package".to_string(),
+            version: Some("1.2.3".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("./frontend".to_string()),
+            package: Some("react".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect_err("workspace_package should reject version");
+        assert!(err.to_string().contains("does not allow field `version`"));
+    }
+
+    #[test]
+    fn resolve_archive_tree_release_rejects_non_archive_assets() {
+        let item = InstallPlanItem {
+            id: "tree-demo".to_string(),
+            method: "archive_tree_release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.bin?download=1".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: None,
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("archive_tree_release should reject non-archive assets during resolve");
+        assert!(
+            err.to_string()
+                .contains("requires a supported archive asset")
+        );
+    }
+
+    #[test]
+    fn resolve_uv_python_accepts_major_only_selector() {
+        let item = InstallPlanItem {
+            id: "python3".to_string(),
+            method: "uv_python".to_string(),
+            version: Some("3".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: None,
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect("major-only selector should be accepted");
+        let ResolvedPlanItem::UvPython(item) = resolved else {
+            panic!("expected uv_python plan item");
+        };
+        assert_eq!(item.version, "3");
+    }
+
+    #[test]
+    fn resolve_uv_python_rejects_non_numeric_selector() {
+        let item = InstallPlanItem {
+            id: "python-latest".to_string(),
+            method: "uv_python".to_string(),
+            version: Some("latest".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: None,
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("unsupported selector should be rejected");
+        assert!(
+            err.to_string()
+                .contains("requires a numeric version selector")
+        );
     }
 
     #[test]

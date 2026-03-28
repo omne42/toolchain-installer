@@ -36,6 +36,7 @@
   - 单个安装项标识。
 - `--tool-version <value>`
   - `uv_python` 直接参数模式下的 Python 版本。
+  - 当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
 - `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
   - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
   - `--archive-binary` 传的是 archive 内目标二进制的相对路径；installer 会规范斜杠，并在常见单根目录 archive 上自动补齐根目录后再做精确匹配。

@@ -118,14 +118,25 @@ pub(crate) fn resolve_npm_global_destination(
                 managed_dir.to_path_buf()
             };
             if target_triple.contains("windows") {
-                prefix_root.join(format!("{}.cmd", item.binary_name))
+                prefix_root.join(npm_global_binary_filename(&item.binary_name, target_triple))
             } else {
                 prefix_root.join("bin").join(&item.binary_name)
             }
         }
-        NodePackageManager::Pnpm => managed_dir.join(&item.binary_name),
-        NodePackageManager::Bun => managed_dir.join("bin").join(&item.binary_name),
+        NodePackageManager::Pnpm => {
+            managed_dir.join(npm_global_binary_filename(&item.binary_name, target_triple))
+        }
+        NodePackageManager::Bun => managed_dir
+            .join("bin")
+            .join(npm_global_binary_filename(&item.binary_name, target_triple)),
     }
+}
+
+fn npm_global_binary_filename(binary_name: &str, target_triple: &str) -> String {
+    if target_triple.contains("windows") {
+        return format!("{binary_name}.cmd");
+    }
+    binary_name.to_string()
 }
 
 pub(crate) fn resolve_go_install_destination(
@@ -409,6 +420,40 @@ mod tests {
         let destination =
             resolve_destination_path(Path::new("C:\\tools\\demo.exe"), Path::new("/managed"));
         assert_eq!(destination, PathBuf::from("C:\\tools\\demo.exe"));
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_uses_windows_cmd_entrypoints_for_pnpm_and_bun() {
+        let managed_dir = Path::new(r"C:\managed");
+        let pnpm_destination = resolve_npm_global_destination(
+            &NpmGlobalPlanItem {
+                id: "pnpm-demo".to_string(),
+                package_spec: "demo".to_string(),
+                manager: NodePackageManager::Pnpm,
+                binary_name: "demo".to_string(),
+            },
+            "x86_64-pc-windows-msvc",
+            managed_dir,
+        );
+        assert_eq!(
+            pnpm_destination,
+            PathBuf::from(r"C:\managed").join("demo.cmd")
+        );
+
+        let bun_destination = resolve_npm_global_destination(
+            &NpmGlobalPlanItem {
+                id: "bun-demo".to_string(),
+                package_spec: "demo".to_string(),
+                manager: NodePackageManager::Bun,
+                binary_name: "demo".to_string(),
+            },
+            "x86_64-pc-windows-msvc",
+            managed_dir,
+        );
+        assert_eq!(
+            bun_destination,
+            PathBuf::from(r"C:\managed").join("bin").join("demo.cmd")
+        );
     }
 
     #[test]
