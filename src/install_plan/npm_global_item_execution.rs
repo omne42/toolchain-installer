@@ -7,7 +7,7 @@ use omne_process_primitives::{
     HostRecipeRequest, command_path_exists, resolve_command_path, run_host_recipe,
 };
 
-use crate::contracts::{BootstrapItem, BootstrapStatus};
+use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
 use crate::plan_items::{NodePackageManager, NpmGlobalPlanItem};
 
@@ -109,7 +109,7 @@ pub(crate) fn execute_npm_global_item(
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
         source: Some(recipe.source),
-        source_kind: None,
+        source_kind: Some(BootstrapSourceKind::NpmGlobal),
         archive_match: None,
         destination: Some(destination.display().to_string()),
         detail: None,

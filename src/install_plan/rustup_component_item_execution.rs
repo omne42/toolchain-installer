@@ -2,7 +2,7 @@ use std::ffi::OsString;
 
 use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
 
-use crate::contracts::{BootstrapItem, BootstrapStatus};
+use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::OperationResult;
 use crate::plan_items::RustupComponentPlanItem;
 
@@ -35,7 +35,7 @@ pub(crate) fn execute_rustup_component_item(
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
         source: Some(format!("rustup:component:{}", item.component)),
-        source_kind: None,
+        source_kind: Some(BootstrapSourceKind::RustupComponent),
         archive_match: None,
         destination: destination.map(|path| path.display().to_string()),
         detail: None,
