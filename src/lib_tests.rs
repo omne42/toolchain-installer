@@ -17,7 +17,7 @@ use omne_host_info_primitives::{
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
-    SystemPackageManager, try_default_system_package_install_recipes_for_os,
+    SystemPackageManager, default_system_package_install_recipes_for_os,
 };
 
 use crate::application::bootstrap_use_case::{
@@ -791,8 +791,7 @@ fn select_mingit_release_asset_prefers_busybox_on_x64() {
 
 #[test]
 fn system_recipes_cover_linux() {
-    let recipes = try_default_system_package_install_recipes_for_os("linux", "git")
-        .expect("bootstrap package should remain valid");
+    let recipes = default_system_package_install_recipes_for_os("linux", "git");
     assert!(!recipes.is_empty());
     assert!(recipes.iter().any(|recipe| recipe.program == "apt-get"));
 }
@@ -800,11 +799,7 @@ fn system_recipes_cover_linux() {
 #[test]
 fn toolchain_installer_composes_current_host_system_recipes() {
     let _ = detect_host_platform().map(|platform| {
-        try_default_system_package_install_recipes_for_os(
-            platform.operating_system().as_str(),
-            "git",
-        )
-        .expect("bootstrap package should remain valid")
+        default_system_package_install_recipes_for_os(platform.operating_system().as_str(), "git")
     });
 }
 
@@ -1952,8 +1947,7 @@ fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
 
 #[test]
 fn system_recipes_cover_macos() {
-    let recipes = try_default_system_package_install_recipes_for_os("macos", "git")
-        .expect("bootstrap package should remain valid");
+    let recipes = default_system_package_install_recipes_for_os("macos", "git");
     assert_eq!(recipes.len(), 1);
     assert_eq!(recipes[0].program, "brew");
 }
