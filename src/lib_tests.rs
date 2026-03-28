@@ -2743,6 +2743,42 @@ fn validate_plan_resolves_cargo_install_local_paths_against_plan_base_dir() {
 }
 
 #[test]
+fn validate_plan_resolves_workspace_package_destination_against_plan_base_dir() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "workspace-react".to_string(),
+            method: "workspace_package".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("apps/demo-web".to_string()),
+            package: Some("react".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+    let plan_base_dir = Path::new("/tmp/install-plans/demo");
+
+    let resolved = validate_plan_with_base_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        plan_base_dir,
+    )
+    .expect("workspace destination should resolve");
+
+    match &resolved[0] {
+        crate::plan_items::ResolvedPlanItem::WorkspacePackage(item) => {
+            assert_eq!(item.destination, plan_base_dir.join("apps/demo-web"));
+        }
+        other => panic!("unexpected resolved item: {other:?}"),
+    }
+}
+
+#[test]
 fn validate_plan_resolves_go_install_local_paths_against_plan_base_dir() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
