@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use omne_process_primitives::{HostRecipeRequest, command_path_exists, run_host_recipe};
@@ -34,8 +35,16 @@ pub(crate) async fn execute_uv_tool_item(
     .await;
     let destination = managed_tool_binary_path(&item.binary_name, target_triple, managed_dir);
     attempt_source_candidates(candidates, "all uv_tool sources failed", |candidate| {
-        let mut env = base_env.clone();
-        env.extend(candidate.env.iter().cloned());
+        let mut env = base_env
+            .iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+            .collect::<Vec<_>>();
+        env.extend(
+            candidate
+                .env
+                .iter()
+                .map(|(key, value)| (OsString::from(key), OsString::from(value))),
+        );
         let backup = ManagedToolBinaryBackup::stash(&destination)?;
 
         let mut args = vec![
@@ -48,6 +57,7 @@ pub(crate) async fn execute_uv_tool_item(
             args.push(python.to_string());
         }
         args.push(item.package.to_string());
+        let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
 
         if let Err(err) =
             run_host_recipe(&HostRecipeRequest::new(uv.program.as_os_str(), &args).with_env(&env))

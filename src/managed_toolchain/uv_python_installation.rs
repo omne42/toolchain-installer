@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::Path;
 
 use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
@@ -26,14 +27,25 @@ pub(crate) async fn execute_uv_python_item(
     let base_env = managed_uv_process_env(managed_dir);
     let candidates = python_installation_source_candidates(cfg);
     attempt_source_candidates(candidates, "all uv_python sources failed", |candidate| {
-        let mut env = base_env.clone();
-        env.extend(candidate.env.iter().cloned());
+        let mut env = base_env
+            .iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+            .collect::<Vec<_>>();
+        env.extend(
+            candidate
+                .env
+                .iter()
+                .map(|(key, value)| (OsString::from(key), OsString::from(value))),
+        );
         let args = vec![
             "python".to_string(),
             "install".to_string(),
             "--force".to_string(),
             item.version.to_string(),
-        ];
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
         run_host_recipe(&HostRecipeRequest::new(uv.program.as_os_str(), &args).with_env(&env))
             .map_err(|err| format!("{} failed: {err}", candidate.label.clone()))?;
         let destination = find_managed_python_executable(managed_dir, &item.version, target_triple)
