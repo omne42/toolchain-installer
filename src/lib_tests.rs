@@ -373,6 +373,42 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
 }
 
 #[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_cmd_git_when_runtime_is_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let payload = managed_dir
+        .join("git-portable")
+        .join("PortableGit")
+        .join("cmd");
+    std::fs::create_dir_all(&payload).expect("create payload dir");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+    std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git payload is missing required runtime {}",
+                managed_dir
+                    .join("git-portable")
+                    .join("PortableGit")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("msys-2.0.dll")
+                    .display()
+            )
+        }
+    );
+}
+
+#[test]
 fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escapes_managed_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
