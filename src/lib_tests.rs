@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{Cursor, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -19,7 +21,7 @@ use omne_system_package_primitives::{
 };
 
 use crate::application::bootstrap_use_case::{
-    ManagedBootstrapState, assess_managed_bootstrap_state,
+    ManagedBootstrapState, assess_managed_bootstrap_state, host_command_is_healthy,
 };
 use crate::builtin_tools::{
     gh_release_asset_suffix_for_target, install_gh_from_public_release,
@@ -27,8 +29,8 @@ use crate::builtin_tools::{
     select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
-    BootstrapArchiveFormat, BootstrapSourceKind, BootstrapStatus, ExecutionRequest, InstallPlan,
-    InstallPlanItem, PLAN_SCHEMA_VERSION,
+    BootstrapArchiveFormat, BootstrapCommand, BootstrapSourceKind, BootstrapStatus,
+    ExecutionRequest, InstallPlan, InstallPlanItem, PLAN_SCHEMA_VERSION,
 };
 use crate::download_sources::make_download_candidates;
 use crate::error::ExitCode;
@@ -396,6 +398,83 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escap
         }
         other => panic!("expected ManagedBroken state, got {other:?}"),
     }
+}
+
+#[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escapes_git_portable_root()
+ {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let other = managed_dir.join("other");
+    std::fs::create_dir_all(&other).expect("create other dir");
+    std::fs::write(other.join("git.exe"), b"MZ").expect("write other git.exe");
+    std::fs::write(&destination, "@echo off\r\n\"%~dp0other\\git.exe\" %*\r\n")
+        .expect("write launcher");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    match state {
+        ManagedBootstrapState::ManagedBroken { detail } => {
+            assert_eq!(
+                detail.replace('\\', "/"),
+                "managed git launcher points outside managed git-portable root with payload target `other/git.exe`"
+            );
+        }
+        other => panic!("expected ManagedBroken state, got {other:?}"),
+    }
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn host_command_is_healthy_rejects_broken_supported_host_binary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_executable(
+        &tmp.path().join("uv"),
+        r#"#!/bin/sh
+exit 42
+"#,
+    )
+    .expect("write uv");
+
+    with_path_prepend(tmp.path(), || {
+        assert!(!host_command_is_healthy("uv"));
+    });
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn bootstrap_reports_unsupported_tool_even_when_host_path_contains_same_name() -> anyhow::Result<()>
+{
+    let tmp = tempfile::tempdir()?;
+    write_executable(
+        &tmp.path().join("custom-tool"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "custom-tool 1.0.0"
+  exit 0
+fi
+exit 0
+"#,
+    )?;
+
+    let result = with_path_prepend(tmp.path(), || {
+        tokio::runtime::Runtime::new()
+            .expect("create runtime")
+            .block_on(crate::bootstrap(&BootstrapCommand {
+                execution: ExecutionRequest {
+                    managed_dir: Some(tmp.path().join("managed")),
+                    ..ExecutionRequest::default()
+                },
+                tools: vec!["custom-tool".to_string()],
+            }))
+    })?;
+
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].tool, "custom-tool");
+    assert_eq!(result.items[0].status, BootstrapStatus::Unsupported);
+    assert_ne!(result.items[0].status, BootstrapStatus::Present);
+    Ok(())
 }
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
@@ -3289,6 +3368,59 @@ fn write_executable(path: &Path, body: &str) -> anyhow::Result<()> {
             .with_context(|| format!("chmod {}", path.display()))?;
     }
     Ok(())
+}
+
+fn with_path_prepend<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    let _guard = ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("lock env guard");
+    let original = std::env::var_os("PATH");
+    let mut entries = vec![path.to_path_buf()];
+    if let Some(existing) = &original {
+        entries.extend(std::env::split_paths(existing));
+    }
+    let joined = std::env::join_paths(entries).expect("join PATH");
+    let restore = EnvVarRestore::new("PATH", original);
+    // SAFETY: tests hold a process-wide mutex while mutating PATH and restore it before unlock.
+    unsafe {
+        std::env::set_var("PATH", &joined);
+    }
+    let output = f();
+    drop(restore);
+    output
+}
+
+struct EnvVarRestore {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvVarRestore {
+    fn new(key: &'static str, original: Option<OsString>) -> Self {
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarRestore {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => {
+                // SAFETY: guarded by the same process-wide test mutex used by callers.
+                unsafe {
+                    std::env::set_var(self.key, value);
+                }
+            }
+            None => {
+                // SAFETY: guarded by the same process-wide test mutex used by callers.
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 }
 
 fn spawn_mock_http_server(
