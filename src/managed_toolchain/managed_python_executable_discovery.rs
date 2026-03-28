@@ -1,9 +1,10 @@
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::executable_suffix_for_target;
 
 use super::managed_environment_layout::managed_python_installation_dir;
-use super::version_probe::python_binary_matches_version;
 
 pub(crate) fn find_managed_python_executable(
     managed_dir: &Path,
@@ -11,10 +12,11 @@ pub(crate) fn find_managed_python_executable(
     target_triple: &str,
 ) -> Option<PathBuf> {
     let ext = executable_suffix_for_target(target_triple);
+    let mut best_match = None;
     for name in preferred_python_candidate_names(version, ext) {
         let candidate = managed_dir.join(name);
-        if executable_reports_python_version(&candidate, version) {
-            return Some(candidate);
+        if let Some(matched_version) = matched_python_version(&candidate, version) {
+            record_better_match(&mut best_match, candidate, matched_version, 0);
         }
     }
 
@@ -27,30 +29,35 @@ pub(crate) fn find_managed_python_executable(
             if !name.starts_with("python") {
                 continue;
             }
-            if executable_reports_python_version(&path, version) {
-                return Some(path);
+            if let Some(matched_version) = matched_python_version(&path, version) {
+                record_better_match(&mut best_match, path, matched_version, 1);
             }
         }
     }
 
-    find_python_under_installation_dir(
+    let installation_dir_match = find_python_under_installation_dir(
         &managed_python_installation_dir(managed_dir),
         version,
         target_triple,
-    )
+    );
+    if let Some((path, matched_version)) = installation_dir_match {
+        record_better_match(&mut best_match, path, matched_version, 2);
+    }
+
+    best_match.map(|candidate| candidate.path)
 }
 
 fn find_python_under_installation_dir(
     installation_dir: &Path,
     version: &str,
     target_triple: &str,
-) -> Option<PathBuf> {
+) -> Option<(PathBuf, PythonVersion)> {
     if !installation_dir.is_dir() {
         return None;
     }
 
     let ext = executable_suffix_for_target(target_triple);
-    let mut best_match: Option<PathBuf> = None;
+    let mut best_match = None;
     let mut stack = vec![installation_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -74,16 +81,13 @@ fn find_python_under_installation_dir(
             if !name.starts_with("python") || !name.ends_with(ext) {
                 continue;
             }
-            if !executable_reports_python_version(&path, version) {
-                continue;
-            }
-            if best_match.as_ref().is_none_or(|current| path < *current) {
-                best_match = Some(path);
+            if let Some(matched_version) = matched_python_version(&path, version) {
+                record_better_match(&mut best_match, path, matched_version, 0);
             }
         }
     }
 
-    best_match
+    best_match.map(|candidate| (candidate.path, candidate.version))
 }
 
 fn preferred_python_candidate_names(version: &str, ext: &str) -> Vec<String> {
@@ -115,6 +119,165 @@ fn python_major_minor(version: &str) -> Option<String> {
     Some(format!("{major}.{minor}"))
 }
 
-fn executable_reports_python_version(path: &Path, version: &str) -> bool {
-    python_binary_matches_version(path, version)
+fn matched_python_version(path: &Path, expected_version: &str) -> Option<PythonVersion> {
+    let version = probe_python_version(path)?;
+    python_version_matches_requirement(&version, expected_version).then_some(version)
+}
+
+fn probe_python_version(path: &Path) -> Option<PythonVersion> {
+    if !path.exists() {
+        return None;
+    }
+
+    let output = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_python_version_output(&output.stdout)
+        .or_else(|| parse_python_version_output(&output.stderr))
+}
+
+fn parse_python_version_output(output: &[u8]) -> Option<PythonVersion> {
+    let output = String::from_utf8_lossy(output);
+    output.lines().find_map(parse_python_version_line)
+}
+
+fn parse_python_version_line(line: &str) -> Option<PythonVersion> {
+    let mut segments = line.split_whitespace();
+    match (segments.next(), segments.next(), segments.next()) {
+        (Some("Python"), Some(version), None) => PythonVersion::parse(version),
+        _ => None,
+    }
+}
+
+fn python_version_matches_requirement(
+    reported_version: &PythonVersion,
+    expected_version: &str,
+) -> bool {
+    let Some(expected) = PythonVersionReq::parse(expected_version) else {
+        return false;
+    };
+    reported_version.matches(&expected)
+}
+
+fn record_better_match(
+    best_match: &mut Option<PythonCandidate>,
+    path: PathBuf,
+    version: PythonVersion,
+    priority: u8,
+) {
+    let candidate = PythonCandidate {
+        path,
+        version,
+        priority,
+    };
+    if best_match
+        .as_ref()
+        .is_none_or(|current| candidate.is_better_than(current))
+    {
+        *best_match = Some(candidate);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PythonCandidate {
+    path: PathBuf,
+    version: PythonVersion,
+    priority: u8,
+}
+
+impl PythonCandidate {
+    fn is_better_than(&self, other: &Self) -> bool {
+        self.version
+            .cmp(&other.version)
+            .then_with(|| other.priority.cmp(&self.priority))
+            .then_with(|| other.path.cmp(&self.path))
+            .is_gt()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PythonVersion {
+    major: u64,
+    minor: u64,
+    patch: Option<u64>,
+}
+
+impl PythonVersion {
+    fn parse(raw: &str) -> Option<Self> {
+        let mut segments = raw.trim().split('.');
+        let major = segments.next()?.parse().ok()?;
+        let minor = segments.next()?.parse().ok()?;
+        let patch = segments.next().map(str::parse).transpose().ok()?;
+        if segments.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+
+    fn matches(&self, requirement: &PythonVersionReq) -> bool {
+        if self.major != requirement.major {
+            return false;
+        }
+        if let Some(minor) = requirement.minor
+            && self.minor != minor
+        {
+            return false;
+        }
+        if let Some(patch) = requirement.patch {
+            return self.patch == Some(patch);
+        }
+        true
+    }
+}
+
+impl Ord for PythonVersion {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.major, self.minor, self.patch.unwrap_or(0)).cmp(&(
+            other.major,
+            other.minor,
+            other.patch.unwrap_or(0),
+        ))
+    }
+}
+
+impl PartialOrd for PythonVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PythonVersionReq {
+    major: u64,
+    minor: Option<u64>,
+    patch: Option<u64>,
+}
+
+impl PythonVersionReq {
+    fn parse(raw: &str) -> Option<Self> {
+        let mut segments = raw.trim().split('.');
+        let major = segments.next()?.parse().ok()?;
+        let minor = segments.next().map(str::parse).transpose().ok()?;
+        let patch = segments.next().map(str::parse).transpose().ok()?;
+        if segments.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
 }
