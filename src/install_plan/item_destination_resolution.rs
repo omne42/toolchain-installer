@@ -550,6 +550,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_workspace_destination_accepts_windows_absolute_path() {
+        let destination =
+            validate_workspace_destination("demo", "C:\\workspace\\app", "x86_64-pc-windows-msvc")
+                .expect("windows absolute workspace");
+        assert_eq!(destination, PathBuf::from("C:\\workspace\\app"));
+    }
+
+    #[test]
     fn validate_destination_normalizes_windows_relative_path_for_windows_targets() {
         let destination =
             validate_destination("demo", "bin\\tools\\demo.exe", "x86_64-pc-windows-msvc")
