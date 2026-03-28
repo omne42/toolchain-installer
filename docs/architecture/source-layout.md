@@ -55,6 +55,7 @@
   - `managed_environment_layout.rs`：`managed_dir` 周边的 `uv` 工具目录、Python 目录、缓存目录、环境变量和可执行目标路径布局。
   - `bootstrap_item_construction.rs`：托管工具链安装成功后的 `BootstrapItem` 组装与 detail 归并。
   - `source_candidate_attempts.rs`：按候选安装来源顺序尝试执行，并聚合失败信息。
+  - `managed_uv_host_execution.rs`：托管 `uv` 子流程执行辅助，负责在调用前移除继承的宿主 `UV_*` 环境变量，再注入 installer 自己的托管 `uv` 环境。
   - `managed_uv_installation.rs`：确保托管 `uv` 已安装，并处理 `plan.method=uv` 的结果归并。
   - `version_probe.rs`：托管 `uv`、托管 Python 与 bootstrap 健康探针共享的 `--version` 超时探测与 Python 版本匹配。
   - `uv_public_release_installation.rs`：托管 `uv` 的 public release 资产选择、摘要要求与 archive 安装适配；`bootstrap` 也复用它补齐缺失的 `uv`。

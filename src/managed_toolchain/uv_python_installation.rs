@@ -1,8 +1,6 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
-
 use crate::contracts::BootstrapItem;
 use crate::error::{OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
@@ -11,6 +9,7 @@ use crate::managed_toolchain::bootstrap_item_construction::{
 };
 use crate::managed_toolchain::managed_environment_layout::managed_uv_process_env;
 use crate::managed_toolchain::managed_python_executable_discovery::find_managed_python_executable;
+use crate::managed_toolchain::managed_uv_host_execution::run_managed_uv_recipe;
 use crate::managed_toolchain::managed_uv_installation::ensure_managed_uv;
 use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidates;
 use crate::managed_toolchain::uv_installation_source_candidates::python_installation_source_candidates;
@@ -46,7 +45,7 @@ pub(crate) async fn execute_uv_python_item(
         .into_iter()
         .map(OsString::from)
         .collect::<Vec<_>>();
-        run_host_recipe(&HostRecipeRequest::new(uv.program.as_os_str(), &args).with_env(&env))
+        run_managed_uv_recipe(uv.program.as_os_str(), &args, &env)
             .map_err(|err| format!("{} failed: {err}", candidate.label.clone()))?;
         let destination = find_managed_python_executable(managed_dir, &item.version, target_triple)
             .ok_or_else(|| {

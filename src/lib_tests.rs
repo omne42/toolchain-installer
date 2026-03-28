@@ -2964,6 +2964,87 @@ exit 2
     Ok(())
 }
 
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_python_item_ignores_inherited_uv_environment() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  if [ "$UV_PYTHON_INSTALL_MIRROR" = "https://host.example/python" ]; then
+    echo "inherited mirror leaked" >&2
+    exit 17
+  fi
+  mkdir -p "$UV_PYTHON_BIN_DIR"
+  cat > "$UV_PYTHON_BIN_DIR/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$UV_PYTHON_BIN_DIR/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let result = std::process::Command::new(std::env::current_exe()?)
+        .env(
+            "TOOLCHAIN_TEST_MANAGED_DIR",
+            managed_dir.display().to_string(),
+        )
+        .env("UV_PYTHON_INSTALL_MIRROR", "https://host.example/python")
+        .env("RUST_TEST_THREADS", "1")
+        .arg("--exact")
+        .arg("execute_uv_python_item_ignores_inherited_uv_environment_helper")
+        .output()?;
+    if !result.status.success() {
+        anyhow::bail!(
+            "helper test failed: status={} stderr={} stdout={}",
+            result.status,
+            String::from_utf8_lossy(&result.stderr),
+            String::from_utf8_lossy(&result.stdout)
+        );
+    }
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_python_item_ignores_inherited_uv_environment_helper() -> anyhow::Result<()> {
+    let Some(managed_dir) = std::env::var_os("TOOLCHAIN_TEST_MANAGED_DIR").map(PathBuf::from)
+    else {
+        return Ok(());
+    };
+
+    let item = UvPythonPlanItem {
+        id: "python3.13.12".to_string(),
+        version: "3.13.12".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await?;
+
+    assert_eq!(result.status, BootstrapStatus::Installed);
+    Ok(())
+}
+
 #[cfg_attr(windows, ignore = "mock python shim is unix-specific")]
 #[test]
 fn find_managed_python_executable_requires_exact_patch_version() -> anyhow::Result<()> {
@@ -3399,6 +3480,107 @@ exit 2
     let used_index = std::fs::read_to_string(&log_path)?;
     assert_eq!(used_index.trim(), backup_index);
 
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_ignores_inherited_uv_environment() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  if [ "$UV_DEFAULT_INDEX" = "https://host.example/simple" ]; then
+    echo "inherited index leaked" >&2
+    exit 17
+  fi
+  mkdir -p "$UV_TOOL_BIN_DIR"
+  cat > "$UV_TOOL_BIN_DIR/ruff" <<'EOF'
+#!/bin/sh
+echo "ruff 0.1.0"
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let result = std::process::Command::new(std::env::current_exe()?)
+        .env(
+            "TOOLCHAIN_TEST_MANAGED_DIR",
+            managed_dir.display().to_string(),
+        )
+        .env("UV_DEFAULT_INDEX", "https://host.example/simple")
+        .env("RUST_TEST_THREADS", "1")
+        .arg("--exact")
+        .arg("execute_uv_tool_item_ignores_inherited_uv_environment_helper")
+        .output()?;
+    if !result.status.success() {
+        anyhow::bail!(
+            "helper test failed: status={} stderr={} stdout={}",
+            result.status,
+            String::from_utf8_lossy(&result.stderr),
+            String::from_utf8_lossy(&result.stdout)
+        );
+    }
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_ignores_inherited_uv_environment_helper() -> anyhow::Result<()> {
+    let Some(managed_dir) = std::env::var_os("TOOLCHAIN_TEST_MANAGED_DIR").map(PathBuf::from)
+    else {
+        return Ok(());
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff".to_string(),
+        package: "ruff".to_string(),
+        python: None,
+        binary_name: "ruff".to_string(),
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index.clone()],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await?;
+
+    assert_eq!(result.status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.source.as_deref(),
+        Some(format!("package-index:{index}").as_str())
+    );
     handle.join().expect("mock server thread join");
     Ok(())
 }

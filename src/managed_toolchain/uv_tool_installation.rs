@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use omne_process_primitives::{HostRecipeRequest, command_path_exists, run_host_recipe};
+use omne_process_primitives::command_path_exists;
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind};
 use crate::error::OperationResult;
@@ -12,6 +12,7 @@ use crate::managed_toolchain::bootstrap_item_construction::{
 use crate::managed_toolchain::managed_environment_layout::{
     managed_tool_binary_path, managed_uv_process_env,
 };
+use crate::managed_toolchain::managed_uv_host_execution::run_managed_uv_recipe;
 use crate::managed_toolchain::managed_uv_installation::ensure_managed_uv;
 use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidates;
 use crate::managed_toolchain::uv_installation_source_candidates::{
@@ -59,9 +60,7 @@ pub(crate) async fn execute_uv_tool_item(
         args.push(item.package.to_string());
         let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
 
-        if let Err(err) =
-            run_host_recipe(&HostRecipeRequest::new(uv.program.as_os_str(), &args).with_env(&env))
-        {
+        if let Err(err) = run_managed_uv_recipe(uv.program.as_os_str(), &args, &env) {
             backup.restore()?;
             return Err(format!("{} failed: {err}", candidate.label.clone()));
         }
