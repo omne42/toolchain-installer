@@ -496,9 +496,8 @@ fn find_package_dir_under_root(root: &Path, package_name: &str) -> Option<PathBu
         let entries = std::fs::read_dir(&dir).ok()?;
         for entry in entries {
             let entry = entry.ok()?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
+            if entry.file_type().ok()?.is_dir() {
+                stack.push(entry.path());
             }
         }
     }
@@ -627,14 +626,18 @@ fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<P
                 continue;
             };
             let path = entry.path();
-            if path.is_dir() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
                 stack.push(path);
                 continue;
             }
-            if path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| binary_name_matches(value, binary_name))
+            if (file_type.is_file() || (file_type.is_symlink() && path.is_file()))
+                && path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| binary_name_matches(value, binary_name))
             {
                 matches.push(path);
             }
@@ -727,6 +730,7 @@ mod tests {
 
     use super::{
         build_npm_global_recipe, capture_installation_state, file_fingerprint, find_binary_at_path,
+        find_matching_binary_paths_under_dir, find_package_dir_under_root,
         installation_result_is_acceptable, npm_global_package_dir, package_bin_relative_path,
         resolve_npm_global_destination, resolve_package_bin_script,
     };
@@ -955,6 +959,42 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_matching_binary_paths_under_dir_skips_directory_symlink_loops() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let search_root = temp.path().join("global");
+        let real_dir = search_root.join("node_modules").join(".bin");
+        std::fs::create_dir_all(&real_dir).expect("create real dir");
+        std::fs::write(real_dir.join("http-server"), "#!/bin/sh\nexit 0\n").expect("write binary");
+        symlink(&search_root, search_root.join("loop")).expect("create loop symlink");
+
+        let matches = find_matching_binary_paths_under_dir(&search_root, "http-server");
+        assert_eq!(matches, vec![real_dir.join("http-server")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_package_dir_under_root_skips_directory_symlink_loops() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let search_root = temp.path().join("global");
+        let package_dir = search_root.join("node_modules").join("http-server");
+        std::fs::create_dir_all(&package_dir).expect("create package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"http-server","version":"14.1.1"}"#,
+        )
+        .expect("write package.json");
+        symlink(&search_root, search_root.join("loop")).expect("create loop symlink");
+
+        let resolved = find_package_dir_under_root(&search_root, "http-server");
+        assert_eq!(resolved, Some(package_dir));
     }
 
     #[test]
