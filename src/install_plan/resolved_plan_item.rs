@@ -572,9 +572,7 @@ fn validate_archive_tree_release_asset_name(item_id: &str, url: &Url) -> Install
 }
 
 fn archive_tree_asset_name_from_url(url: &Url) -> Option<&str> {
-    url.path_segments()?
-        .filter(|segment| !segment.is_empty())
-        .next_back()
+    url.path_segments()?.rfind(|segment| !segment.is_empty())
 }
 
 fn parse_optional_sha256(
