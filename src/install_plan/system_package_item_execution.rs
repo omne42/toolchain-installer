@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use omne_host_info_primitives::detect_host_platform;
 use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
 use omne_system_package_primitives::SystemPackageManager;
@@ -33,10 +35,8 @@ pub(crate) fn execute_system_package_item(
 
     let mut errors = Vec::new();
     for recipe in recipes {
-        match run_host_recipe(&HostRecipeRequest::new(
-            recipe.program.as_ref(),
-            &recipe.args,
-        )) {
+        let args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
+        match run_host_recipe(&HostRecipeRequest::new(recipe.program.as_ref(), &args)) {
             Ok(_) => {
                 return Ok(BootstrapItem {
                     tool: item.id.clone(),

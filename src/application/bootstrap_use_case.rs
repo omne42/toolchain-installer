@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use omne_host_info_primitives::{detect_host_platform, executable_suffix_for_target};
@@ -419,10 +420,8 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
 
     let mut errors = Vec::new();
     for recipe in recipes {
-        match run_host_recipe(&HostRecipeRequest::new(
-            recipe.program.as_ref(),
-            &recipe.args,
-        )) {
+        let args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
+        match run_host_recipe(&HostRecipeRequest::new(recipe.program.as_ref(), &args)) {
             Ok(_) => {
                 if host_command_is_healthy("git") {
                     return Ok(InstallSource::new(

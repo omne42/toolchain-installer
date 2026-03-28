@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use omne_process_primitives::{
@@ -52,6 +53,7 @@ pub(crate) fn execute_cargo_install_item(
     };
     args.push("--root".to_string());
     args.push(install_root.display().to_string());
+    let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
     let backup = InstalledBinaryBackup::stash(&destination).map_err(OperationError::install)?;
     if let Err(err) = run_host_recipe(&HostRecipeRequest::new("cargo".as_ref(), &args)) {
         backup.restore().map_err(OperationError::install)?;
