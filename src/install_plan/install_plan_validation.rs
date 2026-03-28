@@ -118,33 +118,58 @@ pub(crate) fn validate_destination_conflicts(
     target_triple: &str,
     managed_dir: &Path,
 ) -> InstallerResult<()> {
-    let mut destinations: Vec<(PathBuf, Vec<String>, String)> = Vec::new();
+    let mut destinations: Vec<(&ResolvedPlanItem, PathBuf, Vec<String>)> = Vec::new();
     for item in items {
         let Some(destination) = effective_destination_for_item(item, target_triple, managed_dir)
         else {
             continue;
         };
         let normalized_destination = normalize_destination_components(&destination, target_triple);
-        for (existing_destination, existing_normalized, existing_id) in &destinations {
+        for (existing_item, existing_destination, existing_normalized) in &destinations {
+            if destination_conflict_is_allowed(
+                existing_item,
+                item,
+                existing_normalized,
+                &normalized_destination,
+            ) {
+                continue;
+            }
             if *existing_normalized == normalized_destination {
                 return Err(InstallerError::usage(format!(
-                    "install plan items `{existing_id}` and `{}` resolve to the same destination `{}`",
+                    "install plan items `{}` and `{}` resolve to the same destination `{}`",
+                    existing_item.id(),
                     item.id(),
                     destination.display()
                 )));
             }
             if destinations_overlap(existing_normalized, &normalized_destination) {
                 return Err(InstallerError::usage(format!(
-                    "install plan items `{existing_id}` and `{}` resolve to overlapping destinations `{}` and `{}`",
+                    "install plan items `{}` and `{}` resolve to overlapping destinations `{}` and `{}`",
+                    existing_item.id(),
                     item.id(),
                     existing_destination.display(),
                     destination.display()
                 )));
             }
         }
-        destinations.push((destination, normalized_destination, item.id().to_string()));
+        destinations.push((item, destination, normalized_destination));
     }
     Ok(())
+}
+
+fn destination_conflict_is_allowed(
+    existing_item: &ResolvedPlanItem,
+    candidate_item: &ResolvedPlanItem,
+    existing_destination: &[String],
+    candidate_destination: &[String],
+) -> bool {
+    match (existing_item, candidate_item) {
+        (ResolvedPlanItem::UvPython(_), ResolvedPlanItem::UvPython(_)) => true,
+        (ResolvedPlanItem::WorkspacePackage(_), ResolvedPlanItem::WorkspacePackage(_)) => {
+            existing_destination == candidate_destination
+        }
+        _ => false,
+    }
 }
 
 fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<String> {
@@ -288,6 +313,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn validate_destination_conflicts_allows_multiple_uv_python_versions() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                uv_python_item("python-312", "3.12.11"),
+                uv_python_item("python-313", "3.13.2"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect("different uv_python items should be allowed to share the managed install root");
+    }
+
+    #[test]
+    fn validate_destination_conflicts_allows_workspace_package_reuse_of_same_workspace() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                workspace_package_item("eslint", "/tmp/repo"),
+                workspace_package_item("prettier", "/tmp/repo"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect("workspace_package should allow multiple package installs into one workspace");
+    }
+
     fn release_item(id: &str, destination: &str) -> InstallPlanItem {
         InstallPlanItem {
             id: id.to_string(),
@@ -332,6 +395,22 @@ mod tests {
             destination: None,
             package: None,
             manager: None,
+            python: None,
+        }
+    }
+
+    fn workspace_package_item(id: &str, destination: &str) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "workspace_package".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some(destination.to_string()),
+            package: Some(id.to_string()),
+            manager: Some("npm".to_string()),
             python: None,
         }
     }
