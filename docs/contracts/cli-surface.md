@@ -100,7 +100,7 @@
       "tool": "git",
       "status": "present|installed|failed|unsupported",
       "source": "https://...",
-      "source_kind": "gateway|canonical|mirror|managed|system_package|pip|python_mirror|package_index",
+      "source_kind": "gateway|canonical|mirror|managed|system_package|pip|cargo_install|go_install|npm_global|workspace_package|rustup_component|python_mirror|package_index",
       "archive_match": {
         "format": "tar_gz|tar_xz|zip",
         "path": "archive/entry/path"
@@ -141,6 +141,7 @@
 - 调用方应依赖 `status`、`detail` 与 `error_code`，不要解析 stderr 文本。
 - stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
 - `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
+- `cargo_install`、`go_install`、`npm_global`、`workspace_package`、`rustup_component` 这些宿主机 recipe 方法会各自输出同名 `source_kind`，避免调用方再从 `source` 文本推断安装方式。
 - `uv_python` 命中官方来源时会输出 `source_kind=canonical`；只有命中显式 Python 镜像时才会输出 `python_mirror`。
 - 当 `source_kind=package_index|python_mirror` 且来源 URL 含凭证、query 或 fragment 时，`source` 会输出脱敏后的协议、主机和路径，而不是回显原始敏感 URL。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。

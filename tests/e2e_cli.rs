@@ -924,6 +924,7 @@ exit 0
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
     assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source_kind"], "workspace_package");
     assert_eq!(
         json["items"][0]["destination"],
         workspace_dir.display().to_string()
@@ -1363,6 +1364,7 @@ EOF
     let json: Value = serde_json::from_slice(&output).expect("valid json");
     let expected = managed_dir.join("http-server");
     assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source_kind"], "npm_global");
     assert_eq!(
         json["items"][0]["destination"],
         expected.display().to_string()
@@ -1541,6 +1543,59 @@ EOF
     let json: Value = serde_json::from_slice(&output).expect("valid json");
     let expected = managed_dir.join("bin").join("demo-cargo");
     assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source_kind"], "cargo_install");
+    assert_eq!(
+        json["items"][0]["destination"],
+        expected.display().to_string()
+    );
+    assert!(expected.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn go_install_reports_source_kind_on_success() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_go = fake_bin_dir.join("go");
+    write_executable(
+        &fake_go,
+        r#"#!/bin/sh
+[ -n "$GOBIN" ] || exit 9
+/bin/mkdir -p "$GOBIN"
+/bin/cat > "$GOBIN/demo-go" <<'EOF'
+#!/bin/sh
+echo "demo-go"
+EOF
+/bin/chmod +x "$GOBIN/demo-go"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-managed");
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "go_install",
+            "--id",
+            "demo-go",
+            "--package",
+            "example.com/demo@latest",
+            "--binary-name",
+            "demo-go",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    let expected = managed_dir.join("demo-go");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source_kind"], "go_install");
     assert_eq!(
         json["items"][0]["destination"],
         expected.display().to_string()
@@ -1654,6 +1709,56 @@ echo "stale"
         !stale_binary
             .with_file_name("demo-go.toolchain-installer-backup")
             .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn rustup_component_reports_source_kind_on_success() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_rustup = fake_bin_dir.join("rustup");
+    let fake_rustfmt = fake_bin_dir.join("rustfmt");
+    write_executable(
+        &fake_rustup,
+        r#"#!/bin/sh
+[ "$1" = "component" ] || exit 9
+[ "$2" = "add" ] || exit 10
+[ "$3" = "rustfmt" ] || exit 11
+"#,
+    );
+    write_executable(
+        &fake_rustfmt,
+        r#"#!/bin/sh
+echo "rustfmt"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--method",
+            "rustup_component",
+            "--id",
+            "rustfmt",
+            "--package",
+            "rustfmt",
+            "--binary-name",
+            "rustfmt",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source_kind"], "rustup_component");
+    assert_eq!(
+        json["items"][0]["destination"],
+        fake_rustfmt.display().to_string()
     );
 }
 

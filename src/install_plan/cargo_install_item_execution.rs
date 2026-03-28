@@ -5,7 +5,7 @@ use omne_process_primitives::{
     HostRecipeRequest, command_exists, command_path_exists, run_host_recipe,
 };
 
-use crate::contracts::{BootstrapItem, BootstrapStatus};
+use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
 use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
@@ -73,7 +73,7 @@ pub(crate) fn execute_cargo_install_item(
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
         source: Some(source),
-        source_kind: None,
+        source_kind: Some(BootstrapSourceKind::CargoInstall),
         archive_match: None,
         destination: Some(destination.display().to_string()),
         detail: None,
