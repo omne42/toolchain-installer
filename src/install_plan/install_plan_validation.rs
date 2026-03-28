@@ -314,6 +314,48 @@ mod tests {
     }
 
     #[test]
+    fn validate_destination_conflicts_rejects_windows_pnpm_cmd_collision() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                npm_global_item("pnpm-demo", "demo", Some("pnpm")),
+                release_item("demo-cmd", "demo.cmd"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+            Path::new(r"C:\managed"),
+        )
+        .expect_err("pnpm Windows shim collision should be rejected");
+
+        assert!(err.to_string().contains("resolve to the same destination"));
+    }
+
+    #[test]
+    fn validate_destination_conflicts_rejects_windows_bun_cmd_collision() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                npm_global_item("bun-demo", "demo", Some("bun")),
+                release_item("demo-cmd", "bin/demo.cmd"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+            Path::new(r"C:\managed"),
+        )
+        .expect_err("bun Windows shim collision should be rejected");
+
+        assert!(err.to_string().contains("resolve to the same destination"));
+    }
+
+    #[test]
     fn validate_destination_conflicts_allows_multiple_uv_python_versions() {
         let plan = InstallPlan {
             schema_version: Some(PLAN_SCHEMA_VERSION),
@@ -395,6 +437,22 @@ mod tests {
             destination: None,
             package: None,
             manager: None,
+            python: None,
+        }
+    }
+
+    fn npm_global_item(id: &str, package: &str, manager: Option<&str>) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "npm_global".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some(package.to_string()),
+            manager: manager.map(str::to_string),
             python: None,
         }
     }

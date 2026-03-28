@@ -10,14 +10,8 @@ pub(crate) fn find_managed_python_executable(
     version: &str,
     target_triple: &str,
 ) -> Option<PathBuf> {
-    let major_minor = python_major_minor(version)?;
     let ext = executable_suffix_for_target(target_triple);
-    let preferred = [
-        format!("python{major_minor}{ext}"),
-        format!("python3{ext}"),
-        format!("python{ext}"),
-    ];
-    for name in preferred {
+    for name in preferred_python_candidate_names(version, ext) {
         let candidate = managed_dir.join(name);
         if executable_reports_python_version(&candidate, version) {
             return Some(candidate);
@@ -90,6 +84,25 @@ fn find_python_under_installation_dir(
     }
 
     best_match
+}
+
+fn preferred_python_candidate_names(version: &str, ext: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(major_minor) = python_major_minor(version) {
+        names.push(format!("python{major_minor}{ext}"));
+    }
+    if let Some(major) = python_major(version) {
+        names.push(format!("python{major}{ext}"));
+    }
+    names.push(format!("python3{ext}"));
+    names.push(format!("python{ext}"));
+    names.dedup();
+    names
+}
+
+fn python_major(version: &str) -> Option<&str> {
+    let major = version.split('.').next()?.trim();
+    (!major.is_empty()).then_some(major)
 }
 
 fn python_major_minor(version: &str) -> Option<String> {
