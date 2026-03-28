@@ -5,7 +5,7 @@ use omne_host_info_primitives::{detect_host_platform, executable_suffix_for_targ
 use omne_process_primitives::{
     HostRecipeRequest, resolve_command_path_or_standard_location, run_host_recipe,
 };
-use omne_system_package_primitives::try_default_system_package_install_recipes_for_os;
+use omne_system_package_primitives::default_system_package_install_recipes_for_os;
 
 use crate::artifact::InstallSource;
 use crate::builtin_tools::builtin_tool_selection::{
@@ -62,7 +62,8 @@ async fn bootstrap_builtin_tool(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> BootstrapItem {
-    if host_command_is_healthy(tool) {
+    let supported_tool = is_supported_builtin_tool(tool);
+    if supported_tool && host_command_is_healthy(tool) {
         return BootstrapItem {
             tool: tool.to_string(),
             status: BootstrapStatus::Present,
@@ -133,7 +134,7 @@ async fn bootstrap_builtin_tool(
             }
         }
         Err(err) => {
-            let status = if is_supported_builtin_tool(tool) {
+            let status = if supported_tool {
                 BootstrapStatus::Failed
             } else {
                 BootstrapStatus::Unsupported
@@ -406,13 +407,11 @@ async fn install_git_for_bootstrap(
 fn install_git_via_system_package_manager(target_triple: &str) -> OperationResult<InstallSource> {
     let recipes = detect_host_platform()
         .map(|platform| {
-            try_default_system_package_install_recipes_for_os(
+            default_system_package_install_recipes_for_os(
                 platform.operating_system().as_str(),
                 "git",
             )
         })
-        .transpose()
-        .map_err(|err| OperationError::install(format!("invalid bootstrap package `git`: {err}")))?
         .unwrap_or_default();
     if recipes.is_empty() {
         return Err(OperationError::install(format!(
