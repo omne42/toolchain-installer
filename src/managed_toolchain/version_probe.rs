@@ -13,8 +13,9 @@ pub(crate) fn binary_reports_version(path: &Path) -> bool {
 
 pub(crate) fn python_binary_matches_version(path: &Path, expected_version: &str) -> bool {
     run_version_probe(path).is_some_and(|probe| {
-        probe.success && python_version_output_matches(&probe.stdout, expected_version)
-            || probe.success && python_version_output_matches(&probe.stderr, expected_version)
+        probe.success
+            && (python_version_output_matches(&probe.stdout, expected_version)
+                || python_version_output_matches(&probe.stderr, expected_version))
     })
 }
 
