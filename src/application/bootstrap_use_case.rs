@@ -1,5 +1,4 @@
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::{detect_host_platform, executable_suffix_for_target};
 use omne_process_primitives::{
@@ -22,6 +21,7 @@ use crate::error::{InstallerResult, OperationError, OperationResult};
 use crate::install_plan::item_destination_resolution::validate_managed_path_boundary;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::install_uv_from_public_release;
+use crate::managed_toolchain::version_probe::binary_reports_version;
 
 use super::execution_context::ExecutionContext;
 
@@ -334,16 +334,7 @@ fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
 }
 
 fn managed_binary_reports_version(path: &Path) -> bool {
-    let output = Command::new(path)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    output.status.success()
+    binary_reports_version(path)
 }
 
 pub(crate) fn host_command_is_healthy(tool: &str) -> bool {

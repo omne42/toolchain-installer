@@ -56,6 +56,7 @@
   - `bootstrap_item_construction.rs`：托管工具链安装成功后的 `BootstrapItem` 组装与 detail 归并。
   - `source_candidate_attempts.rs`：按候选安装来源顺序尝试执行，并聚合失败信息。
   - `managed_uv_installation.rs`：确保托管 `uv` 已安装，并处理 `plan.method=uv` 的结果归并。
+  - `version_probe.rs`：托管 `uv`、托管 Python 与 bootstrap 健康探针共享的 `--version` 超时探测与 Python 版本匹配。
   - `uv_public_release_installation.rs`：托管 `uv` 的 public release 资产选择、摘要要求与 archive 安装适配；`bootstrap` 也复用它补齐缺失的 `uv`。
   - `managed_python_executable_discovery.rs`：在 `managed_dir` 中定位满足版本要求的托管 Python 可执行文件。
   - `uv_python_installation.rs`：执行 `uv python install`，并委托 Python 发现逻辑解析托管可执行落点。

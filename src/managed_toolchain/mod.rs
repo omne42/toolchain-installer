@@ -8,6 +8,7 @@ mod uv_installation_source_candidates;
 mod uv_public_release_installation;
 mod uv_python_installation;
 mod uv_tool_installation;
+pub(crate) mod version_probe;
 
 use std::path::Path;
 

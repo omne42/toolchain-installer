@@ -162,6 +162,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_python`
   - 会先尝试官方 Python 下载来源，失败后再按顺序回退到 `--python-mirror` 或 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供的备用站。
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
+  - 官方来源成功时，结果里的 `source_kind` 会是 `canonical`；只有显式镜像命中时才会是 `python_mirror`。
   - 结果里的 `source` 会对显式镜像做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
 - `release`、`archive_tree_release`
   - 资产类型判断基于 URL 的 path 最后一段，不把 query string 当成资产名的一部分；`tool.tar.gz?download=1` 仍按 `tool.tar.gz` 处理。
