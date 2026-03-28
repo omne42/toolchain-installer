@@ -314,6 +314,71 @@ exit 0
     assert!(!managed_uv_is_healthy(&managed_uv));
 }
 
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn host_command_is_healthy_times_out_hung_version_probe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_executable(
+        &tmp.path().join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  sleep 30
+  exit 0
+fi
+exit 0
+"#,
+    )
+    .expect("write uv");
+
+    with_path_prepend(tmp.path(), || {
+        assert!(!host_command_is_healthy("uv"));
+    });
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn find_managed_python_executable_accepts_major_only_version_selector() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let python = managed_dir.join("python3");
+    write_executable(
+        &python,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "Python 3.13.2"
+  exit 0
+fi
+exit 2
+"#,
+    )
+    .expect("write python");
+
+    let found = find_managed_python_executable(&managed_dir, "3", "x86_64-unknown-linux-gnu");
+    assert_eq!(found.as_deref(), Some(python.as_path()));
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn find_managed_python_executable_does_not_use_substring_version_matching() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let python = managed_dir.join("python3.10");
+    write_executable(
+        &python,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "Python 3.10.8"
+  exit 0
+fi
+exit 2
+"#,
+    )
+    .expect("write python");
+
+    let found = find_managed_python_executable(&managed_dir, "3.1", "x86_64-unknown-linux-gnu");
+    assert!(found.is_none());
+}
+
 #[test]
 fn assess_managed_bootstrap_state_reports_broken_windows_git_launcher_without_payload() {
     let tmp = tempfile::tempdir().expect("tempdir");

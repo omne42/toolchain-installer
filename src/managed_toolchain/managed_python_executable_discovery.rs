@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::executable_suffix_for_target;
 
 use super::managed_environment_layout::managed_python_installation_dir;
+use super::version_probe::python_binary_matches_version;
 
 pub(crate) fn find_managed_python_executable(
     managed_dir: &Path,
@@ -116,38 +116,5 @@ fn python_major_minor(version: &str) -> Option<String> {
 }
 
 fn executable_reports_python_version(path: &Path, version: &str) -> bool {
-    if !path.exists() {
-        return false;
-    }
-    let output = Command::new(path)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-    python_version_output_matches(&output.stdout, version)
-        || python_version_output_matches(&output.stderr, version)
-}
-
-fn python_version_output_matches(output: &[u8], expected_version: &str) -> bool {
-    let output = String::from_utf8_lossy(output);
-    output.lines().any(|line| {
-        let mut segments = line.split_whitespace();
-        matches!(
-            (segments.next(), segments.next(), segments.next()),
-            (Some("Python"), Some(version), None)
-                if python_version_matches_requirement(version, expected_version)
-        )
-    })
-}
-
-fn python_version_matches_requirement(reported_version: &str, expected_version: &str) -> bool {
-    reported_version == expected_version
-        || reported_version.starts_with(&format!("{expected_version}."))
+    python_binary_matches_version(path, version)
 }

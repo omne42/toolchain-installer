@@ -1,21 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use github_kit::{
-    DEFAULT_GITHUB_API_VERSION, GITHUB_API_ACCEPT, GitHubRelease, GitHubReleaseAsset,
-};
-use http_kit::{
-    DEFAULT_MAX_RESPONSE_BODY_BYTES, http_status_text_error, read_json_body_limited,
-    read_text_body_limited, redact_url_for_error, redact_url_str, response_body_read_error,
-    send_reqwest,
-};
+use github_kit::{GitHubApiRequestOptions, GitHubReleaseAsset, fetch_latest_release};
 use omne_artifact_install_primitives::{
     ArchiveTreeInstallRequest, BinaryArchiveInstallRequest, InstalledArchiveBinary,
     download_and_install_archive_tree, download_and_install_binary_from_archive,
 };
 use omne_fs_primitives::{AtomicWriteOptions, write_file_atomically};
 use omne_integrity_primitives::{Sha256Digest, parse_sha256_digest};
-use reqwest::header::{ACCEPT, USER_AGENT};
 
 use crate::artifact::InstallSource;
 use crate::contracts::{BootstrapArchiveFormat, BootstrapArchiveMatch};
@@ -25,9 +17,6 @@ use crate::download_sources::{
 use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::gateway_candidate_for_git_release_asset;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
-
-const GITHUB_RELEASE_METADATA_MAX_BYTES: usize = 256 * 1024;
-
 pub(crate) async fn install_gh_from_public_release(
     target_triple: &str,
     binary_ext: &str,
@@ -40,13 +29,16 @@ pub(crate) async fn install_gh_from_public_release(
             "gh public recipe unsupported on target `{target_triple}`"
         ))
     })?;
-    let release = fetch_latest_release_metadata(
+    let release = fetch_latest_release(
         client,
         &cfg.github_releases.api_bases,
-        cfg.github_releases.token.as_deref(),
         "cli/cli",
+        GitHubApiRequestOptions::new()
+            .with_user_agent("toolchain-installer")
+            .with_bearer_token(cfg.github_releases.token.as_deref()),
     )
-    .await?;
+    .await
+    .map_err(|err| OperationError::download(err.to_string()))?;
     let asset = release
         .assets
         .iter()
@@ -97,13 +89,16 @@ pub(crate) async fn install_git_from_public_release(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
-    let release = fetch_latest_release_metadata(
+    let release = fetch_latest_release(
         client,
         &cfg.github_releases.api_bases,
-        cfg.github_releases.token.as_deref(),
         "git-for-windows/git",
+        GitHubApiRequestOptions::new()
+            .with_user_agent("toolchain-installer")
+            .with_bearer_token(cfg.github_releases.token.as_deref()),
     )
-    .await?;
+    .await
+    .map_err(|err| OperationError::download(err.to_string()))?;
     let asset = select_mingit_release_asset_for_target(&release.assets, target_triple).ok_or_else(
         || {
             OperationError::download(format!(
@@ -195,115 +190,6 @@ pub(crate) fn gh_release_asset_suffix_for_target(target_triple: &str) -> Option<
         "aarch64-pc-windows-msvc" => Some("_windows_arm64.zip"),
         _ => None,
     }
-}
-
-async fn fetch_latest_release_metadata(
-    client: &reqwest::Client,
-    api_bases: &[String],
-    bearer_token: Option<&str>,
-    repo: &str,
-) -> OperationResult<GitHubRelease> {
-    let Some((owner, name)) = repo.trim().split_once('/') else {
-        return Err(OperationError::download(format!(
-            "github repository must be `owner/repo`, got `{repo}`"
-        )));
-    };
-    if owner.is_empty()
-        || name.is_empty()
-        || name.contains('/')
-        || owner.chars().any(char::is_whitespace)
-        || name.chars().any(char::is_whitespace)
-    {
-        return Err(OperationError::download(format!(
-            "github repository must be `owner/repo`, got `{repo}`"
-        )));
-    }
-
-    let mut attempted = false;
-    let mut errors = Vec::new();
-
-    for base in api_bases {
-        let trimmed = base.trim().trim_end_matches('/');
-        if trimmed.is_empty() {
-            continue;
-        }
-        attempted = true;
-
-        let url = match build_latest_release_url(trimmed, owner, name) {
-            Ok(url) => url,
-            Err(err) => {
-                errors.push(format!("{} -> {err}", redact_url_str(trimmed)));
-                continue;
-            }
-        };
-        let redacted_url = redact_url_for_error(&url);
-
-        let mut request = client
-            .get(url.clone())
-            .header(ACCEPT, GITHUB_API_ACCEPT)
-            .header(USER_AGENT, "toolchain-installer")
-            .header("X-GitHub-Api-Version", DEFAULT_GITHUB_API_VERSION);
-        if let Some(token) = bearer_token
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
-        {
-            request = request.bearer_auth(token);
-        }
-
-        let response = match send_reqwest(request, "github latest release").await {
-            Ok(response) => response,
-            Err(err) => {
-                errors.push(format!("{redacted_url} -> {err}"));
-                continue;
-            }
-        };
-
-        let status = response.status();
-        let json = if status.is_success() {
-            match read_json_body_limited(response, GITHUB_RELEASE_METADATA_MAX_BYTES).await {
-                Ok(json) => json,
-                Err(err) => {
-                    errors.push(format!("{redacted_url} -> {err}"));
-                    continue;
-                }
-            }
-        } else {
-            let err = match read_text_body_limited(response, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
-            {
-                Ok(body) => http_status_text_error("github latest release", status, &body),
-                Err(err) => {
-                    response_body_read_error("github latest release http error", status, &err)
-                }
-            };
-            errors.push(format!("{redacted_url} -> {err}"));
-            continue;
-        };
-
-        match serde_json::from_value::<GitHubRelease>(json) {
-            Ok(release) => return Ok(release),
-            Err(err) => errors.push(format!("{redacted_url} -> invalid json: {err}")),
-        }
-    }
-
-    if !attempted {
-        return Err(OperationError::download(
-            "no usable github api base configured".to_string(),
-        ));
-    }
-
-    Err(OperationError::download(format!(
-        "failed to fetch latest release metadata for {repo}: {}",
-        errors.join(" | ")
-    )))
-}
-
-fn build_latest_release_url(base: &str, owner: &str, name: &str) -> Result<reqwest::Url, String> {
-    let mut url =
-        reqwest::Url::parse(base).map_err(|err| format!("invalid github api base: {err}"))?;
-    url.path_segments_mut()
-        .map_err(|_| "invalid github api base".to_string())?
-        .extend(["repos", owner, name, "releases", "latest"]);
-    Ok(url)
 }
 
 struct MingitBundleInstallRequest<'a> {

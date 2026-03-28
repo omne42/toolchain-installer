@@ -2,7 +2,7 @@ use std::path::Path;
 
 use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
 
-use crate::contracts::{BootstrapItem, BootstrapSourceKind};
+use crate::contracts::BootstrapItem;
 use crate::error::{OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::bootstrap_item_construction::{
@@ -51,7 +51,7 @@ pub(crate) async fn execute_uv_python_item(
         Ok(build_installed_bootstrap_item(
             &item.id,
             candidate.label,
-            BootstrapSourceKind::PythonMirror,
+            candidate.source_kind,
             &destination,
             build_managed_uv_usage_detail(&uv.program, uv_detail.clone()),
         ))

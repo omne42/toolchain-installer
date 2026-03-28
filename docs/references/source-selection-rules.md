@@ -32,6 +32,8 @@
 - `--python-mirror` 与 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 追加备用镜像。
 - 显式 Python mirror 会按传入顺序去重，回退顺序与调用方声明保持一致。
 - 当前宿主环境内的可达性结果决定最终使用哪个来源。
+- 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时都会触发重装，避免坏掉或挂起的 `uv` 卡住后续安装。
+- 对外 JSON 结果里，官方来源会标成 `source_kind=canonical`，显式镜像才会标成 `python_mirror`。
 - 对外 JSON 结果里的 `source` 会脱敏显式镜像 URL，不回显用户信息、query 或 fragment。
 
 ## 网关边界
