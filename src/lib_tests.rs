@@ -373,6 +373,42 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
 }
 
 #[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_cmd_git_when_runtime_is_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let payload = managed_dir
+        .join("git-portable")
+        .join("PortableGit")
+        .join("cmd");
+    std::fs::create_dir_all(&payload).expect("create payload dir");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+    std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedBroken {
+            detail: format!(
+                "managed git payload is missing required runtime {}",
+                managed_dir
+                    .join("git-portable")
+                    .join("PortableGit")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("msys-2.0.dll")
+                    .display()
+            )
+        }
+    );
+}
+
+#[test]
 fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escapes_managed_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
@@ -560,6 +596,55 @@ exit 2
                     .join("bin")
                     .join("git.exe")
                     .display(),
+                managed_dir.join("git-portable").display()
+            )
+        }
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn assess_managed_bootstrap_state_reports_healthy_windows_cmd_git_launcher() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let payload = managed_dir
+        .join("git-portable")
+        .join("PortableGit")
+        .join("cmd");
+    std::fs::create_dir_all(&payload).expect("create payload dir");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+    write_executable(
+        &payload.join("git.exe"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "git version 2.53.0.windows.1"
+  exit 0
+fi
+exit 2
+"#,
+    )
+    .expect("write cmd git.exe");
+    let runtime_dir = managed_dir
+        .join("git-portable")
+        .join("PortableGit")
+        .join("mingw64")
+        .join("bin");
+    std::fs::create_dir_all(&runtime_dir).expect("create runtime dir");
+    std::fs::write(runtime_dir.join("msys-2.0.dll"), b"dll").expect("write runtime");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    assert_eq!(
+        state,
+        ManagedBootstrapState::ManagedHealthy {
+            detail: format!(
+                "managed git launcher points to healthy MinGit payload {} under {}",
+                payload.join("git.exe").display(),
                 managed_dir.join("git-portable").display()
             )
         }

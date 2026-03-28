@@ -311,6 +311,17 @@ fn managed_windows_git_payload_path(
 
 fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
     let normalized = relative_target.to_string_lossy().replace('\\', "/");
+    if normalized.ends_with("PortableGit/cmd/git.exe") {
+        return relative_target
+            .parent()
+            .and_then(Path::parent)
+            .map(|portable_root| {
+                portable_root
+                    .join("mingw64")
+                    .join("bin")
+                    .join("msys-2.0.dll")
+            });
+    }
     if normalized.ends_with("PortableGit/mingw64/bin/git.exe")
         || normalized.ends_with("PortableGit/usr/bin/git.exe")
         || normalized.ends_with("PortableGit/bin/git.exe")
