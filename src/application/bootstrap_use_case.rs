@@ -61,7 +61,7 @@ async fn bootstrap_builtin_tool(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> BootstrapItem {
-    if host_command_is_spawnable(tool) {
+    if host_command_is_healthy(tool) {
         return BootstrapItem {
             tool: tool.to_string(),
             status: BootstrapStatus::Present,
@@ -222,10 +222,11 @@ fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
             ),
         };
     };
-    let executable = match managed_windows_git_payload_path(managed_dir, &relative_target) {
-        Ok(executable) => executable,
-        Err(detail) => return ManagedBootstrapState::ManagedBroken { detail },
-    };
+    let executable =
+        match managed_windows_git_payload_path(managed_dir, &portable_root, &relative_target) {
+            Ok(executable) => executable,
+            Err(detail) => return ManagedBootstrapState::ManagedBroken { detail },
+        };
     if !executable.exists() {
         return ManagedBootstrapState::ManagedBroken {
             detail: format!(
@@ -282,6 +283,7 @@ fn launcher_target_from_script(script: &str) -> Option<PathBuf> {
 
 fn managed_windows_git_payload_path(
     managed_dir: &Path,
+    portable_root: &Path,
     relative_target: &Path,
 ) -> Result<PathBuf, String> {
     if relative_target.is_absolute()
@@ -297,7 +299,14 @@ fn managed_windows_git_payload_path(
             relative_target.display()
         ));
     }
-    Ok(managed_dir.join(relative_target))
+    let executable = managed_dir.join(relative_target);
+    if !executable.starts_with(portable_root) {
+        return Err(format!(
+            "managed git launcher points outside managed git-portable root with payload target `{}`",
+            relative_target.display()
+        ));
+    }
+    Ok(executable)
 }
 
 fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
@@ -326,8 +335,10 @@ fn managed_binary_reports_version(path: &Path) -> bool {
     output.status.success()
 }
 
-fn host_command_is_spawnable(tool: &str) -> bool {
-    resolve_command_path_or_standard_location(tool).is_some()
+pub(crate) fn host_command_is_healthy(tool: &str) -> bool {
+    is_supported_builtin_tool(tool)
+        && resolve_command_path_or_standard_location(tool)
+            .is_some_and(|path| managed_binary_reports_version(&path))
 }
 
 fn bootstrap_destination(
@@ -411,7 +422,7 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
             &recipe.args,
         )) {
             Ok(_) => {
-                if host_command_is_spawnable("git") {
+                if host_command_is_healthy("git") {
                     return Ok(InstallSource::new(
                         format!("system:{}", recipe.program),
                         BootstrapSourceKind::SystemPackage,
