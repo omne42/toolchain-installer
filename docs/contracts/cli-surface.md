@@ -54,6 +54,11 @@
 
 当调用方只执行一个安装项时，可直接传 `--method` 与对应字段，不必写 JSON plan。
 
+- 只有显式提供 `--method` 时，`--id`、`--tool-version`、`--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`、`--package`、`--manager`、`--python` 这些 direct-plan 字段才合法。
+- 若未提供 `--method`，这些字段不会再被静默吞掉后退回 bootstrap；CLI 会直接返回 usage error。
+- 若提供了 `--plan-file`，这些 direct-plan 字段同样会被拒绝，而不是继续以“CLI 覆盖 plan”的模糊语义混用。
+- `--id` 与 `--binary-name` 都必须是 plain leaf name，不能携带路径分隔符；需要控制目录时应使用允许 `destination` 的方法。
+
 环境变量补充：
 
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES`

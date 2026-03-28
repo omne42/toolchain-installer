@@ -30,9 +30,11 @@
    - `uv_tool` / `uv_python` 对外结果里的 `source` 不回显显式索引或镜像 URL 中的用户信息、query 或 fragment。
 9. 路径约束
    - Unix 风格绝对路径如 `/tmp/demo` 会直接拒绝，不能借此绕过托管目录。
+   - Windows 绝对路径如 `C:\tools\demo.exe` 也会直接拒绝；不能借“跨目标平台”名义把托管写入绕出 `managed_dir`。
    - plan 中的 `destination` 禁止包含 `..`。
    - 同时拒绝 Windows drive-relative 路径如 `C:foo`，以及 Windows root-relative 路径如 `\foo`。
-   - 相对路径只会解析到 `managed_dir` 下。
+   - `id` 与 `binary_name` 都必须是纯叶子名，不允许把路径片段塞进默认目标名。
+   - 相对路径只会解析到 `managed_dir` 下；当目标是 Windows 时，`bin\\tool.exe` 与 `bin/tool.exe` 会按同一相对层级处理。
    - 解析后若两个 item 指向同一目标路径，或一个目标路径嵌套在另一个目标路径之下，plan 会在执行前直接拒绝。
 10. 托管 bootstrap 健康检查
    - Windows managed `git` 的 launcher 只允许指向 `managed_dir` 内的 MinGit payload；带 `..` 的逃逸路径会被直接视为损坏安装。

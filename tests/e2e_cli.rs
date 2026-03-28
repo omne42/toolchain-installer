@@ -107,6 +107,35 @@ fn method_without_id_returns_failure() {
 }
 
 #[test]
+fn bootstrap_mode_rejects_direct_plan_only_flags() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--package", "ruff"]).assert().code(2);
+}
+
+#[test]
+fn plan_file_mode_rejects_direct_plan_only_flags() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "uv" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"])
+        .arg(&plan_path)
+        .args(["--package", "ruff"])
+        .assert()
+        .code(2);
+}
+
+#[test]
 fn missing_plan_file_returns_failure() {
     let mut cmd = bootstrap_cmd();
     cmd.args(["--plan-file", "/tmp/not-exist-plan-file.json"])

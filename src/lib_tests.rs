@@ -2069,7 +2069,7 @@ fn validate_plan_rejects_absolute_destination() {
 }
 
 #[test]
-fn validate_plan_accepts_windows_absolute_destination() {
+fn validate_plan_rejects_windows_absolute_destination() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -2086,22 +2086,13 @@ fn validate_plan_accepts_windows_absolute_destination() {
             python: None,
         }],
     };
-    let validated = validate_plan(
+    let err = validate_plan(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect("windows absolute destination should stay valid");
-    assert_eq!(validated.len(), 1);
-    match &validated[0] {
-        crate::plan_items::ResolvedPlanItem::Release(item) => {
-            assert_eq!(
-                item.destination.as_deref(),
-                Some(std::path::Path::new("C:\\tools\\demo.exe"))
-            );
-        }
-        other => panic!("unexpected resolved item: {other:?}"),
-    }
+    .expect_err("windows absolute destination should be rejected");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
 }
 
 #[test]
