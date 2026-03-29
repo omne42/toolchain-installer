@@ -10,6 +10,7 @@
 ## `release` 方法
 
 - 基于工具、版本、平台资产匹配规则生成候选。
+- 路径落点继续遵循 plan contract：Windows 绝对 `destination` 会保留为绝对路径，不会被拼到 `managed_dir` 下。
 - `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 可以追加候选前缀。
 - 显式提供的 mirror 前缀会按传入顺序去重，不会按字典序重排。
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES` 可覆盖 release metadata API base；未设置时默认只使用官方 `https://api.github.com`。

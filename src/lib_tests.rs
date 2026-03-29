@@ -2299,7 +2299,7 @@ fn validate_plan_rejects_absolute_destination() {
 }
 
 #[test]
-fn validate_plan_rejects_windows_absolute_destination() {
+fn validate_plan_accepts_windows_absolute_destination() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -2316,13 +2316,9 @@ fn validate_plan_rejects_windows_absolute_destination() {
             python: None,
         }],
     };
-    let err = validate_plan(
-        &plan,
-        "x86_64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-    )
-    .expect_err("windows absolute destination should be rejected");
-    assert_eq!(err.exit_code(), ExitCode::Usage);
+
+    validate_plan(&plan, "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc")
+        .expect("windows absolute destination should be accepted for windows targets");
 }
 
 #[test]
@@ -2711,6 +2707,42 @@ fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
     .expect_err("windows targets should treat case-folded destinations as conflicts");
     assert_eq!(err.exit_code(), ExitCode::Usage);
     assert!(err.to_string().contains("same destination"));
+}
+
+#[test]
+fn validate_plan_accepts_windows_absolute_destination_for_release() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.zip".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some(r"C:\tools\demo.exe".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+
+    let items = validate_plan_with_managed_dir(
+        &plan,
+        "x86_64-pc-windows-msvc",
+        "x86_64-pc-windows-msvc",
+        Path::new(r"C:\managed"),
+    )
+    .expect("windows absolute destination should stay valid for managed release items");
+
+    assert_eq!(items.len(), 1);
+    match &items[0] {
+        ResolvedPlanItem::Release(item) => {
+            assert_eq!(item.destination, Some(PathBuf::from(r"C:\tools\demo.exe")));
+        }
+        other => panic!("unexpected item kind: {other:?}"),
+    }
 }
 
 #[test]
