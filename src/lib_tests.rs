@@ -617,6 +617,34 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escap
     }
 }
 
+#[test]
+fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escapes_portablegit_payload_root()
+ {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("git.cmd");
+    let other = managed_dir.join("git-portable").join("other");
+    std::fs::create_dir_all(&other).expect("create other dir");
+    std::fs::write(other.join("git.exe"), b"MZ").expect("write other git.exe");
+    std::fs::write(
+        &destination,
+        "@echo off\r\n\"%~dp0git-portable\\other\\git.exe\" %*\r\n",
+    )
+    .expect("write launcher");
+
+    let state =
+        assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
+    match state {
+        ManagedBootstrapState::ManagedBroken { detail } => {
+            assert_eq!(
+                detail.replace('\\', "/"),
+                "managed git launcher points outside managed PortableGit payload root with payload target `git-portable/other/git.exe`"
+            );
+        }
+        other => panic!("expected ManagedBroken state, got {other:?}"),
+    }
+}
+
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
 fn host_command_is_healthy_rejects_broken_supported_host_binary() {

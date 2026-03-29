@@ -308,6 +308,13 @@ fn managed_windows_git_payload_path(
             relative_target.display()
         ));
     }
+    let portable_payload_root = portable_root.join("PortableGit");
+    if !executable.starts_with(&portable_payload_root) {
+        return Err(format!(
+            "managed git launcher points outside managed PortableGit payload root with payload target `{}`",
+            relative_target.display()
+        ));
+    }
     Ok(executable)
 }
 

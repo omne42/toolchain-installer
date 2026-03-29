@@ -38,6 +38,7 @@
    - 解析后若两个 item 指向同一目标路径，或一个目标路径嵌套在另一个目标路径之下，plan 会在执行前直接拒绝。
 10. 托管 bootstrap 健康检查
    - Windows managed `git` 的 launcher 只允许指向 `managed_dir` 内的 MinGit payload；带 `..` 的逃逸路径会被直接视为损坏安装。
+   - Windows managed `git` 的 launcher 还必须落在 `managed_dir/git-portable/PortableGit/` 这棵 payload 子树内；即使仍在 `git-portable/` 下，只要指向其他旁路目录也会被视为损坏安装。
    - Windows managed `git` 不会只凭 launcher、`git.exe` 和 DLL 文件存在就被视为健康；installer 还会执行 payload 的 `--version` 健康检查。
    - `bootstrap` 只有在宿主机上解析到可实际执行的命令后才会返回 `present`；PATH 中同名但不可执行的普通文件不会阻止后续安装。
 
