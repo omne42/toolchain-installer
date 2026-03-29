@@ -47,9 +47,9 @@
 
 - `application`
   - 面向对外用例编排，负责把 CLI / library 输入归一化成执行上下文，并调度具体领域策略。
-  - 不持有内置工具安装规则、plan method 字段矩阵或具体下载来源选择策略。
+  - 不持有内置工具安装规则、托管工具健康判定、plan method 字段矩阵或具体下载来源选择策略。
 - `builtin_tools`
-  - 承载“bootstrap 内置工具”领域策略，例如默认工具选择、public release 资产选择，以及 git/gh/uv 的内置安装适配。
+  - 承载“bootstrap 内置工具”领域策略，例如默认工具选择、宿主与托管安装健康探针、public release 资产选择，以及 git/gh/uv 的内置安装适配。
   - 不负责 CLI 解析、宿主/目标初始化、HTTP client 构建或结果总汇总。
 - `install_plan`
   - 承载安装 plan 领域策略：plan method 归位、DTO -> 强类型条目收敛、方法分发和各 method 的安装执行策略。

@@ -20,13 +20,10 @@ use omne_system_package_primitives::{
     SystemPackageManager, try_default_system_package_install_recipes_for_os,
 };
 
-use crate::application::bootstrap_use_case::{
-    ManagedBootstrapState, assess_managed_bootstrap_state, host_command_is_healthy,
-};
 use crate::builtin_tools::{
-    gh_release_asset_suffix_for_target, install_gh_from_public_release,
-    install_git_from_public_release, normalize_requested_tools, replace_mingit_installation,
-    select_mingit_release_asset_for_target,
+    ManagedBootstrapState, assess_managed_bootstrap_state, gh_release_asset_suffix_for_target,
+    host_command_is_healthy, install_gh_from_public_release, install_git_from_public_release,
+    normalize_requested_tools, replace_mingit_installation, select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
     BootstrapArchiveFormat, BootstrapCommand, BootstrapSourceKind, BootstrapStatus,

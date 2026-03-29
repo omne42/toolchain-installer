@@ -12,7 +12,7 @@
 ## 顶层目录与文件
 
 - `src/application/`
-  - `bootstrap_use_case.rs`：`bootstrap` 用例编排，负责调用内置工具领域策略并汇总输出。
+  - `bootstrap_use_case.rs`：`bootstrap` 用例编排，负责调用内置工具领域策略、驱动安装并汇总输出；不再承载托管工具健康规则本身。
   - `execution_context.rs`：共享执行上下文 builder，集中初始化 host/target、managed_dir、runtime config 和 HTTP client。
   - `install_plan_use_case.rs`：plan 用例编排，负责驱动 plan 校验、执行和结果归并。
   - `mod.rs`：应用编排层汇总。
@@ -21,6 +21,7 @@
   - `mod.rs`：artifact 内部域汇总。
 - `src/builtin_tools/`
   - `builtin_tool_selection.rs`：内置工具默认选择、输入归一化与支持集判定。
+  - `bootstrap_tool_health.rs`：bootstrap 内置工具的宿主与托管安装健康探针，覆盖 `git` / `gh` / `uv` 的复用前检查，以及 Windows 托管 `git` 的 MinGit payload 完整性判定。
   - `public_release_asset_installation.rs`：`gh` / `git` public release 资产选择与安装适配。
   - `mod.rs`：内置工具领域汇总。
 - `src/contracts/`
