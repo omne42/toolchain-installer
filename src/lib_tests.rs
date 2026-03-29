@@ -691,6 +691,25 @@ exit 42
     });
 }
 
+#[cfg(unix)]
+#[test]
+fn host_command_is_healthy_rejects_non_executable_supported_host_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plain = tmp.path().join("uv");
+    std::fs::write(&plain, "not executable").expect("write plain file");
+    let mut permissions = std::fs::metadata(&plain)
+        .expect("stat plain file")
+        .permissions();
+    permissions.set_mode(0o644);
+    std::fs::set_permissions(&plain, permissions).expect("chmod plain file");
+
+    with_path_override(tmp.path(), || {
+        assert!(!host_command_is_healthy("uv"));
+    });
+}
+
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
 fn host_command_is_healthy_rejects_unknown_tool_even_when_host_binary_is_healthy() {
@@ -4208,6 +4227,18 @@ fn write_executable(path: &Path, body: &str) -> anyhow::Result<()> {
 }
 
 fn with_path_prepend<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+    let mut entries = vec![path.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        entries.extend(std::env::split_paths(&existing));
+    }
+    with_path_entries(entries, f)
+}
+
+fn with_path_override<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+    with_path_entries(vec![path.to_path_buf()], f)
+}
+
+fn with_path_entries<T>(entries: Vec<PathBuf>, f: impl FnOnce() -> T) -> T {
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     let _guard = ENV_LOCK
@@ -4215,10 +4246,6 @@ fn with_path_prepend<T>(path: &Path, f: impl FnOnce() -> T) -> T {
         .lock()
         .expect("lock env guard");
     let original = std::env::var_os("PATH");
-    let mut entries = vec![path.to_path_buf()];
-    if let Some(existing) = &original {
-        entries.extend(std::env::split_paths(existing));
-    }
     let joined = std::env::join_paths(entries).expect("join PATH");
     let restore = EnvVarRestore::new("PATH", original);
     // SAFETY: tests hold a process-wide mutex while mutating PATH and restore it before unlock.
