@@ -496,7 +496,7 @@ fn find_package_dir_under_root(root: &Path, package_name: &str) -> Option<PathBu
         let entries = std::fs::read_dir(&dir).ok()?;
         for entry in entries {
             let entry = entry.ok()?;
-            if entry.file_type().ok()?.is_dir() {
+            if entry_is_plain_directory(&entry) {
                 stack.push(entry.path());
             }
         }
@@ -626,13 +626,13 @@ fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<P
                 continue;
             };
             let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_dir() {
+            if entry_is_plain_directory(&entry) {
                 stack.push(path);
                 continue;
             }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             if (file_type.is_file() || (file_type.is_symlink() && path.is_file()))
                 && path
                     .file_name()
@@ -645,6 +645,12 @@ fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<P
     }
     matches.sort();
     matches
+}
+
+fn entry_is_plain_directory(entry: &std::fs::DirEntry) -> bool {
+    entry
+        .file_type()
+        .is_ok_and(|file_type| file_type.is_dir() && !file_type.is_symlink())
 }
 
 fn prepend_path_env(path: &Path) -> OperationResult<String> {
@@ -979,6 +985,27 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn find_matching_binary_paths_under_dir_does_not_traverse_external_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let search_root = temp.path().join("global");
+        let external_root = temp.path().join("external");
+        let real_dir = search_root.join("node_modules").join(".bin");
+        let external_dir = external_root.join(".bin");
+        std::fs::create_dir_all(&real_dir).expect("create real dir");
+        std::fs::create_dir_all(&external_dir).expect("create external dir");
+        std::fs::write(real_dir.join("http-server"), "#!/bin/sh\nexit 0\n").expect("write binary");
+        std::fs::write(external_dir.join("http-server"), "#!/bin/sh\nexit 0\n")
+            .expect("write external binary");
+        symlink(&external_root, search_root.join("escape")).expect("create escape symlink");
+
+        let matches = find_matching_binary_paths_under_dir(&search_root, "http-server");
+        assert_eq!(matches, vec![real_dir.join("http-server")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn find_package_dir_under_root_skips_directory_symlink_loops() {
         use std::os::unix::fs::symlink;
 
@@ -992,6 +1019,34 @@ mod tests {
         )
         .expect("write package.json");
         symlink(&search_root, search_root.join("loop")).expect("create loop symlink");
+
+        let resolved = find_package_dir_under_root(&search_root, "http-server");
+        assert_eq!(resolved, Some(package_dir));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_package_dir_under_root_does_not_traverse_external_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let search_root = temp.path().join("global");
+        let package_dir = search_root.join("node_modules").join("http-server");
+        let external_root = temp.path().join("external");
+        let external_package_dir = external_root.join("node_modules").join("http-server");
+        std::fs::create_dir_all(&package_dir).expect("create package dir");
+        std::fs::create_dir_all(&external_package_dir).expect("create external package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"http-server","version":"14.1.1"}"#,
+        )
+        .expect("write package.json");
+        std::fs::write(
+            external_package_dir.join("package.json"),
+            r#"{"name":"http-server","version":"99.0.0"}"#,
+        )
+        .expect("write external package.json");
+        symlink(&external_root, search_root.join("escape")).expect("create escape symlink");
 
         let resolved = find_package_dir_under_root(&search_root, "http-server");
         assert_eq!(resolved, Some(package_dir));
