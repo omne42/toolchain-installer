@@ -31,6 +31,9 @@
 - `src/external_gateway/`
   - `asset_routing.rs`：installer 对外部 edge gateway 的资产路由拼装，以及 `git-for-windows` release URL/asset 到 gateway 候选的推断。
   - `mod.rs`：外部网关集成域汇总。
+- `src/github_release_metadata.rs`
+  - installer 内部对 shared `github-kit` 的薄适配，只负责 latest release metadata 获取时的仓库级默认 request 选项和错误归并。
+  - 不承载 release asset 选择、mirror/gateway 候选顺序或下载执行策略。
 - `src/download_sources.rs`
   - installer 自有的下载来源选择辅助，负责 `gateway|canonical|mirror` 候选展开与结果来源种类映射。
   - 不承载 GitHub API client、下载执行、摘要校验或安装编排。

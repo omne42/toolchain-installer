@@ -13,20 +13,38 @@ pub(crate) fn binary_reports_version(path: &Path) -> bool {
     run_version_probe_with_retries(path).is_some_and(|probe| probe.success)
 }
 
-#[cfg(test)]
-pub(crate) fn python_binary_matches_version(path: &Path, expected_version: &str) -> bool {
+pub(crate) fn binary_reports_version_with_prefix(path: &Path, expected_prefix: &str) -> bool {
     run_version_probe_with_retries(path).is_some_and(|probe| {
         probe.success
-            && (python_version_output_matches(&probe.stdout, expected_version)
-                || python_version_output_matches(&probe.stderr, expected_version))
+            && String::from_utf8_lossy(&probe.stdout)
+                .lines()
+                .chain(String::from_utf8_lossy(&probe.stderr).lines())
+                .any(|line| line.starts_with(expected_prefix))
+    })
+}
+
+pub(crate) fn python_binary_version(path: &Path) -> Option<String> {
+    run_version_probe_with_retries(path).and_then(|probe| {
+        probe
+            .success
+            .then(|| {
+                python_version_from_output(&probe.stdout)
+                    .or_else(|| python_version_from_output(&probe.stderr))
+            })
+            .flatten()
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn python_binary_matches_version(path: &Path, expected_version: &str) -> bool {
+    python_binary_version(path).is_some_and(|reported_version| {
+        python_version_matches_requirement(&reported_version, expected_version)
     })
 }
 
 struct VersionProbeOutput {
     success: bool,
-    #[cfg(test)]
     stdout: Vec<u8>,
-    #[cfg(test)]
     stderr: Vec<u8>,
 }
 
@@ -82,9 +100,7 @@ fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
 
                 return Some(VersionProbeOutput {
                     success: status.success(),
-                    #[cfg(test)]
                     stdout: stdout_bytes,
-                    #[cfg(test)]
                     stderr: stderr_bytes,
                 });
             }
@@ -98,16 +114,14 @@ fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
     }
 }
 
-#[cfg(test)]
-fn python_version_output_matches(output: &[u8], expected_version: &str) -> bool {
+fn python_version_from_output(output: &[u8]) -> Option<String> {
     let output = String::from_utf8_lossy(output);
-    output.lines().any(|line| {
+    output.lines().find_map(|line| {
         let mut segments = line.split_whitespace();
-        matches!(
-            (segments.next(), segments.next(), segments.next()),
-            (Some("Python"), Some(version), None)
-                if python_version_matches_requirement(version, expected_version)
-        )
+        match (segments.next(), segments.next(), segments.next()) {
+            (Some("Python"), Some(version), None) => Some(version.to_string()),
+            _ => None,
+        }
     })
 }
 

@@ -5,6 +5,7 @@ mod contracts;
 mod download_sources;
 mod error;
 mod external_gateway;
+mod github_release_metadata;
 mod install_plan;
 mod installer_runtime_config;
 mod managed_toolchain;

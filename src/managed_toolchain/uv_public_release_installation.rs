@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use github_kit::{GitHubApiRequestOptions, GitHubReleaseAsset, fetch_latest_release};
+use github_kit::GitHubReleaseAsset;
 use omne_artifact_install_primitives::{
     ArtifactDownloadCandidate, ArtifactInstallError, ArtifactInstallErrorKind,
     BinaryArchiveInstallRequest, InstalledArchiveBinary, download_and_install_binary_from_archive,
@@ -13,6 +13,7 @@ use crate::download_sources::{
     build_download_candidates, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
+use crate::github_release_metadata::fetch_latest_release_metadata;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 pub(crate) async fn install_uv_from_public_release(
     target_triple: &str,
@@ -20,16 +21,7 @@ pub(crate) async fn install_uv_from_public_release(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
-    let release = fetch_latest_release(
-        client,
-        &cfg.github_releases.api_bases,
-        "astral-sh/uv",
-        GitHubApiRequestOptions::new()
-            .with_user_agent("toolchain-installer")
-            .with_bearer_token(cfg.github_releases.token.as_deref()),
-    )
-    .await
-    .map_err(|err| OperationError::download(err.to_string()))?;
+    let release = fetch_latest_release_metadata(client, cfg, "astral-sh/uv").await?;
     let asset = select_uv_asset_for_target(&release.assets, target_triple).ok_or_else(|| {
         OperationError::download(format!("cannot find uv asset for target `{target_triple}`"))
     })?;
