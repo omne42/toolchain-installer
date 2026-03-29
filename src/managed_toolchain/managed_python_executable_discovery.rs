@@ -1,10 +1,10 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use omne_host_info_primitives::executable_suffix_for_target;
 
 use super::managed_environment_layout::managed_python_installation_dir;
+use super::version_probe::python_binary_version;
 
 pub(crate) fn find_managed_python_executable(
     managed_dir: &Path,
@@ -125,36 +125,7 @@ fn matched_python_version(path: &Path, expected_version: &str) -> Option<PythonV
 }
 
 fn probe_python_version(path: &Path) -> Option<PythonVersion> {
-    if !path.exists() {
-        return None;
-    }
-
-    let output = Command::new(path)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    parse_python_version_output(&output.stdout)
-        .or_else(|| parse_python_version_output(&output.stderr))
-}
-
-fn parse_python_version_output(output: &[u8]) -> Option<PythonVersion> {
-    let output = String::from_utf8_lossy(output);
-    output.lines().find_map(parse_python_version_line)
-}
-
-fn parse_python_version_line(line: &str) -> Option<PythonVersion> {
-    let mut segments = line.split_whitespace();
-    match (segments.next(), segments.next(), segments.next()) {
-        (Some("Python"), Some(version), None) => PythonVersion::parse(version),
-        _ => None,
-    }
+    python_binary_version(path).and_then(|version| PythonVersion::parse(&version))
 }
 
 fn python_version_matches_requirement(

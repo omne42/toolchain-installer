@@ -37,6 +37,8 @@ use crate::error::ExitCode;
 use crate::external_gateway::{
     infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
 };
+use crate::install_plan::cargo_install_item_execution::execute_cargo_install_item;
+use crate::install_plan::go_install_item_execution::execute_go_install_item;
 use crate::install_plan::install_plan_validation::{
     validate_plan, validate_plan_with_base_dir, validate_plan_with_managed_dir,
 };
@@ -53,7 +55,10 @@ use crate::managed_toolchain::{
     execute_managed_toolchain_item, execute_uv_python_item, execute_uv_tool_item,
     find_managed_python_executable, install_uv_from_public_release, managed_uv_is_healthy,
 };
-use crate::plan_items::{ManagedUvPlanItem, ResolvedPlanItem, UvPythonPlanItem, UvToolPlanItem};
+use crate::plan_items::{
+    CargoInstallPlanItem, CargoInstallSource, GoInstallPlanItem, GoInstallSource,
+    ManagedUvPlanItem, ResolvedPlanItem, UvPythonPlanItem, UvToolPlanItem,
+};
 
 fn test_runtime_config() -> InstallerRuntimeConfig {
     InstallerRuntimeConfig {
@@ -312,6 +317,92 @@ exit 0
     .expect("write executable");
 
     assert!(!managed_uv_is_healthy(&managed_uv));
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn cargo_install_promotes_single_staged_binary_to_requested_destination_name() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cargo = tmp.path().join("cargo");
+    write_executable(
+        &cargo,
+        r#"#!/bin/sh
+root=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--root" ]; then
+    root="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+mkdir -p "$root/bin"
+printf 'cargo-installed' > "$root/bin/actual-tool"
+chmod +x "$root/bin/actual-tool"
+"#,
+    )
+    .expect("write cargo");
+    let managed_dir = tmp.path().join("managed");
+    let item = CargoInstallPlanItem {
+        id: "cargo-demo".to_string(),
+        source: CargoInstallSource::RegistryPackage {
+            package: "demo-tool".to_string(),
+            version: None,
+        },
+        binary_name: "alias-tool".to_string(),
+    };
+
+    let result = with_path_prepend(tmp.path(), || {
+        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
+    })
+    .expect("cargo install should succeed");
+
+    let destination = managed_dir.join("bin").join("alias-tool");
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read installed cargo binary"),
+        "cargo-installed"
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn go_install_promotes_single_staged_binary_to_requested_destination_name() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let go = tmp.path().join("go");
+    write_executable(
+        &go,
+        r#"#!/bin/sh
+mkdir -p "$GOBIN"
+printf 'go-installed' > "$GOBIN/actual-tool"
+chmod +x "$GOBIN/actual-tool"
+"#,
+    )
+    .expect("write go");
+    let managed_dir = tmp.path().join("managed");
+    let item = GoInstallPlanItem {
+        id: "go-demo".to_string(),
+        source: GoInstallSource::PackageSpec("example.com/demo/cmd/demo@latest".to_string()),
+        binary_name: "alias-tool".to_string(),
+    };
+
+    let result = with_path_prepend(tmp.path(), || {
+        execute_go_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
+    })
+    .expect("go install should succeed");
+
+    let destination = managed_dir.join("alias-tool");
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read installed go binary"),
+        "go-installed"
+    );
 }
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]

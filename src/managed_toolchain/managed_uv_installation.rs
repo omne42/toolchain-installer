@@ -9,7 +9,7 @@ use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::bootstrap_item_construction::build_installed_bootstrap_item_from_install_source;
 use crate::managed_toolchain::install_uv_from_public_release;
 use crate::managed_toolchain::managed_environment_layout::managed_uv_binary_path;
-use crate::managed_toolchain::version_probe::binary_reports_version;
+use crate::managed_toolchain::version_probe::binary_reports_version_with_prefix;
 use crate::plan_items::ManagedUvPlanItem;
 
 #[derive(Debug, Clone)]
@@ -76,5 +76,5 @@ pub(super) async fn ensure_managed_uv(
 }
 
 pub(crate) fn managed_uv_is_healthy(path: &Path) -> bool {
-    binary_reports_version(path)
+    binary_reports_version_with_prefix(path, "uv ")
 }

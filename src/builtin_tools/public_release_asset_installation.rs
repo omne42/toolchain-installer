@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use github_kit::{GitHubApiRequestOptions, GitHubReleaseAsset, fetch_latest_release};
+use github_kit::GitHubReleaseAsset;
 use omne_artifact_install_primitives::{
     ArchiveTreeInstallRequest, BinaryArchiveInstallRequest, InstalledArchiveBinary,
     download_and_install_archive_tree, download_and_install_binary_from_archive,
@@ -16,6 +16,7 @@ use crate::download_sources::{
 };
 use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::gateway_candidate_for_git_release_asset;
+use crate::github_release_metadata::fetch_latest_release_metadata;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 pub(crate) async fn install_gh_from_public_release(
     target_triple: &str,
@@ -29,16 +30,7 @@ pub(crate) async fn install_gh_from_public_release(
             "gh public recipe unsupported on target `{target_triple}`"
         ))
     })?;
-    let release = fetch_latest_release(
-        client,
-        &cfg.github_releases.api_bases,
-        "cli/cli",
-        GitHubApiRequestOptions::new()
-            .with_user_agent("toolchain-installer")
-            .with_bearer_token(cfg.github_releases.token.as_deref()),
-    )
-    .await
-    .map_err(|err| OperationError::download(err.to_string()))?;
+    let release = fetch_latest_release_metadata(client, cfg, "cli/cli").await?;
     let asset = release
         .assets
         .iter()
@@ -89,16 +81,7 @@ pub(crate) async fn install_git_from_public_release(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
-    let release = fetch_latest_release(
-        client,
-        &cfg.github_releases.api_bases,
-        "git-for-windows/git",
-        GitHubApiRequestOptions::new()
-            .with_user_agent("toolchain-installer")
-            .with_bearer_token(cfg.github_releases.token.as_deref()),
-    )
-    .await
-    .map_err(|err| OperationError::download(err.to_string()))?;
+    let release = fetch_latest_release_metadata(client, cfg, "git-for-windows/git").await?;
     let asset = select_mingit_release_asset_for_target(&release.assets, target_triple).ok_or_else(
         || {
             OperationError::download(format!(

@@ -1,5 +1,6 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use omne_process_primitives::{
     HostRecipeRequest, command_exists, command_path_exists, run_host_recipe,
@@ -20,18 +21,22 @@ pub(crate) fn execute_cargo_install_item(
         return Err(OperationError::install("cargo command not found"));
     }
     let install_root = cargo_install_root(managed_dir);
-    let destination = resolve_cargo_install_destination(item, target_triple, managed_dir);
+    let stage_root =
+        create_stage_root(&install_root, "cargo-install").map_err(OperationError::install)?;
+    let expected_destination = resolve_cargo_install_destination(item, target_triple, managed_dir);
 
     let mut args = vec!["install".to_string()];
     let source = match &item.source {
         CargoInstallSource::LocalPath(package_path) => {
             if !package_path.exists() {
+                cleanup_stage_root(&stage_root).ok();
                 return Err(OperationError::install(format!(
                     "cargo_install local path does not exist: {}",
                     package_path.display()
                 )));
             }
             if !package_path.is_dir() {
+                cleanup_stage_root(&stage_root).ok();
                 return Err(OperationError::install(format!(
                     "cargo_install local path must be a directory: {}",
                     package_path.display()
@@ -52,19 +57,41 @@ pub(crate) fn execute_cargo_install_item(
         }
     };
     args.push("--root".to_string());
-    args.push(install_root.display().to_string());
+    args.push(stage_root.display().to_string());
     let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
-    let backup = InstalledBinaryBackup::stash(&destination).map_err(OperationError::install)?;
+
+    let backup =
+        InstalledBinaryBackup::stash(&expected_destination).map_err(OperationError::install)?;
     if let Err(err) = run_host_recipe(&HostRecipeRequest::new("cargo".as_ref(), &args)) {
+        cleanup_stage_root(&stage_root).ok();
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::from_host_recipe(err));
     }
 
-    if !command_path_exists(&destination) {
+    let staged_binary =
+        match select_staged_binary(&stage_root.join("bin"), expected_destination.file_name()) {
+            Ok(binary) => binary,
+            Err(err) => {
+                cleanup_stage_root(&stage_root).ok();
+                backup.restore().map_err(OperationError::install)?;
+                return Err(OperationError::install(err));
+            }
+        };
+
+    if let Err(err) = promote_staged_binary(&staged_binary, &expected_destination) {
+        cleanup_stage_root(&stage_root).ok();
+        backup.restore().map_err(OperationError::install)?;
+        return Err(OperationError::install(err));
+    }
+    if let Err(err) = cleanup_stage_root(&stage_root) {
+        backup.restore().map_err(OperationError::install)?;
+        return Err(OperationError::install(err));
+    }
+    if !command_path_exists(&expected_destination) {
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::install(format!(
             "expected cargo_install binary at {}",
-            destination.display()
+            expected_destination.display()
         )));
     }
     backup.discard().map_err(OperationError::install)?;
@@ -75,10 +102,108 @@ pub(crate) fn execute_cargo_install_item(
         source: Some(source),
         source_kind: Some(BootstrapSourceKind::CargoInstall),
         archive_match: None,
-        destination: Some(destination.display().to_string()),
+        destination: Some(expected_destination.display().to_string()),
         detail: None,
         error_code: None,
         failure_code: None,
+    })
+}
+
+fn create_stage_root(parent: &Path, prefix: &str) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(parent)
+        .map_err(|err| format!("cannot create install root {}: {err}", parent.display()))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let stage_root = parent.join(format!(
+        ".toolchain-installer-{prefix}-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&stage_root).map_err(|err| {
+        format!(
+            "cannot create staged cargo_install root {}: {err}",
+            stage_root.display()
+        )
+    })?;
+    Ok(stage_root)
+}
+
+fn cleanup_stage_root(stage_root: &Path) -> Result<(), String> {
+    if !stage_root.exists() {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(stage_root).map_err(|err| {
+        format!(
+            "cannot clean staged cargo_install root {}: {err}",
+            stage_root.display()
+        )
+    })
+}
+
+fn select_staged_binary(
+    stage_bin_dir: &Path,
+    expected_name: Option<&OsStr>,
+) -> Result<PathBuf, String> {
+    let entries = std::fs::read_dir(stage_bin_dir).map_err(|err| {
+        format!(
+            "cargo_install succeeded but cannot inspect staged bin dir {}: {err}",
+            stage_bin_dir.display()
+        )
+    })?;
+    let mut binaries = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            entry.file_type().ok()?.is_file().then_some(path)
+        })
+        .collect::<Vec<_>>();
+    binaries.sort();
+
+    if let Some(expected_name) = expected_name
+        && let Some(binary) = binaries
+            .iter()
+            .find(|binary| binary.file_name().is_some_and(|name| name == expected_name))
+    {
+        return Ok(binary.clone());
+    }
+
+    match binaries.as_slice() {
+        [binary] => Ok(binary.clone()),
+        [] => Err(format!(
+            "cargo_install succeeded but produced no staged binary under {}",
+            stage_bin_dir.display()
+        )),
+        _ => Err(format!(
+            "cargo_install produced multiple staged binaries under {} but none matched the requested destination name",
+            stage_bin_dir.display()
+        )),
+    }
+}
+
+fn promote_staged_binary(staged_binary: &Path, destination: &Path) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "cannot create cargo_install destination parent {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    if destination.exists() {
+        std::fs::remove_file(destination).map_err(|err| {
+            format!(
+                "cannot remove existing cargo_install binary {}: {err}",
+                destination.display()
+            )
+        })?;
+    }
+    std::fs::rename(staged_binary, destination).map_err(|err| {
+        format!(
+            "cannot promote staged cargo_install binary {} to {}: {err}",
+            staged_binary.display(),
+            destination.display()
+        )
     })
 }
 
