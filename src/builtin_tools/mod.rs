@@ -1,7 +1,10 @@
+pub(crate) mod bootstrap_installation;
 pub(crate) mod bootstrap_tool_health;
 pub(crate) mod builtin_tool_selection;
 pub(crate) mod public_release_asset_installation;
 
+#[cfg(test)]
+pub(crate) use bootstrap_installation::builtin_tool_destination;
 #[cfg(test)]
 pub(crate) use bootstrap_tool_health::{
     ManagedBootstrapState, assess_managed_bootstrap_state, host_command_is_healthy,

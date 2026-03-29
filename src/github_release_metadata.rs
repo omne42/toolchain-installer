@@ -35,14 +35,14 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn fetch_latest_release_metadata_uses_shared_github_client_contract() {
+    async fn fetch_latest_release_metadata_uses_shared_github_client_contract_without_bearer_on_http()
+     {
         let responses = vec![
             MockHttpResponse {
                 expected_path: "/api-fail/repos/cli/cli/releases/latest".to_string(),
                 expected_headers: vec![
                     ("accept".to_string(), "application/vnd.github+json".to_string()),
                     ("user-agent".to_string(), "toolchain-installer".to_string()),
-                    ("authorization".to_string(), "Bearer secret-token".to_string()),
                     ("x-github-api-version".to_string(), "2022-11-28".to_string()),
                 ],
                 status_line: "HTTP/1.1 500 Internal Server Error",
@@ -53,7 +53,6 @@ mod tests {
                 expected_headers: vec![
                     ("accept".to_string(), "application/vnd.github+json".to_string()),
                     ("user-agent".to_string(), "toolchain-installer".to_string()),
-                    ("authorization".to_string(), "Bearer secret-token".to_string()),
                     ("x-github-api-version".to_string(), "2022-11-28".to_string()),
                 ],
                 status_line: "HTTP/1.1 200 OK",
@@ -64,7 +63,7 @@ mod tests {
         let cfg = InstallerRuntimeConfig {
             github_releases: GitHubReleasePolicy {
                 api_bases: vec![format!("{base}/api-fail"), format!("{base}/api-ok")],
-                token: Some(" secret-token ".to_string()),
+                token: None,
             },
             download_sources: DownloadSourcePolicy {
                 mirror_prefixes: Vec::new(),

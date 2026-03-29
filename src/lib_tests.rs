@@ -21,9 +21,10 @@ use omne_system_package_primitives::{
 };
 
 use crate::builtin_tools::{
-    ManagedBootstrapState, assess_managed_bootstrap_state, gh_release_asset_suffix_for_target,
-    host_command_is_healthy, install_gh_from_public_release, install_git_from_public_release,
-    normalize_requested_tools, replace_mingit_installation, select_mingit_release_asset_for_target,
+    ManagedBootstrapState, assess_managed_bootstrap_state, builtin_tool_destination,
+    gh_release_asset_suffix_for_target, host_command_is_healthy, install_gh_from_public_release,
+    install_git_from_public_release, normalize_requested_tools, replace_mingit_installation,
+    select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
     BootstrapArchiveFormat, BootstrapCommand, BootstrapSourceKind, BootstrapStatus,
@@ -137,6 +138,28 @@ fn gateway_only_enabled_for_cn() {
         ..test_runtime_config()
     };
     assert!(!cfg_us.gateway.use_for_git_release());
+}
+
+#[test]
+fn builtin_tool_destination_uses_git_cmd_for_windows_git() {
+    let managed_dir = Path::new("/tmp/managed");
+    assert_eq!(
+        builtin_tool_destination("git", "x86_64-pc-windows-msvc", ".exe", managed_dir),
+        managed_dir.join("git.cmd")
+    );
+}
+
+#[test]
+fn builtin_tool_destination_uses_binary_extension_for_other_tools() {
+    let managed_dir = Path::new("/tmp/managed");
+    assert_eq!(
+        builtin_tool_destination("gh", "x86_64-unknown-linux-gnu", "", managed_dir),
+        managed_dir.join("gh")
+    );
+    assert_eq!(
+        builtin_tool_destination("uv", "x86_64-pc-windows-msvc", ".exe", managed_dir),
+        managed_dir.join("uv.exe")
+    );
 }
 
 #[test]
