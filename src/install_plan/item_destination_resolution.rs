@@ -221,11 +221,6 @@ fn validate_destination_path(
             )));
         }
         WindowsDestinationKind::Absolute => {
-            if matches!(policy, DestinationPolicy::Managed) {
-                return Err(InstallerError::usage(format!(
-                    "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
-                )));
-            }
             if windows_destination_has_no_file_name(raw_destination) {
                 return Err(InstallerError::usage(format!(
                     "plan item `{item_id}` destination `{raw_destination}` must include a file name"
@@ -525,10 +520,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_destination_rejects_windows_absolute_path_for_managed_installs() {
-        let err = validate_destination("demo", "C:\\tools\\demo.exe", "x86_64-pc-windows-msvc")
-            .expect_err("should reject");
-        assert!(err.to_string().contains("cannot be an absolute path"));
+    fn validate_destination_accepts_windows_absolute_path_for_managed_installs() {
+        let destination =
+            validate_destination("demo", "C:\\tools\\demo.exe", "x86_64-pc-windows-msvc")
+                .expect("windows absolute destination");
+        assert_eq!(destination, PathBuf::from("C:\\tools\\demo.exe"));
     }
 
     #[test]
