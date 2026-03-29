@@ -460,6 +460,7 @@ mod tests {
                         version: None,
                     },
                     binary_name: "demo".to_string(),
+                    binary_name_explicit: false,
                 },
                 "x86_64-unknown-linux-gnu",
                 managed_dir,

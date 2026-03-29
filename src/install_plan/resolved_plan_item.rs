@@ -318,10 +318,12 @@ fn resolve_cargo_install_plan_item(
     )?;
     let version = optional_trimmed(item.version.as_deref());
     let source = resolve_cargo_install_source(&package, version, plan_base_dir);
+    let binary_name_explicit = optional_trimmed(item.binary_name.as_deref()).is_some();
     Ok(ResolvedPlanItem::CargoInstall(CargoInstallPlanItem {
         binary_name: parse_optional_binary_name(&id, item.binary_name.as_deref())?
             .or_else(|| default_binary_name_for_cargo_source(&source))
             .unwrap_or_else(|| default_binary_name_for_target(target_triple, &id)),
+        binary_name_explicit,
         id,
         source,
     }))
@@ -453,6 +455,7 @@ fn resolve_managed_toolchain_plan_item(
                     ("manager", item.manager.as_deref()),
                 ],
             )?;
+            let binary_name_explicit = optional_trimmed(item.binary_name.as_deref()).is_some();
             Ok(ResolvedPlanItem::UvTool(UvToolPlanItem {
                 package: require_non_empty(
                     item.package.as_deref().unwrap_or_default(),
@@ -467,6 +470,7 @@ fn resolve_managed_toolchain_plan_item(
                             .and_then(default_binary_name_for_python_package)
                     })
                     .unwrap_or_else(|| default_binary_name_for_target(target_triple, &id)),
+                binary_name_explicit,
                 id,
             }))
         }

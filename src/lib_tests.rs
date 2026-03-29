@@ -334,6 +334,14 @@ while [ "$#" -gt 0 ]; do
     shift 2
     continue
   fi
+  if [ "$1" = "--bin" ]; then
+    if [ "$2" != "alias-tool" ]; then
+      echo "unexpected cargo --bin value: $2" >&2
+      exit 7
+    fi
+    shift 2
+    continue
+  fi
   shift
 done
 mkdir -p "$root/bin"
@@ -350,6 +358,7 @@ chmod +x "$root/bin/actual-tool"
             version: None,
         },
         binary_name: "alias-tool".to_string(),
+        binary_name_explicit: true,
     };
 
     let result = with_path_prepend(tmp.path(), || {
@@ -3705,6 +3714,7 @@ exit 2
         package: "ruff".to_string(),
         python: Some("3.13.12".to_string()),
         binary_name: "ruff".to_string(),
+        binary_name_explicit: false,
     };
     let cfg = InstallerRuntimeConfig {
         package_indexes: PackageIndexPolicy {
@@ -3809,6 +3819,7 @@ async fn execute_uv_tool_item_ignores_inherited_uv_environment_helper() -> anyho
         package: "ruff".to_string(),
         python: None,
         binary_name: "ruff".to_string(),
+        binary_name_explicit: false,
     };
     let cfg = InstallerRuntimeConfig {
         package_indexes: PackageIndexPolicy {
@@ -3888,6 +3899,7 @@ exit 2
         package: "ruff".to_string(),
         python: None,
         binary_name: "ruff".to_string(),
+        binary_name_explicit: false,
     };
     let cfg = InstallerRuntimeConfig {
         github_releases: GitHubReleasePolicy {
@@ -3941,6 +3953,10 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  if [ "$3" != "--force" ] || [ "$4" != "--from" ] || [ "$5" != "ruff-lsp" ] || [ "$6" != "ruff-lsp" ]; then
+    echo "unexpected tool install args: $*" >&2
+    exit 3
+  fi
   echo "$UV_DEFAULT_INDEX" > "{}"
   cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
 #!/bin/sh
@@ -3968,6 +3984,7 @@ exit 2
         package: "ruff-lsp".to_string(),
         python: None,
         binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: true,
     };
     let cfg = InstallerRuntimeConfig {
         package_indexes: PackageIndexPolicy {
@@ -4034,6 +4051,7 @@ exit 2
         package: "ruff-lsp".to_string(),
         python: None,
         binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: false,
     };
     let cfg = InstallerRuntimeConfig {
         package_indexes: PackageIndexPolicy {
