@@ -25,7 +25,7 @@ pub(crate) fn execute_cargo_install_item(
         create_stage_root(&install_root, "cargo-install").map_err(OperationError::install)?;
     let expected_destination = resolve_cargo_install_destination(item, target_triple, managed_dir);
 
-    let mut args = vec!["install".to_string()];
+    let mut args = build_cargo_install_args(item, &stage_root);
     let source = match &item.source {
         CargoInstallSource::LocalPath(package_path) => {
             if !package_path.exists() {
@@ -56,8 +56,6 @@ pub(crate) fn execute_cargo_install_item(
             format!("cargo:crate:{package}")
         }
     };
-    args.push("--root".to_string());
-    args.push(stage_root.display().to_string());
     let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
 
     let backup =
@@ -107,6 +105,19 @@ pub(crate) fn execute_cargo_install_item(
         error_code: None,
         failure_code: None,
     })
+}
+
+fn build_cargo_install_args(item: &CargoInstallPlanItem, stage_root: &Path) -> Vec<String> {
+    let mut args = vec![
+        "install".to_string(),
+        "--root".to_string(),
+        stage_root.display().to_string(),
+    ];
+    if item.binary_name_explicit {
+        args.push("--bin".to_string());
+        args.push(item.binary_name.clone());
+    }
+    args
 }
 
 fn create_stage_root(parent: &Path, prefix: &str) -> Result<PathBuf, String> {
@@ -277,5 +288,61 @@ impl InstalledBinaryBackup {
                 backup.display()
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::build_cargo_install_args;
+    use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
+
+    #[test]
+    fn explicit_binary_name_enters_cargo_install_args() {
+        let item = CargoInstallPlanItem {
+            id: "demo".to_string(),
+            source: CargoInstallSource::RegistryPackage {
+                package: "demo".to_string(),
+                version: None,
+            },
+            binary_name: "alias-tool".to_string(),
+            binary_name_explicit: true,
+        };
+
+        let args = build_cargo_install_args(&item, Path::new("/tmp/stage"));
+        assert_eq!(
+            args,
+            vec![
+                "install".to_string(),
+                "--root".to_string(),
+                "/tmp/stage".to_string(),
+                "--bin".to_string(),
+                "alias-tool".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn inferred_binary_name_does_not_force_cargo_bin_arg() {
+        let item = CargoInstallPlanItem {
+            id: "demo".to_string(),
+            source: CargoInstallSource::RegistryPackage {
+                package: "demo".to_string(),
+                version: None,
+            },
+            binary_name: "demo".to_string(),
+            binary_name_explicit: false,
+        };
+
+        let args = build_cargo_install_args(&item, Path::new("/tmp/stage"));
+        assert_eq!(
+            args,
+            vec![
+                "install".to_string(),
+                "--root".to_string(),
+                "/tmp/stage".to_string(),
+            ]
+        );
     }
 }

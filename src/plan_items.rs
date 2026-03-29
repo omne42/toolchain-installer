@@ -96,6 +96,7 @@ pub(crate) struct CargoInstallPlanItem {
     pub(crate) id: String,
     pub(crate) source: CargoInstallSource,
     pub(crate) binary_name: String,
+    pub(crate) binary_name_explicit: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +130,7 @@ pub(crate) struct UvToolPlanItem {
     pub(crate) package: String,
     pub(crate) python: Option<String>,
     pub(crate) binary_name: String,
+    pub(crate) binary_name_explicit: bool,
 }
 
 #[derive(Debug, Clone)]

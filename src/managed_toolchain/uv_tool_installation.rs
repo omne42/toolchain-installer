@@ -48,17 +48,7 @@ pub(crate) async fn execute_uv_tool_item(
         );
         let backup = ManagedToolBinaryBackup::stash(&destination)?;
 
-        let mut args = vec![
-            "tool".to_string(),
-            "install".to_string(),
-            "--force".to_string(),
-        ];
-        if let Some(python) = item.python.as_deref() {
-            args.push("--python".to_string());
-            args.push(python.to_string());
-        }
-        args.push(item.package.to_string());
-        let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
+        let args = build_uv_tool_install_args(item);
 
         if let Err(err) = run_managed_uv_recipe(uv.program.as_os_str(), &args, &env) {
             backup.restore()?;
@@ -82,6 +72,26 @@ pub(crate) async fn execute_uv_tool_item(
             build_managed_uv_usage_detail(&uv.program, uv_detail.clone()),
         ))
     })
+}
+
+fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("tool"),
+        OsString::from("install"),
+        OsString::from("--force"),
+    ];
+    if let Some(python) = item.python.as_deref() {
+        args.push(OsString::from("--python"));
+        args.push(OsString::from(python));
+    }
+    if item.binary_name_explicit {
+        args.push(OsString::from("--from"));
+        args.push(OsString::from(&item.package));
+        args.push(OsString::from(&item.binary_name));
+    } else {
+        args.push(OsString::from(&item.package));
+    }
+    args
 }
 
 struct ManagedToolBinaryBackup {
@@ -154,5 +164,55 @@ impl ManagedToolBinaryBackup {
                 backup.display()
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::build_uv_tool_install_args;
+    use crate::plan_items::UvToolPlanItem;
+
+    #[test]
+    fn explicit_binary_name_enters_uv_tool_install_args() {
+        let item = UvToolPlanItem {
+            id: "ruff-installer".to_string(),
+            package: "ruff-lsp".to_string(),
+            python: Some("3.13".to_string()),
+            binary_name: "ruff-lsp".to_string(),
+            binary_name_explicit: true,
+        };
+
+        let args = build_uv_tool_install_args(&item);
+        assert_eq!(
+            args,
+            vec![
+                "tool", "install", "--force", "--python", "3.13", "--from", "ruff-lsp", "ruff-lsp"
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn inferred_binary_name_keeps_plain_uv_tool_install_args() {
+        let item = UvToolPlanItem {
+            id: "ruff-installer".to_string(),
+            package: "ruff-lsp".to_string(),
+            python: None,
+            binary_name: "ruff-lsp".to_string(),
+            binary_name_explicit: false,
+        };
+
+        let args = build_uv_tool_install_args(&item);
+        assert_eq!(
+            args,
+            vec!["tool", "install", "--force", "ruff-lsp"]
+                .into_iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>()
+        );
     }
 }
