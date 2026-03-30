@@ -9,6 +9,7 @@ use omne_process_primitives::{
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::managed_toolchain::{ManagedDestinationBackup, promote_staged_file};
 use crate::plan_items::{GoInstallPlanItem, GoInstallSource};
 
 pub(crate) fn execute_go_install_item(
@@ -30,8 +31,8 @@ pub(crate) fn execute_go_install_item(
         .into_iter()
         .map(|(key, value)| (OsString::from(key), OsString::from(value)))
         .collect::<Vec<_>>();
-    let backup =
-        InstalledBinaryBackup::stash(&expected_destination).map_err(OperationError::install)?;
+    let backup = ManagedDestinationBackup::stash(&expected_destination, "go_install binary")
+        .map_err(OperationError::install)?;
     let resolved_package = match &item.source {
         GoInstallSource::LocalPath(package_path) => {
             if !package_path.exists() {
@@ -88,7 +89,9 @@ pub(crate) fn execute_go_install_item(
         }
     };
 
-    if let Err(err) = promote_staged_binary(&staged_binary, &expected_destination) {
+    if let Err(err) =
+        promote_staged_file(&staged_binary, &expected_destination, "go_install binary")
+    {
         cleanup_stage_root(&stage_root).ok();
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::install(err));
@@ -188,104 +191,5 @@ fn select_staged_binary(
             "go_install produced multiple staged binaries under {} but none matched the requested destination name",
             stage_root.display()
         )),
-    }
-}
-
-fn promote_staged_binary(staged_binary: &Path, destination: &Path) -> Result<(), String> {
-    if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| {
-            format!(
-                "cannot create go_install destination parent {}: {err}",
-                parent.display()
-            )
-        })?;
-    }
-    if destination.exists() {
-        std::fs::remove_file(destination).map_err(|err| {
-            format!(
-                "cannot remove existing go_install binary {}: {err}",
-                destination.display()
-            )
-        })?;
-    }
-    std::fs::rename(staged_binary, destination).map_err(|err| {
-        format!(
-            "cannot promote staged go_install binary {} to {}: {err}",
-            staged_binary.display(),
-            destination.display()
-        )
-    })
-}
-
-struct InstalledBinaryBackup {
-    original: PathBuf,
-    backup: Option<PathBuf>,
-}
-
-impl InstalledBinaryBackup {
-    fn stash(original: &Path) -> Result<Self, String> {
-        if !original.exists() {
-            return Ok(Self {
-                original: original.to_path_buf(),
-                backup: None,
-            });
-        }
-
-        let backup = original.with_file_name(format!(
-            "{}.toolchain-installer-backup",
-            original
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("managed-tool")
-        ));
-        if backup.exists() {
-            return Err(format!(
-                "cannot stage existing go_install binary backup {}",
-                backup.display()
-            ));
-        }
-        std::fs::rename(original, &backup).map_err(|err| {
-            format!(
-                "cannot stage existing go_install binary {} before reinstall: {err}",
-                original.display()
-            )
-        })?;
-        Ok(Self {
-            original: original.to_path_buf(),
-            backup: Some(backup),
-        })
-    }
-
-    fn restore(&self) -> Result<(), String> {
-        let Some(backup) = self.backup.as_ref() else {
-            return Ok(());
-        };
-        if self.original.exists() {
-            std::fs::remove_file(&self.original).map_err(|err| {
-                format!(
-                    "cannot remove failed go_install binary {} before restore: {err}",
-                    self.original.display()
-                )
-            })?;
-        }
-        std::fs::rename(backup, &self.original).map_err(|err| {
-            format!(
-                "cannot restore previous go_install binary {} from {}: {err}",
-                self.original.display(),
-                backup.display()
-            )
-        })
-    }
-
-    fn discard(&self) -> Result<(), String> {
-        let Some(backup) = self.backup.as_ref() else {
-            return Ok(());
-        };
-        std::fs::remove_file(backup).map_err(|err| {
-            format!(
-                "cannot remove staged go_install binary backup {}: {err}",
-                backup.display()
-            )
-        })
     }
 }

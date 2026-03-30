@@ -486,16 +486,22 @@ fn find_package_dir_under_root(root: &Path, package_name: &str) -> Option<PathBu
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let manifest_path = dir.join("package.json");
-        if manifest_path.is_file() {
-            let manifest = std::fs::read_to_string(&manifest_path).ok()?;
-            if package_name_from_manifest(&manifest).is_some_and(|name| name == package_name) {
-                return Some(dir);
-            }
+        if manifest_path.is_file()
+            && std::fs::read_to_string(&manifest_path)
+                .ok()
+                .and_then(|manifest| package_name_from_manifest(&manifest))
+                .is_some_and(|name| name == package_name)
+        {
+            return Some(dir);
         }
 
-        let entries = std::fs::read_dir(&dir).ok()?;
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries {
-            let entry = entry.ok()?;
+            let Ok(entry) = entry else {
+                continue;
+            };
             if entry_is_plain_directory(&entry) {
                 stack.push(entry.path());
             }
@@ -1047,6 +1053,25 @@ mod tests {
         )
         .expect("write external package.json");
         symlink(&external_root, search_root.join("escape")).expect("create escape symlink");
+
+        let resolved = find_package_dir_under_root(&search_root, "http-server");
+        assert_eq!(resolved, Some(package_dir));
+    }
+
+    #[test]
+    fn find_package_dir_under_root_skips_unreadable_or_invalid_manifests() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let search_root = temp.path().join("global");
+        let broken_dir = search_root.join("node_modules").join("broken");
+        let package_dir = search_root.join("node_modules").join("http-server");
+        std::fs::create_dir_all(&broken_dir).expect("create broken dir");
+        std::fs::create_dir_all(&package_dir).expect("create package dir");
+        std::fs::write(broken_dir.join("package.json"), "{not-json").expect("write broken json");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"http-server","version":"14.1.1"}"#,
+        )
+        .expect("write package manifest");
 
         let resolved = find_package_dir_under_root(&search_root, "http-server");
         assert_eq!(resolved, Some(package_dir));
