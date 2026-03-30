@@ -25,6 +25,7 @@
 - `--package-index` 与 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES` 一旦提供，就由这些显式索引定义候选顺序；installer 不再把官方 PyPI 隐式插到最前面。
 - 显式索引会按调用方给出的顺序去重，不会被内部集合重排。
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时都会触发重装，避免坏掉或挂起的 `uv` 卡住后续安装。
+- 实际执行 `uv tool install` 时同样带超时上限；单个安装进程挂死会被终止并返回带 stdout/stderr 的诊断错误，而不是无限阻塞。
 - 安装前先做可达性探测，再按可达结果优先尝试显式索引。
 - 对外 JSON 结果里的 `source` 会脱敏显式索引 URL，不回显用户信息、query 或 fragment。
 - 宿主 shell 已存在的 `UV_*` 环境变量不会透传到托管 `uv tool install`；来源选择只由 installer 自己的托管环境和显式索引配置驱动。
@@ -36,6 +37,7 @@
 - 显式 Python mirror 会按传入顺序去重，回退顺序与调用方声明保持一致。
 - 当前宿主环境内的可达性结果决定最终使用哪个来源。
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时都会触发重装，避免坏掉或挂起的 `uv` 卡住后续安装。
+- 实际执行 `uv python install` 时同样带超时上限；单个安装进程挂死会被终止并返回带 stdout/stderr 的诊断错误，而不是无限阻塞。
 - 对外 JSON 结果里，官方来源会标成 `source_kind=canonical`，显式镜像才会标成 `python_mirror`。
 - 对外 JSON 结果里的 `source` 会脱敏显式镜像 URL，不回显用户信息、query 或 fragment。
 - 宿主 shell 已存在的 `UV_*` 环境变量不会透传到托管 `uv python install`；来源选择只由 installer 自己的托管环境和显式 mirror 配置驱动。
