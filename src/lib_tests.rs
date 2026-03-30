@@ -4743,14 +4743,20 @@ exit 2
         Some(destination.to_str().unwrap())
     );
     assert_eq!(std::fs::read_to_string(&destination)?, "uv-tool-installed");
-    assert!(result.detail.as_deref().is_some_and(|detail| {
+    let backup_path = destination.with_file_name("ruff-lsp.toolchain-installer-backup");
+    if result.detail.as_deref().is_some_and(|detail| {
         detail.contains("warning: cannot remove staged managed binary backup")
-    }));
-    assert!(
-        destination
-            .with_file_name("ruff-lsp.toolchain-installer-backup")
-            .exists()
-    );
+    }) {
+        assert!(
+            backup_path.exists(),
+            "warning should explain a retained backup"
+        );
+    } else {
+        assert!(
+            !backup_path.exists(),
+            "successful backup cleanup should not leave a retained backup"
+        );
+    }
     handle.join().expect("mock server thread join");
     Ok(())
 }
