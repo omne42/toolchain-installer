@@ -260,16 +260,20 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
 }
 
 fn resolve_plan_base_dir(plan_file: &Path) -> Result<PathBuf, InstallerError> {
+    std::env::current_dir()
+        .map_err(|err| InstallerError::usage(format!("resolve plan base directory failed: {err}")))
+        .map(|cwd| resolve_plan_base_dir_from_cwd(plan_file, &cwd))
+}
+
+fn resolve_plan_base_dir_from_cwd(plan_file: &Path, cwd: &Path) -> PathBuf {
     let parent = plan_file
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     if parent.is_absolute() {
-        return Ok(normalize_plan_base_dir(parent));
+        return normalize_plan_base_dir(parent);
     }
-    std::env::current_dir()
-        .map(|cwd| normalize_plan_base_dir(&cwd.join(parent)))
-        .map_err(|err| InstallerError::usage(format!("resolve plan base directory failed: {err}")))
+    normalize_plan_base_dir(&cwd.join(parent))
 }
 
 fn normalize_plan_base_dir(path: &Path) -> PathBuf {
@@ -299,7 +303,7 @@ fn normalize_plan_base_dir(path: &Path) -> PathBuf {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{BootstrapArgs, normalize_plan_base_dir, resolve_plan_base_dir};
+    use super::{BootstrapArgs, normalize_plan_base_dir, resolve_plan_base_dir_from_cwd};
 
     #[test]
     fn validate_mode_args_rejects_tool_with_method() {
@@ -354,11 +358,8 @@ mod tests {
     #[test]
     fn resolve_plan_base_dir_collapses_parent_components_after_joining_cwd() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let original = std::env::current_dir().expect("cwd");
-        std::env::set_current_dir(temp.path()).expect("set cwd");
-        let resolved = resolve_plan_base_dir(Path::new("./plans/../plans/demo.json"))
-            .expect("resolve plan base dir");
-        std::env::set_current_dir(original).expect("restore cwd");
+        let resolved =
+            resolve_plan_base_dir_from_cwd(Path::new("./plans/../plans/demo.json"), temp.path());
 
         assert_eq!(resolved, temp.path().join("plans"));
     }
