@@ -1,11 +1,12 @@
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use omne_process_primitives::command_path_exists;
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind};
 use crate::error::OperationResult;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
+use crate::managed_toolchain::ManagedDestinationBackup;
 use crate::managed_toolchain::bootstrap_item_construction::{
     build_installed_bootstrap_item, build_managed_uv_usage_detail,
 };
@@ -46,7 +47,7 @@ pub(crate) async fn execute_uv_tool_item(
                 .iter()
                 .map(|(key, value)| (OsString::from(key), OsString::from(value))),
         );
-        let backup = ManagedToolBinaryBackup::stash(&destination)?;
+        let backup = ManagedDestinationBackup::stash(&destination, "managed binary")?;
 
         let args = build_uv_tool_install_args(item);
 
@@ -92,79 +93,6 @@ fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {
         args.push(OsString::from(&item.package));
     }
     args
-}
-
-struct ManagedToolBinaryBackup {
-    original: PathBuf,
-    backup: Option<PathBuf>,
-}
-
-impl ManagedToolBinaryBackup {
-    fn stash(original: &Path) -> Result<Self, String> {
-        if !original.exists() {
-            return Ok(Self {
-                original: original.to_path_buf(),
-                backup: None,
-            });
-        }
-
-        let backup = original.with_file_name(format!(
-            "{}.toolchain-installer-backup",
-            original
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("managed-tool")
-        ));
-        if backup.exists() {
-            return Err(format!(
-                "cannot stage existing managed binary backup {}",
-                backup.display()
-            ));
-        }
-        std::fs::rename(original, &backup).map_err(|err| {
-            format!(
-                "cannot stage existing managed binary {} before reinstall: {err}",
-                original.display()
-            )
-        })?;
-        Ok(Self {
-            original: original.to_path_buf(),
-            backup: Some(backup),
-        })
-    }
-
-    fn restore(&self) -> Result<(), String> {
-        let Some(backup) = self.backup.as_ref() else {
-            return Ok(());
-        };
-        if self.original.exists() {
-            std::fs::remove_file(&self.original).map_err(|err| {
-                format!(
-                    "cannot remove failed managed binary {} before restore: {err}",
-                    self.original.display()
-                )
-            })?;
-        }
-        std::fs::rename(backup, &self.original).map_err(|err| {
-            format!(
-                "cannot restore previous managed binary {} from {}: {err}",
-                self.original.display(),
-                backup.display()
-            )
-        })
-    }
-
-    fn discard(&self) -> Result<(), String> {
-        let Some(backup) = self.backup.as_ref() else {
-            return Ok(());
-        };
-        std::fs::remove_file(backup).map_err(|err| {
-            format!(
-                "cannot remove staged managed binary backup {}: {err}",
-                backup.display()
-            )
-        })
-    }
 }
 
 #[cfg(test)]
