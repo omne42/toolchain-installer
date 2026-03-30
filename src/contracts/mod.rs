@@ -4,7 +4,10 @@ mod install_plan_contract;
 
 pub use bootstrap_result::{
     BootstrapArchiveFormat, BootstrapArchiveMatch, BootstrapItem, BootstrapResult,
-    BootstrapSourceKind, BootstrapStatus, OUTPUT_SCHEMA_VERSION, has_failure,
+    BootstrapSourceKind, BootstrapStatus, InstallExecutionArchiveFormat,
+    InstallExecutionArchiveMatch, InstallExecutionItem, InstallExecutionResult,
+    InstallExecutionSourceKind, InstallExecutionStatus, OUTPUT_SCHEMA_VERSION, has_failure,
+    has_install_failure,
 };
 pub use execution_request::{BootstrapCommand, ExecutionRequest};
 pub use install_plan_contract::{InstallPlan, InstallPlanItem, PLAN_SCHEMA_VERSION};

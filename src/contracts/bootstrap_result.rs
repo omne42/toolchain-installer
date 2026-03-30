@@ -91,10 +91,21 @@ pub struct BootstrapResult {
     pub items: Vec<BootstrapItem>,
 }
 
+pub type InstallExecutionStatus = BootstrapStatus;
+pub type InstallExecutionSourceKind = BootstrapSourceKind;
+pub type InstallExecutionArchiveFormat = BootstrapArchiveFormat;
+pub type InstallExecutionArchiveMatch = BootstrapArchiveMatch;
+pub type InstallExecutionItem = BootstrapItem;
+pub type InstallExecutionResult = BootstrapResult;
+
 pub fn has_failure(items: &[BootstrapItem]) -> bool {
     items
         .iter()
         .any(|item| item.status == BootstrapStatus::Failed)
+}
+
+pub fn has_install_failure(items: &[InstallExecutionItem]) -> bool {
+    has_failure(items)
 }
 
 pub(crate) fn build_failed_bootstrap_item(

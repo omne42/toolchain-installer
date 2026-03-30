@@ -231,11 +231,11 @@ pub(crate) async fn run() -> Result<(), InstallerError> {
     };
 
     if args.json {
-        let value = serde_json::to_string_pretty(&result).expect("serialize bootstrap result");
+        let value = serde_json::to_string_pretty(&result).expect("serialize installer result");
         println!("{value}");
     } else {
         println!(
-            "bootstrap: host={} target={} managed_dir={}",
+            "result: host={} target={} managed_dir={}",
             result.host_triple, result.target_triple, result.managed_dir
         );
         for item in &result.items {
@@ -265,16 +265,41 @@ fn resolve_plan_base_dir(plan_file: &Path) -> Result<PathBuf, InstallerError> {
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     if parent.is_absolute() {
-        return Ok(parent.to_path_buf());
+        return Ok(normalize_plan_base_dir(parent));
     }
     std::env::current_dir()
-        .map(|cwd| cwd.join(parent))
+        .map(|cwd| normalize_plan_base_dir(&cwd.join(parent)))
         .map_err(|err| InstallerError::usage(format!("resolve plan base directory failed: {err}")))
+}
+
+fn normalize_plan_base_dir(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    let mut anchor_len = 0usize;
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if normalized.components().count() > anchor_len {
+                    normalized.pop();
+                } else if anchor_len == 0 {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+                anchor_len = normalized.components().count();
+            }
+            std::path::Component::Normal(_) => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]
 mod tests {
-    use super::BootstrapArgs;
+    use std::path::{Path, PathBuf};
+
+    use super::{BootstrapArgs, normalize_plan_base_dir, resolve_plan_base_dir};
 
     #[test]
     fn validate_mode_args_rejects_tool_with_method() {
@@ -316,5 +341,25 @@ mod tests {
             err.to_string(),
             "direct-plan flags require `--method`: --package"
         );
+    }
+
+    #[test]
+    fn normalize_plan_base_dir_collapses_parent_components() {
+        assert_eq!(
+            normalize_plan_base_dir(Path::new("/repo/install-plans/../plans")),
+            PathBuf::from("/repo/plans")
+        );
+    }
+
+    #[test]
+    fn resolve_plan_base_dir_collapses_parent_components_after_joining_cwd() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let original = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(temp.path()).expect("set cwd");
+        let resolved = resolve_plan_base_dir(Path::new("./plans/../plans/demo.json"))
+            .expect("resolve plan base dir");
+        std::env::set_current_dir(original).expect("restore cwd");
+
+        assert_eq!(resolved, temp.path().join("plans"));
     }
 }

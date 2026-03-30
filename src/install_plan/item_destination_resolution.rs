@@ -126,10 +126,31 @@ pub(crate) fn resolve_npm_global_destination(
         NodePackageManager::Pnpm => {
             managed_dir.join(npm_global_binary_filename(&item.binary_name, target_triple))
         }
-        NodePackageManager::Bun => managed_dir
-            .join("bin")
+        NodePackageManager::Bun => bun_global_binary_dir(managed_dir, target_triple)
             .join(npm_global_binary_filename(&item.binary_name, target_triple)),
     }
+}
+
+fn bun_global_binary_dir(managed_dir: &Path, target_triple: &str) -> PathBuf {
+    if managed_dir_ends_with_bin(managed_dir, target_triple) {
+        return managed_dir.to_path_buf();
+    }
+    managed_dir.join("bin")
+}
+
+fn managed_dir_ends_with_bin(managed_dir: &Path, target_triple: &str) -> bool {
+    if target_triple.contains("windows") {
+        return managed_dir
+            .as_os_str()
+            .to_string_lossy()
+            .rsplit(['\\', '/'])
+            .find(|segment| !segment.is_empty())
+            .is_some_and(|segment| segment == "bin");
+    }
+    managed_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value == "bin")
 }
 
 fn npm_global_binary_filename(binary_name: &str, target_triple: &str) -> String {
@@ -226,6 +247,11 @@ fn validate_destination_path(
             )));
         }
         WindowsDestinationKind::Absolute => {
+            if matches!(policy, DestinationPolicy::Managed) {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
+                )));
+            }
             if !host_triple.contains("windows") {
                 return Err(InstallerError::usage(format!(
                     "plan item `{item_id}` destination `{raw_destination}` uses a Windows absolute path but host triple `{host_triple}` does not use Windows path semantics"
@@ -338,11 +364,23 @@ pub(crate) fn validate_managed_path_boundary(
 
 pub(crate) fn normalize_lexical_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
+    let mut anchor_len = 0usize;
     for component in path.components() {
-        if matches!(component, std::path::Component::CurDir) {
-            continue;
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if normalized.components().count() > anchor_len {
+                    normalized.pop();
+                } else if anchor_len == 0 {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+                anchor_len = normalized.components().count();
+            }
+            std::path::Component::Normal(_) => normalized.push(component.as_os_str()),
         }
-        normalized.push(component.as_os_str());
     }
     normalized
 }
@@ -526,6 +564,43 @@ mod tests {
     }
 
     #[test]
+    fn resolve_npm_global_destination_keeps_bun_inside_existing_bin_managed_dir() {
+        let managed_dir = Path::new("/managed/bin");
+        let bun_destination = resolve_npm_global_destination(
+            &NpmGlobalPlanItem {
+                id: "bun-demo".to_string(),
+                package_spec: "demo".to_string(),
+                manager: NodePackageManager::Bun,
+                binary_name: "demo".to_string(),
+            },
+            "x86_64-unknown-linux-gnu",
+            managed_dir,
+        );
+
+        assert_eq!(bun_destination, PathBuf::from("/managed/bin").join("demo"));
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_keeps_windows_bun_inside_existing_bin_managed_dir() {
+        let managed_dir = Path::new(r"C:\managed\bin");
+        let bun_destination = resolve_npm_global_destination(
+            &NpmGlobalPlanItem {
+                id: "bun-demo".to_string(),
+                package_spec: "demo".to_string(),
+                manager: NodePackageManager::Bun,
+                binary_name: "demo".to_string(),
+            },
+            "x86_64-pc-windows-msvc",
+            managed_dir,
+        );
+
+        assert_eq!(
+            bun_destination,
+            PathBuf::from(r"C:\managed\bin").join("demo.cmd")
+        );
+    }
+
+    #[test]
     fn validate_destination_rejects_unix_absolute_path() {
         let err = validate_destination(
             "demo",
@@ -550,15 +625,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_destination_accepts_windows_absolute_path_for_managed_installs() {
-        let destination = validate_destination(
+    fn validate_destination_rejects_windows_absolute_path_for_managed_installs() {
+        let err = validate_destination(
             "demo",
             "C:\\tools\\demo.exe",
             "x86_64-pc-windows-msvc",
             "x86_64-pc-windows-msvc",
         )
-        .expect("windows absolute destination");
-        assert_eq!(destination, PathBuf::from("C:\\tools\\demo.exe"));
+        .expect_err("managed destination should reject windows absolute path");
+        assert!(err.to_string().contains("cannot be an absolute path"));
     }
 
     #[test]
@@ -570,10 +645,7 @@ mod tests {
             "x86_64-pc-windows-msvc",
         )
         .expect_err("should reject");
-        assert!(
-            err.to_string()
-                .contains("does not use Windows path semantics")
-        );
+        assert!(err.to_string().contains("cannot be an absolute path"));
     }
 
     #[test]
@@ -647,6 +719,15 @@ mod tests {
         let path =
             resolve_plan_relative_path(Path::new("./packages/app"), Some(Path::new("/repo")));
         assert_eq!(path, PathBuf::from("/repo/packages/app"));
+    }
+
+    #[test]
+    fn resolve_plan_relative_path_normalizes_parent_components_in_base_directory() {
+        let path = resolve_plan_relative_path(
+            Path::new("packages/app"),
+            Some(Path::new("/repo/install-plans/../plans")),
+        );
+        assert_eq!(path, PathBuf::from("/repo/plans/packages/app"));
     }
 
     #[cfg(unix)]

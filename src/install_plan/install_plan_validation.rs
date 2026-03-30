@@ -220,7 +220,7 @@ mod tests {
 
     use crate::contracts::{InstallPlan, InstallPlanItem, PLAN_SCHEMA_VERSION};
 
-    use super::validate_plan_with_managed_dir;
+    use super::{validate_plan_with_base_dir, validate_plan_with_managed_dir};
 
     #[test]
     fn validate_destination_conflicts_rejects_case_only_collisions_on_macos() {
@@ -351,6 +351,38 @@ mod tests {
             Path::new("/tmp/managed"),
         )
         .expect("workspace_package should allow multiple package installs into one workspace");
+    }
+
+    #[test]
+    fn validate_destination_conflicts_rejects_workspace_overlap_after_plan_base_dir_normalization()
+    {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                workspace_package_item("eslint", "repo"),
+                workspace_package_item("prettier", "/tmp/root/repo/tools"),
+            ],
+        };
+
+        let resolved_items = validate_plan_with_base_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/root/plans/../"),
+        )
+        .expect("plan structure should normalize the plan base directory");
+
+        let err = super::validate_destination_conflicts(
+            &resolved_items,
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("normalized workspace destinations should still participate in overlap checks");
+
+        assert!(
+            err.to_string()
+                .contains("resolve to overlapping destinations")
+        );
     }
 
     fn release_item(id: &str, destination: &str) -> InstallPlanItem {
