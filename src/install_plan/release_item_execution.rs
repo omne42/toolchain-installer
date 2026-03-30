@@ -59,6 +59,7 @@ pub(crate) async fn execute_release_item(
                 destination: &destination,
                 asset_name: &asset_name,
                 binary_name: &binary_name,
+                tool_name: &item.id,
                 archive_binary_hint: archive_binary_hint.as_deref(),
                 expected_sha256: expected_sha,
                 max_download_bytes: cfg.download.max_download_bytes,

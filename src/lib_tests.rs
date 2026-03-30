@@ -2338,6 +2338,7 @@ fn install_binary_from_tar_xz_uses_hint() -> anyhow::Result<()> {
         "node-v1.0.0-linux-x64.tar.xz",
         &archive,
         "node",
+        "node",
         &destination,
         Some("node-v1.0.0-linux-x64/bin/node"),
     )?;
