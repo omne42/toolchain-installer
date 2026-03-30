@@ -842,6 +842,27 @@ exit 42
     });
 }
 
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn host_command_is_healthy_rejects_mismatched_version_prefix() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_executable(
+        &tmp.path().join("gh"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "definitely-not-gh 1.0.0"
+  exit 0
+fi
+exit 0
+"#,
+    )
+    .expect("write gh");
+
+    with_path_prepend(tmp.path(), || {
+        assert!(!host_command_is_healthy("gh"));
+    });
+}
+
 #[cfg(unix)]
 #[test]
 fn host_command_is_healthy_rejects_non_executable_supported_host_file() {
@@ -4640,6 +4661,93 @@ exit 2
     assert_eq!(std::fs::read_to_string(&destination)?, "uv-tool-installed");
     assert!(
         !destination
+            .with_file_name("ruff-lsp.toolchain-installer-backup")
+            .exists()
+    );
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg(all(unix, not(windows)))]
+#[tokio::test]
+async fn execute_uv_tool_item_succeeds_when_backup_cleanup_fails_after_replacement()
+-> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    let destination = managed_dir.join("ruff-lsp");
+    write_executable(&destination, "#!/bin/sh\necho stale-uv-tool\n")?;
+    write_executable(
+        &managed_dir.join("uv"),
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  mkdir -p "$UV_TOOL_BIN_DIR"
+  printf 'uv-tool-installed' > "$UV_TOOL_BIN_DIR/ruff-lsp"
+  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
+  chmod 0555 "{}"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+            managed_dir.display()
+        ),
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: false,
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await?;
+
+    let mut permissions = std::fs::metadata(&managed_dir)?.permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&managed_dir, permissions)?;
+
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    assert_eq!(std::fs::read_to_string(&destination)?, "uv-tool-installed");
+    assert!(result.detail.as_deref().is_some_and(|detail| {
+        detail.contains("warning: cannot remove staged managed binary backup")
+    }));
+    assert!(
+        destination
             .with_file_name("ruff-lsp.toolchain-installer-backup")
             .exists()
     );
