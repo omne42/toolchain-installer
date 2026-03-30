@@ -17,7 +17,8 @@ use omne_host_info_primitives::{
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
-    SystemPackageManager, try_default_system_package_install_recipes_for_os,
+    SystemPackageManager, SystemPackageName, default_system_package_install_recipes_for_os,
+    try_default_system_package_install_recipes_for_os,
 };
 
 use crate::builtin_tools::{
@@ -399,6 +400,59 @@ chmod +x "$root/bin/actual-tool"
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
+fn cargo_install_restores_previous_binary_when_staged_output_is_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cargo = tmp.path().join("cargo");
+    write_executable(
+        &cargo,
+        r#"#!/bin/sh
+root=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--root" ]; then
+    root="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+mkdir -p "$root/bin"
+exit 0
+"#,
+    )
+    .expect("write cargo");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("bin").join("alias-tool");
+    let stale_binary = "#!/bin/sh\necho stale-cargo\n";
+    write_executable(&destination, stale_binary).expect("write stale cargo binary");
+    let item = CargoInstallPlanItem {
+        id: "cargo-demo".to_string(),
+        source: CargoInstallSource::RegistryPackage {
+            package: "demo-tool".to_string(),
+            version: None,
+        },
+        binary_name: "alias-tool".to_string(),
+        binary_name_explicit: true,
+    };
+
+    let err = with_path_prepend(tmp.path(), || {
+        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
+    })
+    .expect_err("missing staged cargo binary should fail");
+
+    assert!(err.to_string().contains("produced no staged binary"));
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read restored cargo binary"),
+        stale_binary
+    );
+    assert!(
+        !destination
+            .with_file_name("alias-tool.toolchain-installer-backup")
+            .exists()
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
 fn go_install_promotes_single_staged_binary_to_requested_destination_name() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let go = tmp.path().join("go");
@@ -431,6 +485,46 @@ chmod +x "$GOBIN/actual-tool"
     assert_eq!(
         std::fs::read_to_string(&destination).expect("read installed go binary"),
         "go-installed"
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn go_install_restores_previous_binary_when_staged_output_is_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let go = tmp.path().join("go");
+    write_executable(
+        &go,
+        r#"#!/bin/sh
+mkdir -p "$GOBIN"
+exit 0
+"#,
+    )
+    .expect("write go");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("alias-tool");
+    let stale_binary = "#!/bin/sh\necho stale-go\n";
+    write_executable(&destination, stale_binary).expect("write stale go binary");
+    let item = GoInstallPlanItem {
+        id: "go-demo".to_string(),
+        source: GoInstallSource::PackageSpec("example.com/demo/cmd/demo@latest".to_string()),
+        binary_name: "alias-tool".to_string(),
+    };
+
+    let err = with_path_prepend(tmp.path(), || {
+        execute_go_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
+    })
+    .expect_err("missing staged go binary should fail");
+
+    assert!(err.to_string().contains("produced no staged binary"));
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read restored go binary"),
+        stale_binary
+    );
+    assert!(
+        !destination
+            .with_file_name("alias-tool.toolchain-installer-backup")
+            .exists()
     );
 }
 
@@ -979,20 +1073,20 @@ fn select_mingit_release_asset_prefers_busybox_on_x64() {
 
 #[test]
 fn system_recipes_cover_linux() {
-    let recipes = try_default_system_package_install_recipes_for_os("linux", "git")
-        .expect("bootstrap package should remain valid");
+    let package = SystemPackageName::new("git").expect("valid package name");
+    let recipes = default_system_package_install_recipes_for_os("linux", &package);
     assert!(!recipes.is_empty());
     assert!(recipes.iter().any(|recipe| recipe.program == "apt-get"));
 }
 
 #[test]
 fn toolchain_installer_composes_current_host_system_recipes() {
+    let package = SystemPackageName::new("git").expect("valid package name");
     let _ = detect_host_platform().map(|platform| {
-        try_default_system_package_install_recipes_for_os(
+        default_system_package_install_recipes_for_os(
             platform.operating_system().as_str(),
-            "git",
+            &package,
         )
-        .expect("bootstrap package should remain valid")
     });
 }
 
@@ -1011,7 +1105,42 @@ fn system_package_manager_accepts_only_canonical_names() {
 }
 
 #[test]
-fn system_package_recipe_helpers_reject_invalid_package_names() {
+fn system_package_recipe_helpers_match_runtime_validation_contract() {
+    let package = SystemPackageName::new("git").expect("valid package name");
+    let apt_recipe = SystemPackageManager::AptGet.install_recipe(&package);
+    assert_eq!(apt_recipe.program, "apt-get");
+    assert_eq!(
+        apt_recipe.args,
+        vec![
+            "install".to_string(),
+            "-y".to_string(),
+            "--".to_string(),
+            "git".to_string()
+        ]
+    );
+
+    assert_eq!(
+        SystemPackageName::new("git core")
+            .expect_err("whitespace should be rejected")
+            .to_string(),
+        "package name must not contain whitespace"
+    );
+    assert_eq!(
+        SystemPackageName::new("../git")
+            .expect_err("path separators should be rejected")
+            .to_string(),
+        "package name must not contain path separators"
+    );
+    assert_eq!(
+        SystemPackageName::new("-git")
+            .expect_err("option-like names should be rejected")
+            .to_string(),
+        "package name must not look like a command-line option"
+    );
+}
+
+#[test]
+fn system_package_try_helpers_still_reject_invalid_package_names() {
     assert!(
         SystemPackageManager::AptGet
             .try_install_recipe("git core")
@@ -2150,8 +2279,8 @@ fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
 
 #[test]
 fn system_recipes_cover_macos() {
-    let recipes = try_default_system_package_install_recipes_for_os("macos", "git")
-        .expect("bootstrap package should remain valid");
+    let package = SystemPackageName::new("git").expect("valid package name");
+    let recipes = default_system_package_install_recipes_for_os("macos", &package);
     assert_eq!(recipes.len(), 1);
     assert_eq!(recipes[0].program, "brew");
 }
@@ -4144,6 +4273,145 @@ exit 2
     .await
     .expect_err("missing managed binary should fail");
     assert!(err.to_string().contains("expected managed binary"));
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_restores_previous_binary_when_install_fails() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    let destination = managed_dir.join("ruff-lsp");
+    let stale_binary = "#!/bin/sh\necho stale-uv-tool\n";
+    write_executable(&destination, stale_binary)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  exit 7
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: false,
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await
+    .expect_err("failing uv tool install should not reuse stale binary");
+
+    assert!(err.to_string().contains("failed"));
+    assert_eq!(std::fs::read_to_string(&destination)?, stale_binary);
+    assert!(
+        !destination
+            .with_file_name("ruff-lsp.toolchain-installer-backup")
+            .exists()
+    );
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_restores_previous_binary_when_install_leaves_no_binary()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    let destination = managed_dir.join("ruff-lsp");
+    let stale_binary = "#!/bin/sh\necho stale-uv-tool\n";
+    write_executable(&destination, stale_binary)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: false,
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await
+    .expect_err("missing uv tool binary should not reuse stale binary");
+
+    assert!(err.to_string().contains("expected managed binary"));
+    assert_eq!(std::fs::read_to_string(&destination)?, stale_binary);
+    assert!(
+        !destination
+            .with_file_name("ruff-lsp.toolchain-installer-backup")
+            .exists()
+    );
     handle.join().expect("mock server thread join");
     Ok(())
 }

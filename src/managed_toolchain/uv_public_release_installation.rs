@@ -2,8 +2,8 @@ use std::path::Path;
 
 use github_kit::GitHubReleaseAsset;
 use omne_artifact_install_primitives::{
-    ArtifactDownloadCandidate, ArtifactInstallError, ArtifactInstallErrorKind,
-    BinaryArchiveInstallRequest, InstalledArchiveBinary, download_and_install_binary_from_archive,
+    ArtifactDownloadCandidate, ArtifactInstallError, BinaryArchiveInstallRequest,
+    InstalledArchiveBinary, download_and_install_binary_from_archive,
 };
 use omne_host_info_primitives::executable_suffix_for_target;
 use omne_integrity_primitives::parse_sha256_digest;
@@ -109,8 +109,7 @@ fn should_retry_uv_archive_with_fallback(
     archive_binary_hint: Option<&str>,
     fallback_archive_binary_hint: Option<&str>,
 ) -> bool {
-    err.kind() == ArtifactInstallErrorKind::Install
-        && archive_binary_hint != fallback_archive_binary_hint
+    archive_binary_hint != fallback_archive_binary_hint
         && fallback_archive_binary_hint.is_some()
         && err
             .to_string()
