@@ -49,16 +49,16 @@ pub(crate) fn resolve_plan_item(
     }
 
     match method {
-        PlanMethod::Release => resolve_release_plan_item(item, id, target_triple),
+        PlanMethod::Release => resolve_release_plan_item(item, id, host_triple, target_triple),
         PlanMethod::ArchiveTreeRelease => {
-            resolve_archive_tree_release_plan_item(item, id, target_triple)
+            resolve_archive_tree_release_plan_item(item, id, host_triple, target_triple)
         }
         PlanMethod::SystemPackage => resolve_system_package_plan_item(item, id),
         PlanMethod::Apt => resolve_apt_plan_item(item, id),
         PlanMethod::Pip => resolve_pip_plan_item(item, id),
         PlanMethod::NpmGlobal => resolve_npm_global_plan_item(item, id),
         PlanMethod::WorkspacePackage => {
-            resolve_workspace_package_plan_item(item, id, target_triple, plan_base_dir)
+            resolve_workspace_package_plan_item(item, id, host_triple, target_triple, plan_base_dir)
         }
         PlanMethod::CargoInstall => {
             resolve_cargo_install_plan_item(item, id, target_triple, plan_base_dir)
@@ -77,6 +77,7 @@ pub(crate) fn resolve_plan_item(
 fn resolve_release_plan_item(
     item: &InstallPlanItem,
     id: String,
+    host_triple: &str,
     target_triple: &str,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
@@ -90,7 +91,8 @@ fn resolve_release_plan_item(
     )?;
     let url = require_http_url(&id, "release", item.url.as_deref())?;
     let sha256 = parse_optional_sha256(&id, item.sha256.as_deref())?;
-    let destination = parse_optional_destination(&id, item.destination.as_deref(), target_triple)?;
+    let destination =
+        parse_optional_destination(&id, item.destination.as_deref(), host_triple, target_triple)?;
     let binary_name = parse_optional_binary_name(&id, item.binary_name.as_deref())?;
     Ok(ResolvedPlanItem::Release(ReleasePlanItem {
         id,
@@ -105,6 +107,7 @@ fn resolve_release_plan_item(
 fn resolve_archive_tree_release_plan_item(
     item: &InstallPlanItem,
     id: String,
+    host_triple: &str,
     target_triple: &str,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
@@ -121,7 +124,8 @@ fn resolve_archive_tree_release_plan_item(
     let url = require_http_url(&id, "archive_tree_release", item.url.as_deref())?;
     validate_archive_tree_release_asset_name(&id, &url)?;
     let sha256 = parse_optional_sha256(&id, item.sha256.as_deref())?;
-    let destination = parse_optional_destination(&id, item.destination.as_deref(), target_triple)?;
+    let destination =
+        parse_optional_destination(&id, item.destination.as_deref(), host_triple, target_triple)?;
     Ok(ResolvedPlanItem::ArchiveTreeRelease(
         ArchiveTreeReleasePlanItem {
             id,
@@ -260,6 +264,7 @@ fn resolve_npm_global_plan_item(
 fn resolve_workspace_package_plan_item(
     item: &InstallPlanItem,
     id: String,
+    host_triple: &str,
     target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
@@ -286,6 +291,7 @@ fn resolve_workspace_package_plan_item(
             destination: require_workspace_destination(
                 &id,
                 item.destination.as_deref(),
+                host_triple,
                 target_triple,
                 plan_base_dir,
             )?,
@@ -621,21 +627,25 @@ fn parse_optional_sha256(
 fn parse_optional_destination(
     item_id: &str,
     raw_destination: Option<&str>,
+    host_triple: &str,
     target_triple: &str,
 ) -> InstallerResult<Option<PathBuf>> {
     optional_trimmed(raw_destination)
-        .map(|destination| validate_destination(item_id, destination, target_triple))
+        .map(|destination| validate_destination(item_id, destination, host_triple, target_triple))
         .transpose()
 }
 
 fn require_workspace_destination(
     item_id: &str,
     raw_destination: Option<&str>,
+    host_triple: &str,
     target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<PathBuf> {
     optional_trimmed(raw_destination)
-        .map(|destination| validate_workspace_destination(item_id, destination, target_triple))
+        .map(|destination| {
+            validate_workspace_destination(item_id, destination, host_triple, target_triple)
+        })
         .transpose()?
         .map(|destination| resolve_plan_relative_path(&destination, plan_base_dir))
         .ok_or_else(|| {

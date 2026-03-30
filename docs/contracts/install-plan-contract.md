@@ -127,7 +127,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 托管落盘方法的 Unix 风格绝对路径如 `/tmp/demo` 会被拒绝，避免绕过托管目录边界。
 - 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
 - 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo` 这类 root-relative 路径。
-- 托管落盘方法的 Windows 绝对路径如 `C:\tools\demo.exe` 会按绝对路径保留，不会被错误拼到 `managed_dir` 下；`workspace_package` 也会把绝对目录当作工作区路径原样使用。
+- 只有当宿主机本身是 Windows 时，托管落盘方法才接受 `C:\tools\demo.exe` 这类 Windows 绝对路径，并按绝对路径保留；在 Linux/macOS 宿主上，即使 `target_triple` 是 Windows，也会在执行前拒绝这类目标，避免把它误当成普通相对文件名落到错误位置。
+- `workspace_package` 同样只在 Windows 宿主上接受 `C:\workspace\app` 这类 Windows 绝对目录；非 Windows 宿主必须使用当前宿主机有效的绝对路径语法。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
 - `release.archive_binary` 表示 archive 内目标二进制的相对路径；installer 会先规范斜杠，并在常见“单一根目录” archive 上自动补齐该根目录，兼容 shared runtime 当前要求的精确 archive 路径匹配。
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
@@ -174,6 +175,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式 Python mirror 配置，避免外部 shell 状态静默污染来源选择。
 - `release`、`archive_tree_release`
   - 资产类型判断基于 URL 的 path 最后一段，不把 query string 当成资产名的一部分；`tool.tar.gz?download=1` 仍按 `tool.tar.gz` 处理。
+  - 结果里的 `source` 会对最终命中的下载 URL 做脱敏，只保留协议、主机和路径，不回显用户信息、query 或 fragment。
 - `release`
   - 通过内置来源规则、镜像前缀与可达性结果确定下载候选顺序。
   - `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 的重复值只去重，不重排显式顺序。

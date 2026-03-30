@@ -1988,6 +1988,49 @@ async fn apply_install_plan_installs_archive_release_when_url_has_query() -> any
 }
 
 #[tokio::test]
+async fn apply_install_plan_redacts_release_source_url_in_result() -> anyhow::Result<()> {
+    let binary_bytes = b"#!/bin/sh\necho redact-release\n".to_vec();
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://127.0.0.1:{}/asset/demo", addr.port());
+    let request_url = format!("{base}?token=secret#ignored");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/asset/demo?token=secret".to_string(), binary_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo-release".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some(request_url),
+            sha256: None,
+            archive_binary: None,
+            binary_name: Some("demo".to_string()),
+            destination: Some("demo".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
+    assert_eq!(result.items[0].source.as_deref(), Some(base.as_str()));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
 async fn apply_install_plan_installs_archive_release_with_relative_archive_binary_hint()
 -> anyhow::Result<()> {
     let archive_name = "node-v22.14.0-linux-x64.tar.xz";
@@ -2041,6 +2084,58 @@ async fn apply_install_plan_installs_archive_release_with_relative_archive_binar
     );
     let installed = std::fs::read_to_string(managed_dir.join("node"))?;
     assert!(installed.contains("node-relative-hint"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_install_plan_redacts_archive_tree_release_source_url_in_result() -> anyhow::Result<()>
+{
+    let archive_name = "demo-tree-redact.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[(
+        "demo-tree-redact/bin/demo",
+        b"#!/bin/sh\necho archive-tree-redact\n".as_slice(),
+        0o755,
+    )])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://127.0.0.1:{}/asset/{archive_name}", addr.port());
+    let request_url = format!(
+        "http://user:secret@127.0.0.1:{}/asset/{archive_name}?download=1#ignored",
+        addr.port()
+    );
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}?download=1"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo-tree".to_string(),
+            method: "archive_tree_release".to_string(),
+            version: None,
+            url: Some(request_url),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("tree".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
+    assert_eq!(result.items[0].source.as_deref(), Some(base.as_str()));
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2467,7 +2562,7 @@ fn validate_plan_rejects_absolute_destination() {
 }
 
 #[test]
-fn validate_plan_accepts_windows_absolute_destination() {
+fn validate_plan_rejects_windows_absolute_destination_on_non_windows_host() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -2485,8 +2580,13 @@ fn validate_plan_accepts_windows_absolute_destination() {
         }],
     };
 
-    validate_plan(&plan, "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc")
-        .expect("windows absolute destination should be accepted for windows targets");
+    let err = validate_plan(&plan, "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc")
+        .expect_err("non-windows host should reject windows absolute destination");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(
+        err.to_string()
+            .contains("does not use Windows path semantics")
+    );
 }
 
 #[test]

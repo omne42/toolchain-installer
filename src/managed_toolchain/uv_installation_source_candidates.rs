@@ -1,6 +1,7 @@
 use http_kit::probe_http_endpoint_detailed;
 
 use crate::contracts::BootstrapSourceKind;
+use crate::download_sources::redact_source_url;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 
 #[derive(Debug, Clone)]
@@ -71,17 +72,6 @@ pub(super) async fn prioritize_reachable_installation_sources(
     }
     reachable.extend(deferred);
     reachable
-}
-
-fn redact_source_url(raw: &str) -> String {
-    let Ok(mut url) = reqwest::Url::parse(raw) else {
-        return raw.to_string();
-    };
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
-    url.set_query(None);
-    url.set_fragment(None);
-    url.to_string()
 }
 
 #[cfg(test)]
