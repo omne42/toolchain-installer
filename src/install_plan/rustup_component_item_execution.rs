@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
@@ -13,7 +15,10 @@ pub(crate) fn execute_rustup_component_item(
         "component".to_string(),
         "add".to_string(),
         item.component.to_string(),
-    ];
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect::<Vec<_>>();
     run_host_recipe(&HostRecipeRequest::new("rustup".as_ref(), &args))
         .map_err(crate::error::OperationError::from_host_recipe)?;
 

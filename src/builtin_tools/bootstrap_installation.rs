@@ -1,10 +1,11 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use omne_host_info_primitives::detect_host_platform;
 use omne_process_primitives::{
     HostRecipeRequest, resolve_command_path_or_standard_location, run_host_recipe,
 };
-use omne_system_package_primitives::default_system_package_install_recipes_for_os;
+use omne_system_package_primitives::try_default_system_package_install_recipes_for_os;
 
 use crate::artifact::InstallSource;
 use crate::builtin_tools::bootstrap_tool_health::{
@@ -181,11 +182,13 @@ async fn install_git_for_bootstrap(
 fn install_git_via_system_package_manager(target_triple: &str) -> OperationResult<InstallSource> {
     let recipes = detect_host_platform()
         .map(|platform| {
-            default_system_package_install_recipes_for_os(
+            try_default_system_package_install_recipes_for_os(
                 platform.operating_system().as_str(),
                 "git",
             )
         })
+        .transpose()
+        .map_err(|err| OperationError::install(format!("invalid bootstrap package `git`: {err}")))?
         .unwrap_or_default();
     if recipes.is_empty() {
         return Err(OperationError::install(format!(
@@ -195,10 +198,8 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
 
     let mut errors = Vec::new();
     for recipe in recipes {
-        match run_host_recipe(&HostRecipeRequest::new(
-            recipe.program.as_ref(),
-            &recipe.args,
-        )) {
+        let args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
+        match run_host_recipe(&HostRecipeRequest::new(recipe.program.as_ref(), &args)) {
             Ok(_) => {
                 if host_command_is_healthy("git") {
                     return Ok(InstallSource::new(

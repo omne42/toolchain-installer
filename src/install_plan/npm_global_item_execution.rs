@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -47,8 +48,14 @@ pub(crate) fn execute_npm_global_item(
         recipe.package_search_root.as_deref(),
         recipe.fallback_search_root.as_deref(),
     );
+    let recipe_args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
+    let recipe_env = recipe
+        .env
+        .iter()
+        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+        .collect::<Vec<_>>();
     run_host_recipe(
-        &HostRecipeRequest::new(recipe.program.as_ref(), &recipe.args).with_env(&recipe.env),
+        &HostRecipeRequest::new(recipe.program.as_ref(), &recipe_args).with_env(&recipe_env),
     )
     .map_err(OperationError::from_host_recipe)?;
 

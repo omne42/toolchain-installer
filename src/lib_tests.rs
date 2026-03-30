@@ -17,7 +17,8 @@ use omne_host_info_primitives::{
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
-    SystemPackageManager, default_system_package_install_recipes_for_os,
+    SystemPackageManager, SystemPackageName, default_system_package_install_recipes_for_os,
+    try_default_system_package_install_recipes_for_os,
 };
 
 use crate::builtin_tools::{
@@ -40,7 +41,6 @@ use crate::install_plan::go_install_item_execution::execute_go_install_item;
 use crate::install_plan::install_plan_validation::{
     validate_plan, validate_plan_with_base_dir, validate_plan_with_managed_dir,
 };
-use crate::install_plan::system_package_item_execution::validate_system_package_name;
 use crate::installer_runtime_config::{
     DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
     GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
@@ -1073,15 +1073,20 @@ fn select_mingit_release_asset_prefers_busybox_on_x64() {
 
 #[test]
 fn system_recipes_cover_linux() {
-    let recipes = default_system_package_install_recipes_for_os("linux", "git");
+    let package = SystemPackageName::new("git").expect("valid package name");
+    let recipes = default_system_package_install_recipes_for_os("linux", &package);
     assert!(!recipes.is_empty());
     assert!(recipes.iter().any(|recipe| recipe.program == "apt-get"));
 }
 
 #[test]
 fn toolchain_installer_composes_current_host_system_recipes() {
+    let package = SystemPackageName::new("git").expect("valid package name");
     let _ = detect_host_platform().map(|platform| {
-        default_system_package_install_recipes_for_os(platform.operating_system().as_str(), "git")
+        default_system_package_install_recipes_for_os(
+            platform.operating_system().as_str(),
+            &package,
+        )
     });
 }
 
@@ -1100,39 +1105,48 @@ fn system_package_manager_accepts_only_canonical_names() {
 }
 
 #[test]
-fn system_package_recipe_helpers_leave_package_validation_to_installer() {
-    let apt_recipe = SystemPackageManager::AptGet.install_recipe("git core");
+fn system_package_recipe_helpers_match_runtime_validation_contract() {
+    let package = SystemPackageName::new("git").expect("valid package name");
+    let apt_recipe = SystemPackageManager::AptGet.install_recipe(&package);
     assert_eq!(apt_recipe.program, "apt-get");
     assert_eq!(
         apt_recipe.args,
         vec![
             "install".to_string(),
             "-y".to_string(),
-            "git core".to_string()
+            "--".to_string(),
+            "git".to_string()
         ]
     );
 
-    let linux_recipes = default_system_package_install_recipes_for_os("linux", "../git");
-    assert!(!linux_recipes.is_empty());
-    assert!(
-        linux_recipes
-            .iter()
-            .all(|recipe| recipe.args.last().is_some_and(|arg| arg == "../git"))
+    assert_eq!(
+        SystemPackageName::new("git core")
+            .expect_err("whitespace should be rejected")
+            .to_string(),
+        "package name must not contain whitespace"
     );
+    assert_eq!(
+        SystemPackageName::new("../git")
+            .expect_err("path separators should be rejected")
+            .to_string(),
+        "package name must not contain path separators"
+    );
+    assert_eq!(
+        SystemPackageName::new("-git")
+            .expect_err("option-like names should be rejected")
+            .to_string(),
+        "package name must not look like a command-line option"
+    );
+}
 
-    assert_eq!(
-        validate_system_package_name("git core"),
-        Err("package name cannot contain whitespace")
+#[test]
+fn system_package_try_helpers_still_reject_invalid_package_names() {
+    assert!(
+        SystemPackageManager::AptGet
+            .try_install_recipe("git core")
+            .is_err()
     );
-    assert_eq!(
-        validate_system_package_name("../git"),
-        Err("package name cannot contain path separators")
-    );
-    assert_eq!(
-        validate_system_package_name("-git"),
-        Err("package name cannot start with `-`")
-    );
-    assert!(validate_system_package_name("git").is_ok());
+    assert!(try_default_system_package_install_recipes_for_os("linux", "../git").is_err());
 }
 
 #[tokio::test]
@@ -2265,7 +2279,8 @@ fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
 
 #[test]
 fn system_recipes_cover_macos() {
-    let recipes = default_system_package_install_recipes_for_os("macos", "git");
+    let package = SystemPackageName::new("git").expect("valid package name");
+    let recipes = default_system_package_install_recipes_for_os("macos", &package);
     assert_eq!(recipes.len(), 1);
     assert_eq!(recipes[0].program, "brew");
 }
