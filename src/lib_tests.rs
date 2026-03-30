@@ -2668,10 +2668,7 @@ fn validate_plan_rejects_windows_absolute_destination_on_non_windows_host() {
     let err = validate_plan(&plan, "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc")
         .expect_err("non-windows host should reject windows absolute destination");
     assert_eq!(err.exit_code(), ExitCode::Usage);
-    assert!(
-        err.to_string()
-            .contains("does not use Windows path semantics")
-    );
+    assert!(err.to_string().contains("cannot be an absolute path"));
 }
 
 #[test]
@@ -3063,7 +3060,7 @@ fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
 }
 
 #[test]
-fn validate_plan_accepts_windows_absolute_destination_for_release() {
+fn validate_plan_rejects_windows_absolute_destination_for_release() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -3081,21 +3078,15 @@ fn validate_plan_accepts_windows_absolute_destination_for_release() {
         }],
     };
 
-    let items = validate_plan_with_managed_dir(
+    let err = validate_plan_with_managed_dir(
         &plan,
         "x86_64-pc-windows-msvc",
         "x86_64-pc-windows-msvc",
         Path::new(r"C:\managed"),
     )
-    .expect("windows absolute destination should stay valid for managed release items");
-
-    assert_eq!(items.len(), 1);
-    match &items[0] {
-        ResolvedPlanItem::Release(item) => {
-            assert_eq!(item.destination, Some(PathBuf::from(r"C:\tools\demo.exe")));
-        }
-        other => panic!("unexpected item kind: {other:?}"),
-    }
+    .expect_err("windows absolute destination should be rejected for managed release items");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(err.to_string().contains("cannot be an absolute path"));
 }
 
 #[test]
