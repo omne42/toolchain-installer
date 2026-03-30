@@ -10,13 +10,14 @@
 ## `release` 方法
 
 - 基于工具、版本、平台资产匹配规则生成候选。
-- 路径落点继续遵循 plan contract：Windows 绝对 `destination` 会保留为绝对路径，不会被拼到 `managed_dir` 下。
+- 路径落点继续遵循 plan contract：只有 Windows 宿主才接受 Windows 绝对 `destination`；非 Windows 宿主会在执行前拒绝 `C:\...` 这类路径，而不是把它误拼成相对落点。
 - `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 可以追加候选前缀。
 - 显式提供的 mirror 前缀会按传入顺序去重，不会按字典序重排。
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES` 可覆盖 release metadata API base；未设置时默认只使用官方 `https://api.github.com`。
 - `country=CN` 且目标满足 `git release` 条件时，可通过 `gateway-base` 走固定网关。
 - `--gateway-base` / `TOOLCHAIN_INSTALLER_GATEWAY_BASE` 与 `--country` / `TOOLCHAIN_INSTALLER_COUNTRY` 共同决定是否生成网关候选。
 - `gateway-base` 指向的是外部网关部署实例，而不是 installer 仓库内建服务。
+- 对外 JSON 结果里的 `source` 会脱敏最终命中的下载 URL，不回显用户信息、query 或 fragment。
 
 ## `uv_tool` 方法
 

@@ -51,6 +51,17 @@ pub(crate) fn result_source_kind_for_download_candidate(
     }
 }
 
+pub(crate) fn redact_source_url(raw: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(raw) else {
+        return raw.to_string();
+    };
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
+}
+
 #[cfg(test)]
 pub(crate) fn make_download_candidates(
     canonical_url: &str,
@@ -61,4 +72,24 @@ pub(crate) fn make_download_candidates(
         .into_iter()
         .map(|candidate| candidate.url)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_source_url;
+
+    #[test]
+    fn redact_source_url_strips_credentials_query_and_fragment() {
+        assert_eq!(
+            redact_source_url(
+                "https://user:secret@example.com/download/demo.tar.gz?token=abc#frag"
+            ),
+            "https://example.com/download/demo.tar.gz"
+        );
+    }
+
+    #[test]
+    fn redact_source_url_keeps_unparseable_input_verbatim() {
+        assert_eq!(redact_source_url("not a url"), "not a url");
+    }
 }

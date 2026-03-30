@@ -8,7 +8,7 @@ use omne_artifact_install_primitives::{
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::download_sources::{
-    build_download_candidates, result_source_kind_for_download_candidate,
+    build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::infer_gateway_candidate_for_git_release;
@@ -75,7 +75,7 @@ pub(crate) async fn execute_release_item(
         return Ok(BootstrapItem {
             tool: item.id.clone(),
             status: BootstrapStatus::Installed,
-            source: Some(source.url),
+            source: Some(redact_source_url(&source.url)),
             source_kind: Some(result_source_kind_for_download_candidate(source.kind)),
             archive_match: Some(archive_match.into()),
             destination: Some(destination.display().to_string()),
@@ -102,7 +102,7 @@ pub(crate) async fn execute_release_item(
     Ok(BootstrapItem {
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
-        source: Some(downloaded_source.url),
+        source: Some(redact_source_url(&downloaded_source.url)),
         source_kind: Some(result_source_kind_for_download_candidate(
             downloaded_source.kind,
         )),
