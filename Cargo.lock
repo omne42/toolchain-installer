@@ -1081,6 +1081,7 @@ dependencies = [
  "omne-integrity-primitives",
  "reqwest",
  "tar",
+ "tokio",
  "xz2",
  "zip",
 ]
