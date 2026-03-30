@@ -101,6 +101,48 @@ fn method_and_plan_file_conflict_returns_failure() {
 }
 
 #[test]
+fn tool_and_method_conflict_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args(["--tool", "git", "--method", "pip", "--id", "demo"])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("`--tool` cannot be used with `--method`"));
+}
+
+#[test]
+fn tool_and_plan_file_conflict_returns_usage_error() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    { "id": "demo", "method": "uv" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args(["--tool", "git", "--plan-file"])
+        .arg(&plan_path)
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("`--tool` cannot be used with `--plan-file`"));
+}
+
+#[test]
 fn method_without_id_returns_failure() {
     let mut cmd = bootstrap_cmd();
     cmd.args(["--method", "pip"]).assert().code(2);
