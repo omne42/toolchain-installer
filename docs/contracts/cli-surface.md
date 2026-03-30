@@ -10,6 +10,7 @@
 
 - `--tool <name>`
   - 可重复；`bootstrap` 默认安装 `git` 和 `gh`。
+  - 只属于 bootstrap 模式；与 `--method`、`--plan-file` 明确互斥，混用会直接返回 usage error。
 - `--target-triple <triple>`
   - 覆盖自动探测目标平台。
 - `--managed-dir <path>`
@@ -58,6 +59,7 @@
 - 只有显式提供 `--method` 时，`--id`、`--tool-version`、`--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`、`--package`、`--manager`、`--python` 这些 direct-plan 字段才合法。
 - 若未提供 `--method`，这些字段不会再被静默吞掉后退回 bootstrap；CLI 会直接返回 usage error。
 - 若提供了 `--plan-file`，这些 direct-plan 字段同样会被拒绝，而不是继续以“CLI 覆盖 plan”的模糊语义混用。
+- `--tool` 只能和纯 bootstrap 模式一起出现；不能再与 `--method` 或 `--plan-file` 混用后被静默忽略。
 - `--id` 与 `--binary-name` 都必须是 plain leaf name，不能携带路径分隔符；需要控制目录时应使用允许 `destination` 的方法。
 
 环境变量补充：

@@ -110,6 +110,19 @@ impl BootstrapArgs {
     }
 
     fn validate_mode_args(&self) -> Result<(), InstallerError> {
+        if !self.tools.is_empty() {
+            if self.method.is_some() {
+                return Err(InstallerError::usage(
+                    "`--tool` cannot be used with `--method`",
+                ));
+            }
+            if self.plan_file.is_some() {
+                return Err(InstallerError::usage(
+                    "`--tool` cannot be used with `--plan-file`",
+                ));
+            }
+        }
+
         if self.method.is_some() {
             if self.plan_file.is_some() {
                 return Err(InstallerError::usage(
@@ -257,4 +270,51 @@ fn resolve_plan_base_dir(plan_file: &Path) -> Result<PathBuf, InstallerError> {
     std::env::current_dir()
         .map(|cwd| cwd.join(parent))
         .map_err(|err| InstallerError::usage(format!("resolve plan base directory failed: {err}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BootstrapArgs;
+
+    #[test]
+    fn validate_mode_args_rejects_tool_with_method() {
+        let args = BootstrapArgs {
+            tools: vec!["git".to_string()],
+            method: Some("pip".to_string()),
+            ..BootstrapArgs::default()
+        };
+
+        let err = args.validate_mode_args().expect_err("should reject");
+        assert_eq!(err.to_string(), "`--tool` cannot be used with `--method`");
+    }
+
+    #[test]
+    fn validate_mode_args_rejects_tool_with_plan_file() {
+        let args = BootstrapArgs {
+            tools: vec!["git".to_string()],
+            plan_file: Some("plan.json".into()),
+            ..BootstrapArgs::default()
+        };
+
+        let err = args.validate_mode_args().expect_err("should reject");
+        assert_eq!(
+            err.to_string(),
+            "`--tool` cannot be used with `--plan-file`"
+        );
+    }
+
+    #[test]
+    fn validate_mode_args_rejects_direct_plan_flags_without_method_even_with_tool() {
+        let args = BootstrapArgs {
+            tools: vec!["git".to_string()],
+            package: Some("ruff".to_string()),
+            ..BootstrapArgs::default()
+        };
+
+        let err = args.validate_mode_args().expect_err("should reject");
+        assert_eq!(
+            err.to_string(),
+            "direct-plan flags require `--method`: --package"
+        );
+    }
 }

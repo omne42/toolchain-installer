@@ -69,6 +69,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 归属于宿主系统包安装域。
 - `pip`
   - 归属于 Python 包安装域。
+  - 若调用方显式提供 `python`，installer 只会使用该解释器，不会再静默回退到别名命令；只有未提供 `python` 时，才会按默认宿主候选顺序尝试。
 - `npm_global`
   - 归属于 Node / JS 全局工具安装域。
 - `workspace_package`
