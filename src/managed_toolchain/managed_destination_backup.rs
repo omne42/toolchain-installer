@@ -123,8 +123,6 @@ fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::{ManagedDestinationBackup, promote_staged_file};
 
     #[test]
@@ -192,7 +190,7 @@ mod tests {
     #[test]
     fn stash_without_existing_path_keeps_backup_empty() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let original = PathBuf::from(temp.path().join("missing"));
+        let original = temp.path().join("missing");
 
         let backup =
             ManagedDestinationBackup::stash(&original, "managed binary").expect("stash backup");
