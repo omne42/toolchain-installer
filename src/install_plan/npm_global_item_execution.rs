@@ -176,8 +176,9 @@ fn build_npm_global_recipe(
             })
         }
         NodePackageManager::Bun => {
-            let global_dir = managed_dir.join("install").join("global");
-            let binary_dir = managed_dir.join("bin");
+            let layout = bun_install_layout(managed_dir)?;
+            let global_dir = layout.global_dir;
+            let binary_dir = layout.binary_dir;
             let binary_path =
                 binary_dir.join(global_binary_filename(binary_name, manager, target_triple));
             let fallback_package_dir =
@@ -223,6 +224,39 @@ fn npm_prefix_root_for_target(target_triple: &str, managed_dir: &Path) -> Operat
             .ok_or_else(|| OperationError::install("cannot determine npm global prefix root"));
     }
     Ok(managed_dir.to_path_buf())
+}
+
+struct BunInstallLayout {
+    global_dir: PathBuf,
+    binary_dir: PathBuf,
+}
+
+fn bun_install_layout(managed_dir: &Path) -> OperationResult<BunInstallLayout> {
+    let install_root = if managed_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value == "bin")
+    {
+        managed_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| OperationError::install("cannot determine bun install root"))?
+    } else {
+        managed_dir.to_path_buf()
+    };
+    let binary_dir = if managed_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value == "bin")
+    {
+        managed_dir.to_path_buf()
+    } else {
+        managed_dir.join("bin")
+    };
+    Ok(BunInstallLayout {
+        global_dir: install_root.join("install").join("global"),
+        binary_dir,
+    })
 }
 
 fn resolve_npm_global_destination(
@@ -418,7 +452,8 @@ fn create_windows_bun_global_launcher(
         return Ok(None);
     }
 
-    let global_dir = bun_global_dir(managed_dir);
+    let layout = bun_install_layout(managed_dir)?;
+    let global_dir = layout.global_dir;
     let package_dir = resolve_bun_package_dir(&global_dir, package).ok_or_else(|| {
         OperationError::install(format!(
             "cannot locate bun global package `{}` under {}",
@@ -440,7 +475,7 @@ fn create_windows_bun_global_launcher(
         )));
     }
 
-    let launcher_path = managed_dir.join("bin").join(format!("{binary_name}.cmd"));
+    let launcher_path = layout.binary_dir.join(format!("{binary_name}.cmd"));
     if let Some(parent) = launcher_path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| OperationError::install(err.to_string()))?;
     }
@@ -463,11 +498,6 @@ fn create_windows_bun_global_launcher(
     _binary_name: &str,
 ) -> OperationResult<Option<PathBuf>> {
     Ok(None)
-}
-
-#[cfg(windows)]
-fn bun_global_dir(managed_dir: &Path) -> PathBuf {
-    managed_dir.join("install").join("global")
 }
 
 #[cfg(windows)]
@@ -813,6 +843,36 @@ mod tests {
             .next()
             .expect("first PATH entry");
         assert_eq!(first, expected_binary_dir);
+    }
+
+    #[test]
+    fn bun_recipe_reuses_managed_bin_dir_when_managed_dir_already_is_bin() {
+        let managed_dir = std::env::temp_dir().join("ti-bun-root").join("bin");
+        let recipe = build_npm_global_recipe(
+            NodePackageManager::Bun,
+            "http-server@14.1.1".to_string(),
+            "http-server",
+            host_target_triple(),
+            &managed_dir,
+        )
+        .expect("build bun recipe");
+
+        let expected_global_dir = managed_dir
+            .parent()
+            .expect("managed parent")
+            .join("install")
+            .join("global");
+        assert!(recipe.env.iter().any(|(name, value)| {
+            name == "BUN_INSTALL_GLOBAL_DIR" && value == &expected_global_dir.display().to_string()
+        }));
+        assert!(
+            recipe
+                .env
+                .iter()
+                .any(|(name, value)| name == "BUN_INSTALL_BIN"
+                    && value == &managed_dir.display().to_string())
+        );
+        assert_eq!(recipe.binary_path.parent(), Some(managed_dir.as_path()));
     }
 
     #[test]

@@ -140,7 +140,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `system_package`、`apt` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
 - 多个 `workspace_package` item 可以指向同一个 workspace；这表示对同一工作区重复执行依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
-- `npm_global` 使用 `bun` 时，如果 `managed_dir` 本身已经是 `.../bin`，最终 CLI 入口会直接落在这层 `bin/` 下，不会再额外嵌一层 `bin/bin/`。
+- `npm_global` 使用 `bun` 时，若 `managed_dir` 本身已经是 `.../bin`，installer 会直接把它当作 bun 的全局 binary 目录，而不是再额外套一层 `bin/` 形成 `.../bin/bin/<tool>`。
 - `npm_global`、`cargo_install`、`go_install`、`uv_tool` 若未显式提供 `binary_name`，installer 会优先从 `package` 或解析后的本地/远端来源推导默认二进制名；只有确实推不出来时才回退到 `id`。
 - `cargo_install`、`go_install` 若显式提供 `binary_name`，它表示最终托管目标文件名；installer 会先在隔离 staging 目录执行安装，再把本次实际产出的目标二进制提升到该文件名。若 staging 产出了多个二进制且没有一个名字直接匹配请求的 `binary_name`，整项会返回失败而不是猜测。
 - `cargo_install` 若显式提供 `binary_name`，installer 还会把它传给 `cargo install --bin <binary_name>`；如果上游 crate 根本不导出这个可执行文件，整项会直接失败，而不是靠旧文件误报成功。
