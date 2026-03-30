@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::Path;
 
 use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
@@ -42,10 +41,7 @@ pub(crate) fn execute_workspace_package_item(
                 "unsupported workspace_package manager `{value}`"
             )));
         }
-    }
-    .into_iter()
-    .map(OsString::from)
-    .collect::<Vec<_>>();
+    };
     let manager = item.manager.command_name();
     let program = resolve_command_path(manager)
         .and_then(|path| path.into_os_string().into_string().ok())

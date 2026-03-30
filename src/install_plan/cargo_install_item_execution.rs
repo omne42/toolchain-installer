@@ -1,4 +1,4 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -56,8 +56,6 @@ pub(crate) fn execute_cargo_install_item(
             format!("cargo:crate:{package}")
         }
     };
-    let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
-
     let backup =
         InstalledBinaryBackup::stash(&expected_destination).map_err(OperationError::install)?;
     if let Err(err) = run_host_recipe(&HostRecipeRequest::new("cargo".as_ref(), &args)) {

@@ -1,4 +1,4 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -26,10 +26,7 @@ pub(crate) fn execute_go_install_item(
         item.binary_name,
         executable_suffix_for_target(target_triple)
     ));
-    let env = vec![("GOBIN".to_string(), stage_root.display().to_string())]
-        .into_iter()
-        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
-        .collect::<Vec<_>>();
+    let env = vec![("GOBIN".to_string(), stage_root.display().to_string())];
     let backup =
         InstalledBinaryBackup::stash(&expected_destination).map_err(OperationError::install)?;
     let resolved_package = match &item.source {
@@ -48,10 +45,7 @@ pub(crate) fn execute_go_install_item(
                     package_path.display()
                 )));
             }
-            let args = vec!["install".to_string(), ".".to_string()]
-                .into_iter()
-                .map(OsString::from)
-                .collect::<Vec<_>>();
+            let args = vec!["install".to_string(), ".".to_string()];
             if let Err(err) = run_host_recipe(
                 &HostRecipeRequest::new("go".as_ref(), &args)
                     .with_env(&env)
@@ -64,10 +58,7 @@ pub(crate) fn execute_go_install_item(
             package_path.display().to_string()
         }
         GoInstallSource::PackageSpec(package) => {
-            let args = vec!["install".to_string(), package.clone()]
-                .into_iter()
-                .map(OsString::from)
-                .collect::<Vec<_>>();
+            let args = vec!["install".to_string(), package.clone()];
             if let Err(err) =
                 run_host_recipe(&HostRecipeRequest::new("go".as_ref(), &args).with_env(&env))
             {

@@ -1,10 +1,9 @@
 use std::path::Path;
 
 use omne_artifact_install_primitives::{
-    ArtifactDownloadCandidate, ArtifactInstallError, ArtifactInstallErrorKind,
-    BinaryArchiveInstallRequest, DownloadBinaryRequest, InstalledArchiveBinary,
-    download_and_install_binary_from_archive, download_binary_to_destination,
-    is_binary_archive_asset_name,
+    ArtifactDownloadCandidate, ArtifactInstallError, BinaryArchiveInstallRequest,
+    DownloadBinaryRequest, InstalledArchiveBinary, download_and_install_binary_from_archive,
+    download_binary_to_destination, is_binary_archive_asset_name,
 };
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
@@ -147,8 +146,7 @@ fn should_retry_release_archive_binary_with_fallback(
     archive_binary_hint: Option<&str>,
     fallback_archive_binary_hint: Option<&str>,
 ) -> bool {
-    err.kind() == ArtifactInstallErrorKind::Install
-        && archive_binary_hint != fallback_archive_binary_hint
+    archive_binary_hint != fallback_archive_binary_hint
         && fallback_archive_binary_hint.is_some()
         && err
             .to_string()

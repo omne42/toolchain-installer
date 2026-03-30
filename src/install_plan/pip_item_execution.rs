@@ -1,5 +1,3 @@
-use std::ffi::OsString;
-
 use omne_process_primitives::{HostRecipeRequest, command_exists, run_host_recipe};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
@@ -25,10 +23,7 @@ pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapI
             "pip".to_string(),
             "install".to_string(),
             item.package.clone(),
-        ]
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
+        ];
         match run_host_recipe(&HostRecipeRequest::new(python.as_ref(), &args)) {
             Ok(_) => {
                 return Ok(BootstrapItem {
