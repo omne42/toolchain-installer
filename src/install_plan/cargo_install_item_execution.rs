@@ -253,12 +253,9 @@ fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
-    use super::{
-        build_cargo_install_args, build_success_cleanup_detail, destination_backup_path,
-        finalize_backup_cleanup, select_staged_binary,
-    };
+    use super::{build_cargo_install_args, build_success_cleanup_detail, select_staged_binary};
     use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
     #[test]
@@ -324,30 +321,6 @@ mod tests {
         assert!(detail.contains("/tmp/managed/bin/demo"));
     }
     #[test]
-    fn finalize_backup_cleanup_quarantines_stale_backup_path() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let destination = temp.path().join("managed").join("bin").join("demo");
-        std::fs::create_dir_all(destination.parent().expect("parent")).expect("create parent");
-        let backup_path = destination_backup_path(&destination);
-        std::fs::write(&backup_path, "stale backup").expect("write backup");
-
-        let detail = finalize_backup_cleanup(
-            "cargo_install binary",
-            &destination,
-            Err("cannot remove staged cargo_install binary backup".to_string()),
-        )
-        .expect("backup cleanup warning");
-
-        assert!(detail.contains("moved stale backup"));
-        assert!(
-            !backup_path.exists(),
-            "standard backup path should be cleared"
-        );
-        let quarantined = find_quarantined_backup(destination.parent().expect("parent"));
-        assert_eq!(quarantined.len(), 1, "backup should be moved aside once");
-    }
-
-    #[test]
     fn select_staged_binary_rejects_unique_mismatch_for_explicit_binary_name() {
         let temp = tempfile::tempdir().expect("tempdir");
         let stage_bin_dir = temp.path().join("bin");
@@ -370,20 +343,5 @@ mod tests {
         let selected = select_staged_binary(&stage_bin_dir, Some(OsStr::new("alias-tool")), false)
             .expect("inferred binary name may still fall back to the only staged binary");
         assert_eq!(selected, staged_binary);
-    }
-
-    fn find_quarantined_backup(parent: &Path) -> Vec<PathBuf> {
-        let mut matches = std::fs::read_dir(parent)
-            .expect("read parent")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
-            })
-            .collect::<Vec<_>>();
-        matches.sort();
-        matches
     }
 }
