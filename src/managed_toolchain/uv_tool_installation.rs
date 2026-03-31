@@ -19,6 +19,7 @@ use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidat
 use crate::managed_toolchain::uv_installation_source_candidates::{
     package_index_installation_source_candidates, prioritize_reachable_installation_sources,
 };
+use crate::managed_toolchain::version_probe::binary_reports_version;
 use crate::plan_items::UvToolPlanItem;
 
 pub(crate) async fn execute_uv_tool_item(
@@ -37,6 +38,7 @@ pub(crate) async fn execute_uv_tool_item(
     .await;
     let destination = managed_tool_binary_path(&item.binary_name, target_triple, managed_dir);
     attempt_source_candidates(candidates, "all uv_tool sources failed", |candidate| {
+        let candidate_label = candidate.label.clone();
         let mut env = base_env
             .iter()
             .map(|(key, value)| (OsString::from(key), OsString::from(value)))
@@ -47,22 +49,40 @@ pub(crate) async fn execute_uv_tool_item(
                 .iter()
                 .map(|(key, value)| (OsString::from(key), OsString::from(value))),
         );
-        let backup = ManagedDestinationBackup::stash(&destination, "managed binary")?;
+        let backup = ManagedDestinationBackup::stash(&destination, "managed binary")
+            .map_err(crate::error::OperationError::install)?;
 
         let args = build_uv_tool_install_args(item);
 
         if let Err(err) = run_managed_uv_recipe(uv.program.as_os_str(), &args, &env) {
-            backup.restore()?;
-            return Err(format!("{} failed: {err}", candidate.label.clone()));
+            backup
+                .restore()
+                .map_err(crate::error::OperationError::install)?;
+            return Err(crate::error::OperationError::install(format!(
+                "{candidate_label} failed: {err}"
+            )));
         }
         if !command_path_exists(&destination) {
-            backup.restore()?;
-            return Err(format!(
+            backup
+                .restore()
+                .map_err(crate::error::OperationError::install)?;
+            return Err(crate::error::OperationError::install(format!(
                 "{} installed package `{}` but expected managed binary at {}",
                 candidate.label,
                 item.package,
                 destination.display()
-            ));
+            )));
+        }
+        if !binary_reports_version(&destination) {
+            backup
+                .restore()
+                .map_err(crate::error::OperationError::install)?;
+            return Err(crate::error::OperationError::install(format!(
+                "{} installed package `{}` but managed binary at {} failed --version health check",
+                candidate.label,
+                item.package,
+                destination.display()
+            )));
         }
         let detail = build_uv_tool_success_detail(
             &backup,

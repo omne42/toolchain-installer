@@ -26,6 +26,7 @@ pub(crate) async fn execute_uv_python_item(
     let base_env = managed_uv_process_env(managed_dir);
     let candidates = python_installation_source_candidates(cfg);
     attempt_source_candidates(candidates, "all uv_python sources failed", |candidate| {
+        let candidate_label = candidate.label.clone();
         let mut env = base_env
             .iter()
             .map(|(key, value)| (OsString::from(key), OsString::from(value)))
@@ -46,18 +47,18 @@ pub(crate) async fn execute_uv_python_item(
         .map(OsString::from)
         .collect::<Vec<_>>();
         run_managed_uv_recipe(uv.program.as_os_str(), &args, &env)
-            .map_err(|err| format!("{} failed: {err}", candidate.label.clone()))?;
+            .map_err(|err| OperationError::install(format!("{candidate_label} failed: {err}")))?;
         let destination = find_managed_python_executable(managed_dir, &item.version, target_triple)
             .ok_or_else(|| {
-                format!(
+                OperationError::install(format!(
                     "{} failed: {}",
-                    candidate.label,
+                    candidate_label,
                     OperationError::install(format!(
                         "uv python install succeeded but no managed Python executable matching `{}` was found",
                         item.version
                     ))
                     .detail()
-                )
+                ))
             })?;
         Ok(build_installed_bootstrap_item(
             &item.id,

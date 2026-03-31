@@ -114,6 +114,10 @@ mod tests {
 
     use super::run_managed_uv_recipe_with_timeout;
 
+    fn portable_unix_script(body: &str) -> String {
+        format!("#!/usr/bin/env bash\n{body}")
+    }
+
     #[cfg_attr(windows, ignore = "probe script is unix-specific")]
     #[test]
     fn run_managed_uv_recipe_times_out_hung_process() {
@@ -121,9 +125,10 @@ mod tests {
         let script_path = tmp.path().join("uv");
         write_unix_script(
             &script_path,
-            r#"#!/bin/sh
-sleep 5
+            &portable_unix_script(
+                r#"sleep 5
 "#,
+            ),
         );
 
         let err = run_managed_uv_recipe_with_timeout(

@@ -6,6 +6,7 @@ use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple
 
 use crate::contracts::{ExecutionRequest, InstallPlan, PLAN_SCHEMA_VERSION};
 use crate::error::{InstallerError, InstallerResult};
+use crate::managed_toolchain::managed_environment_layout::managed_python_shim_paths;
 use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
 use crate::plan_items::ResolvedPlanItem;
 
@@ -123,41 +124,58 @@ pub(crate) fn validate_destination_conflicts(
 ) -> InstallerResult<()> {
     let mut destinations: Vec<(&ResolvedPlanItem, PathBuf, Vec<String>)> = Vec::new();
     for item in items {
-        let Some(destination) = effective_destination_for_item(item, target_triple, managed_dir)
-        else {
-            continue;
-        };
-        let normalized_destination = normalize_destination_components(&destination, target_triple);
-        for (existing_item, existing_destination, existing_normalized) in &destinations {
-            if destination_conflict_is_allowed(
-                existing_item,
-                item,
-                existing_normalized,
-                &normalized_destination,
-            ) {
-                continue;
+        for destination in reserved_destinations_for_item(item, target_triple, managed_dir) {
+            let normalized_destination =
+                normalize_destination_components(&destination, target_triple);
+            for (existing_item, existing_destination, existing_normalized) in &destinations {
+                if destination_conflict_is_allowed(
+                    existing_item,
+                    item,
+                    existing_normalized,
+                    &normalized_destination,
+                ) {
+                    continue;
+                }
+                if *existing_normalized == normalized_destination {
+                    return Err(InstallerError::usage(format!(
+                        "install plan items `{}` and `{}` resolve to the same destination `{}`",
+                        existing_item.id(),
+                        item.id(),
+                        destination.display()
+                    )));
+                }
+                if destinations_overlap(existing_normalized, &normalized_destination) {
+                    return Err(InstallerError::usage(format!(
+                        "install plan items `{}` and `{}` resolve to overlapping destinations `{}` and `{}`",
+                        existing_item.id(),
+                        item.id(),
+                        existing_destination.display(),
+                        destination.display()
+                    )));
+                }
             }
-            if *existing_normalized == normalized_destination {
-                return Err(InstallerError::usage(format!(
-                    "install plan items `{}` and `{}` resolve to the same destination `{}`",
-                    existing_item.id(),
-                    item.id(),
-                    destination.display()
-                )));
-            }
-            if destinations_overlap(existing_normalized, &normalized_destination) {
-                return Err(InstallerError::usage(format!(
-                    "install plan items `{}` and `{}` resolve to overlapping destinations `{}` and `{}`",
-                    existing_item.id(),
-                    item.id(),
-                    existing_destination.display(),
-                    destination.display()
-                )));
-            }
+            destinations.push((item, destination, normalized_destination));
         }
-        destinations.push((item, destination, normalized_destination));
     }
     Ok(())
+}
+
+fn reserved_destinations_for_item(
+    item: &ResolvedPlanItem,
+    target_triple: &str,
+    managed_dir: &Path,
+) -> Vec<PathBuf> {
+    let mut destinations = effective_destination_for_item(item, target_triple, managed_dir)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let ResolvedPlanItem::UvPython(item) = item {
+        destinations.extend(managed_python_shim_paths(
+            &item.version,
+            target_triple,
+            managed_dir,
+        ));
+    }
+    destinations
 }
 
 fn destination_conflict_is_allowed(
@@ -326,6 +344,27 @@ mod tests {
             err.to_string()
                 .contains("resolve to overlapping destinations")
         );
+    }
+
+    #[test]
+    fn validate_destination_conflicts_rejects_uv_python_top_level_shim_overlap() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                uv_python_item("python", "3.13.12"),
+                release_item("python-shim", "python3.13"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("uv_python should reserve managed top-level python shims");
+
+        assert!(err.to_string().contains("resolve to the same destination"));
     }
 
     #[test]

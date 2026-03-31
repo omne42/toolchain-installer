@@ -4535,6 +4535,73 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
+async fn execute_uv_tool_item_rejects_broken_binary_after_install() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+  exit 23
+fi
+exit 23
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: false,
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await
+    .expect_err("broken managed binary should fail health check");
+    assert!(err.to_string().contains("failed --version health check"));
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
 async fn execute_uv_tool_item_restores_previous_binary_when_install_fails() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
@@ -4691,7 +4758,10 @@ if [ "$1" = "--version" ]; then
 fi
 if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
   mkdir -p "$UV_TOOL_BIN_DIR"
-  printf 'uv-tool-installed' > "$UV_TOOL_BIN_DIR/ruff-lsp"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "uv-tool-installed"
+EOF
   chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
   exit 0
 fi
@@ -4737,7 +4807,14 @@ exit 2
         result.destination.as_deref(),
         Some(destination.to_str().unwrap())
     );
-    assert_eq!(std::fs::read_to_string(&destination)?, "uv-tool-installed");
+    let output = std::process::Command::new(&destination)
+        .arg("--version")
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "uv-tool-installed"
+    );
     assert!(
         !destination
             .with_file_name("ruff-lsp.toolchain-installer-backup")
@@ -4768,7 +4845,10 @@ if [ "$1" = "--version" ]; then
 fi
 if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
   mkdir -p "$UV_TOOL_BIN_DIR"
-  printf 'uv-tool-installed' > "$UV_TOOL_BIN_DIR/ruff-lsp"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "uv-tool-installed"
+EOF
   chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
   chmod 0555 "{}"
   exit 0
@@ -4821,7 +4901,14 @@ exit 2
         result.destination.as_deref(),
         Some(destination.to_str().unwrap())
     );
-    assert_eq!(std::fs::read_to_string(&destination)?, "uv-tool-installed");
+    let output = std::process::Command::new(&destination)
+        .arg("--version")
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "uv-tool-installed"
+    );
     let backup_path = destination.with_file_name("ruff-lsp.toolchain-installer-backup");
     if result.detail.as_deref().is_some_and(|detail| {
         detail.contains("warning: cannot remove staged managed binary backup")
