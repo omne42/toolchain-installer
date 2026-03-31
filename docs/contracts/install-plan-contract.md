@@ -114,6 +114,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 ## 宿主与目标约束
 
+- `target_triple` 只接受 shared runtime 已知的 canonical target triple；未知值会在结构校验前直接返回 usage error。
 - 当前支持的 canonical target triple 只有：`x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu`、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`、`x86_64-apple-darwin`、`aarch64-apple-darwin`、`x86_64-pc-windows-msvc`、`aarch64-pc-windows-msvc`。
 - `bootstrap` 仅支持当前宿主机，即 `target_triple` 必须等于自动探测到的 `host_triple`。
 - `method=release` 支持显式跨目标平台下载与落盘。

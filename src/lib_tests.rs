@@ -13,7 +13,8 @@ use omne_artifact_install_primitives::{
     install_archive_tree_from_bytes, install_binary_from_archive,
 };
 use omne_host_info_primitives::{
-    detect_host_platform, executable_suffix_for_target, resolve_target_triple,
+    TargetTripleError, detect_host_platform, executable_suffix_for_target,
+    resolve_target_triple,
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{

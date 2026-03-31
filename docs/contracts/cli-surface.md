@@ -13,7 +13,8 @@
   - 只属于 bootstrap 模式；与 `--method`、`--plan-file` 明确互斥，混用会直接返回 usage error。
 - `--target-triple <triple>`
   - 覆盖自动探测目标平台。
-  - 当前只接受 canonical 支持集：`x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu`、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`、`x86_64-apple-darwin`、`aarch64-apple-darwin`、`x86_64-pc-windows-msvc`、`aarch64-pc-windows-msvc`。
+  - 当前只接受 shared runtime 已知的 canonical 支持集：`x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu`、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`、`x86_64-apple-darwin`、`aarch64-apple-darwin`、`x86_64-pc-windows-msvc`、`aarch64-pc-windows-msvc`。
+  - 未知值会在参数校验阶段直接返回 usage error，而不是继续把任意字符串带进执行链路。
 - `--managed-dir <path>`
   - 安装输出目录；未指定时默认使用 `~/.omne_data/toolchain/<target>/bin`。
 - `--mirror-prefix <prefix>`

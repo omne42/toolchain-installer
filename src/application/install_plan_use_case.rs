@@ -19,6 +19,7 @@ pub async fn apply_install_plan(
     plan: &InstallPlan,
     request: &ExecutionRequest,
 ) -> InstallerResult<InstallExecutionResult> {
+ ) -> InstallerResult<InstallExecutionResult> {
     let ctx = ExecutionContext::for_install_plan(request)?;
     let resolved_items = validate_plan_structure(
         plan,
