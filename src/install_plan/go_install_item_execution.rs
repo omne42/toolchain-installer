@@ -96,10 +96,6 @@ pub(crate) fn execute_go_install_item(
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::install(err));
     }
-    if let Err(err) = cleanup_stage_root(&stage_root) {
-        backup.restore().map_err(OperationError::install)?;
-        return Err(OperationError::install(err));
-    }
     if !command_path_exists(&expected_destination) {
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::install(format!(
@@ -107,7 +103,16 @@ pub(crate) fn execute_go_install_item(
             expected_destination.display()
         )));
     }
-    backup.discard().map_err(OperationError::install)?;
+    let detail = build_success_cleanup_detail(
+        "go_install binary",
+        &stage_root,
+        &expected_destination,
+        || cleanup_stage_root(&stage_root),
+    );
+    let detail = merge_cleanup_detail(
+        detail,
+        finalize_backup_cleanup("go_install binary", &expected_destination, backup.discard()),
+    );
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -116,7 +121,7 @@ pub(crate) fn execute_go_install_item(
         source_kind: Some(BootstrapSourceKind::GoInstall),
         archive_match: None,
         destination: Some(expected_destination.display().to_string()),
-        detail: None,
+        detail,
         error_code: None,
         failure_code: None,
     })
@@ -191,5 +196,151 @@ fn select_staged_binary(
             "go_install produced multiple staged binaries under {} but none matched the requested destination name",
             stage_root.display()
         )),
+    }
+}
+
+fn build_success_cleanup_detail(
+    label: &str,
+    cleanup_target: &Path,
+    destination: &Path,
+    cleanup: impl FnOnce() -> Result<(), String>,
+) -> Option<String> {
+    cleanup().err().map(|err| {
+        format!(
+            "{label} installed at {} but cleanup warning: {err}; staged path `{}` may require manual cleanup",
+            destination.display(),
+            cleanup_target.display()
+        )
+    })
+}
+
+fn finalize_backup_cleanup(
+    label: &str,
+    destination: &Path,
+    cleanup_result: Result<(), String>,
+) -> Option<String> {
+    let err = cleanup_result.err()?;
+    let backup_path = destination_backup_path(destination);
+    if !backup_path.exists() {
+        return Some(format!(
+            "{label} installed at {} but cleanup warning: {err}",
+            destination.display()
+        ));
+    }
+
+    match quarantine_backup_path(&backup_path) {
+        Ok(quarantined_path) => Some(format!(
+            "{label} installed at {} but cleanup warning: {err}; moved stale backup to {}",
+            destination.display(),
+            quarantined_path.display()
+        )),
+        Err(quarantine_err) => Some(format!(
+            "{label} installed at {} but cleanup warning: {err}; stale backup remains at {} ({quarantine_err})",
+            destination.display(),
+            backup_path.display()
+        )),
+    }
+}
+
+fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first}; {second}")),
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (None, None) => None,
+    }
+}
+
+fn destination_backup_path(destination: &Path) -> PathBuf {
+    destination.with_file_name(format!(
+        "{}.toolchain-installer-backup",
+        destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("managed-tool")
+    ))
+}
+
+fn quarantine_backup_path(backup_path: &Path) -> Result<PathBuf, String> {
+    let parent = backup_path
+        .parent()
+        .ok_or_else(|| format!("cannot resolve parent for backup {}", backup_path.display()))?;
+    let file_name = backup_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("managed-tool.toolchain-installer-backup");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let quarantined = parent.join(format!("{file_name}.stale-{}-{nonce}", std::process::id()));
+    std::fs::rename(backup_path, &quarantined).map_err(|err| {
+        format!(
+            "cannot move stale backup {} aside to {}: {err}",
+            backup_path.display(),
+            quarantined.display()
+        )
+    })?;
+    Ok(quarantined)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::{build_success_cleanup_detail, destination_backup_path, finalize_backup_cleanup};
+
+    #[test]
+    fn success_cleanup_detail_reports_stage_cleanup_warning() {
+        let detail = build_success_cleanup_detail(
+            "go_install binary",
+            Path::new("/tmp/stage"),
+            Path::new("/tmp/managed/demo"),
+            || Err("cannot clean staged go_install root /tmp/stage: busy".to_string()),
+        )
+        .expect("cleanup warning detail");
+
+        assert!(detail.contains("cleanup warning"));
+        assert!(detail.contains("/tmp/stage"));
+        assert!(detail.contains("/tmp/managed/demo"));
+    }
+
+    #[test]
+    fn finalize_backup_cleanup_quarantines_stale_backup_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let destination = temp.path().join("managed").join("demo");
+        std::fs::create_dir_all(destination.parent().expect("parent")).expect("create parent");
+        let backup_path = destination_backup_path(&destination);
+        std::fs::write(&backup_path, "stale backup").expect("write backup");
+
+        let detail = finalize_backup_cleanup(
+            "go_install binary",
+            &destination,
+            Err("cannot remove staged go_install binary backup".to_string()),
+        )
+        .expect("backup cleanup warning");
+
+        assert!(detail.contains("moved stale backup"));
+        assert!(
+            !backup_path.exists(),
+            "standard backup path should be cleared"
+        );
+        let quarantined = find_quarantined_backup(destination.parent().expect("parent"));
+        assert_eq!(quarantined.len(), 1, "backup should be moved aside once");
+    }
+
+    fn find_quarantined_backup(parent: &Path) -> Vec<PathBuf> {
+        let mut matches = std::fs::read_dir(parent)
+            .expect("read parent")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
+            })
+            .collect::<Vec<_>>();
+        matches.sort();
+        matches
     }
 }
