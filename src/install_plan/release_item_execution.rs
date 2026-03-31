@@ -6,13 +6,14 @@ use omne_artifact_install_primitives::{
     download_and_install_binary_from_archive, download_binary_to_destination,
     is_binary_archive_asset_name,
 };
+use reqwest::Url;
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::download_sources::{
     build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
-use crate::external_gateway::infer_gateway_candidate_for_git_release;
+use crate::external_gateway::gateway_candidate_for_release_download_url;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::plan_items::ReleasePlanItem;
 
@@ -31,8 +32,10 @@ pub(crate) async fn execute_release_item(
     let binary_name = resolve_release_binary_name(item, target_triple);
     let destination = resolve_release_destination(item, target_triple, managed_dir);
 
-    let gateway = infer_gateway_candidate_for_git_release(cfg, &url);
+    let gateway = gateway_candidate_for_release_download_url(cfg, &url);
     let expected_sha = item.sha256.as_ref();
+    let github_client = build_release_download_client(cfg, &url)?;
+    let download_client = github_client.as_ref().unwrap_or(client);
 
     let asset_name = item
         .url
@@ -53,7 +56,7 @@ pub(crate) async fn execute_release_item(
             archive_binary_hint.as_deref(),
         );
         let downloaded = download_release_archive_binary(
-            client,
+            download_client,
             &candidates,
             &BinaryArchiveInstallRequest {
                 canonical_url: &url,
@@ -88,7 +91,7 @@ pub(crate) async fn execute_release_item(
     }
 
     let downloaded_source = download_binary_to_destination(
-        client,
+        download_client,
         &candidates,
         &DownloadBinaryRequest {
             canonical_url: &url,
@@ -184,12 +187,42 @@ fn archive_root_name(asset_name: &str) -> Option<&str> {
         .or_else(|| asset_name.strip_suffix(".zip"))
 }
 
+fn build_release_download_client(
+    cfg: &InstallerRuntimeConfig,
+    url: &str,
+) -> OperationResult<Option<reqwest::Client>> {
+    if !is_github_release_asset_url(url) {
+        return Ok(None);
+    }
+    reqwest::Client::builder()
+        .http1_only()
+        .timeout(cfg.download.http_timeout)
+        .user_agent("toolchain-installer")
+        .build()
+        .map(Some)
+        .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
+}
+
+fn is_github_release_asset_url(url: &str) -> bool {
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    if parsed.host_str() != Some("github.com") {
+        return false;
+    }
+    let Some(segments) = parsed.path_segments() else {
+        return false;
+    };
+    let segments = segments.collect::<Vec<_>>();
+    segments.len() >= 6 && segments[2] == "releases" && segments[3] == "download"
+}
+
 #[cfg(test)]
 mod tests {
     use omne_artifact_install_primitives::{ArtifactInstallError, ArtifactInstallErrorDetail};
 
     use super::{
-        normalize_archive_binary_hint, release_archive_binary_hint,
+        is_github_release_asset_url, normalize_archive_binary_hint, release_archive_binary_hint,
         release_archive_binary_hint_fallback, should_retry_release_archive_binary_with_fallback,
     };
 
@@ -251,6 +284,19 @@ mod tests {
             &err,
             Some("root/bin/demo"),
             Some("bin/demo"),
+        ));
+    }
+
+    #[test]
+    fn github_release_asset_url_detection_matches_release_download_shape() {
+        assert!(is_github_release_asset_url(
+            "https://github.com/cli/cli/releases/download/v2.0.0/gh_2.0.0_linux_amd64.tar.gz"
+        ));
+        assert!(!is_github_release_asset_url(
+            "https://mirror.example/github.com/cli/cli/releases/download/v2.0.0/gh.tar.gz"
+        ));
+        assert!(!is_github_release_asset_url(
+            "https://github.com/cli/cli/archive/refs/tags/v2.0.0.tar.gz"
         ));
     }
 }

@@ -1,15 +1,17 @@
 use github_kit::{GitHubApiRequestOptions, GitHubRelease, fetch_latest_release};
+use reqwest::Url;
 
 use crate::error::{OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 
 pub(crate) async fn fetch_latest_release_metadata(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     cfg: &InstallerRuntimeConfig,
     repo: &str,
 ) -> OperationResult<GitHubRelease> {
+    let github_client = build_github_http_client(cfg)?;
     fetch_latest_release(
-        client,
+        &github_client,
         &cfg.github_releases.api_bases,
         repo,
         GitHubApiRequestOptions::new()
@@ -20,6 +22,31 @@ pub(crate) async fn fetch_latest_release_metadata(
     .map_err(|err| OperationError::download(err.to_string()))
 }
 
+pub(crate) fn build_github_http_client(
+    cfg: &InstallerRuntimeConfig,
+) -> OperationResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .http1_only()
+        .timeout(cfg.download.http_timeout)
+        .user_agent("toolchain-installer")
+        .build()
+        .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
+}
+
+pub(crate) fn is_github_release_asset_url(url: &str) -> bool {
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    if parsed.host_str() != Some("github.com") {
+        return false;
+    }
+    let Some(segments) = parsed.path_segments() else {
+        return false;
+    };
+    let segments = segments.collect::<Vec<_>>();
+    segments.len() >= 6 && segments[2] == "releases" && segments[3] == "download"
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -27,12 +54,13 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use crate::installer_runtime_config::InstallerRuntimeConfig;
     use crate::installer_runtime_config::{
         DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy,
         PackageIndexPolicy, PythonMirrorPolicy,
     };
 
-    use super::*;
+    use super::{fetch_latest_release_metadata, is_github_release_asset_url};
 
     #[tokio::test]
     async fn fetch_latest_release_metadata_uses_shared_github_client_contract_without_bearer_on_http()
@@ -157,5 +185,18 @@ mod tests {
             }
         });
         (format!("http://{}", addr), handle)
+    }
+
+    #[test]
+    fn github_release_asset_url_detection_matches_release_download_shape() {
+        assert!(is_github_release_asset_url(
+            "https://github.com/cli/cli/releases/download/v2.0.0/gh_2.0.0_linux_amd64.tar.gz"
+        ));
+        assert!(!is_github_release_asset_url(
+            "https://mirror.example/github.com/cli/cli/releases/download/v2.0.0/gh.tar.gz"
+        ));
+        assert!(!is_github_release_asset_url(
+            "https://github.com/cli/cli/archive/refs/tags/v2.0.0.tar.gz"
+        ));
     }
 }

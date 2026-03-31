@@ -34,7 +34,7 @@ use crate::contracts::{
 use crate::download_sources::make_download_candidates;
 use crate::error::ExitCode;
 use crate::external_gateway::{
-    infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
+    gateway_candidate_for_release_download_url, make_gateway_asset_candidate,
 };
 use crate::install_plan::cargo_install_item_execution::execute_cargo_install_item;
 use crate::install_plan::go_install_item_execution::execute_go_install_item;
@@ -1162,7 +1162,7 @@ fn installer_errors_preserve_freeform_user_text() {
 }
 
 #[test]
-fn infer_gateway_candidate_for_git_release_parses_release_url() {
+fn gateway_candidate_for_release_download_url_parses_exact_git_release_url() {
     let cfg = InstallerRuntimeConfig {
         gateway: GatewayRoutingPolicy {
             base: Some("https://gw.example".to_string()),
@@ -1170,7 +1170,7 @@ fn infer_gateway_candidate_for_git_release_parses_release_url() {
         },
         ..test_runtime_config()
     };
-    let candidate = infer_gateway_candidate_for_git_release(
+    let candidate = gateway_candidate_for_release_download_url(
         &cfg,
         "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip",
     )
@@ -2497,7 +2497,7 @@ fn make_gateway_asset_candidate_normalizes_base_trailing_slash() {
 }
 
 #[test]
-fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
+fn gateway_candidate_for_release_download_url_rejects_non_matching_or_embedded_paths() {
     let cfg = InstallerRuntimeConfig {
         gateway: GatewayRoutingPolicy {
             base: Some("https://gw.example".to_string()),
@@ -2506,8 +2506,18 @@ fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
         ..test_runtime_config()
     };
     assert!(
-        infer_gateway_candidate_for_git_release(&cfg, "https://example.com/download/v1/file.zip")
-            .is_none()
+        gateway_candidate_for_release_download_url(
+            &cfg,
+            "https://example.com/download/v1/file.zip"
+        )
+        .is_none()
+    );
+    assert!(
+        gateway_candidate_for_release_download_url(
+            &cfg,
+            "https://mirror.example/github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip"
+        )
+        .is_none()
     );
 }
 
