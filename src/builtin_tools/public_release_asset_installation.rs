@@ -226,9 +226,14 @@ async fn download_and_install_mingit_bundle(
     let relative_git = staged_git.strip_prefix(&staging_root).map_err(|err| {
         OperationError::install(format!("git executable not under staging dir: {err}"))
     })?;
-    let final_git = portable_root.join(relative_git);
-    replace_mingit_installation(&portable_root, &staging_root, &backup_root)?;
-    write_mingit_launcher(destination, managed_dir, &final_git)?;
+    finalize_mingit_installation(
+        &portable_root,
+        &staging_root,
+        &backup_root,
+        destination,
+        managed_dir,
+        relative_git,
+    )?;
 
     Ok(InstallSource::new(
         selected.url,
@@ -247,11 +252,64 @@ fn remove_dir_if_exists(path: &Path) -> OperationResult<()> {
     Ok(())
 }
 
+fn remove_file_if_exists(path: &Path) -> OperationResult<()> {
+    if path.exists() {
+        fs::remove_file(path).map_err(|err| OperationError::install(err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn restore_backup_if_needed(current: &Path, backup: &Path) -> OperationResult<()> {
+    if !backup.exists() {
+        return Ok(());
+    }
+    if current.exists() {
+        return remove_backup_path(backup);
+    }
+    fs::rename(backup, current).map_err(|err| OperationError::install(err.to_string()))
+}
+
+fn remove_backup_path(path: &Path) -> OperationResult<()> {
+    if path.is_dir() {
+        remove_dir_if_exists(path)
+    } else {
+        remove_file_if_exists(path)
+    }
+}
+
+fn mingit_launcher_backup_path(destination: &Path) -> PathBuf {
+    destination.with_file_name(format!(
+        "{}.toolchain-installer-backup",
+        destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("git")
+    ))
+}
+
+fn restore_mingit_transaction_failure(
+    portable_root: &Path,
+    backup_root: &Path,
+    launcher_destination: &Path,
+    launcher_backup: &Path,
+) -> OperationResult<()> {
+    if portable_root.exists() {
+        remove_dir_if_exists(portable_root)?;
+    }
+    restore_backup_if_needed(portable_root, backup_root)?;
+
+    if launcher_destination.exists() {
+        remove_file_if_exists(launcher_destination)?;
+    }
+    restore_backup_if_needed(launcher_destination, launcher_backup)
+}
+
 pub(crate) fn replace_mingit_installation(
     portable_root: &Path,
     staging_root: &Path,
     backup_root: &Path,
 ) -> OperationResult<()> {
+    restore_backup_if_needed(portable_root, backup_root)?;
     remove_dir_if_exists(backup_root)?;
     if portable_root.exists() {
         fs::rename(portable_root, backup_root)
@@ -264,8 +322,67 @@ pub(crate) fn replace_mingit_installation(
         }
         return Err(OperationError::install(err.to_string()));
     }
+    Ok(())
+}
 
-    let _ = remove_dir_if_exists(backup_root);
+fn finalize_mingit_installation(
+    portable_root: &Path,
+    staging_root: &Path,
+    backup_root: &Path,
+    launcher_destination: &Path,
+    managed_dir: &Path,
+    relative_git: &Path,
+) -> OperationResult<()> {
+    finalize_mingit_installation_with_launcher_writer(
+        portable_root,
+        staging_root,
+        backup_root,
+        launcher_destination,
+        &mingit_launcher_backup_path(launcher_destination),
+        || {
+            write_mingit_launcher(
+                launcher_destination,
+                managed_dir,
+                &portable_root.join(relative_git),
+            )
+        },
+    )
+}
+
+fn finalize_mingit_installation_with_launcher_writer<F>(
+    portable_root: &Path,
+    staging_root: &Path,
+    backup_root: &Path,
+    launcher_destination: &Path,
+    launcher_backup: &Path,
+    write_launcher: F,
+) -> OperationResult<()>
+where
+    F: FnOnce() -> OperationResult<()>,
+{
+    restore_backup_if_needed(portable_root, backup_root)?;
+    restore_backup_if_needed(launcher_destination, launcher_backup)?;
+    remove_dir_if_exists(backup_root)?;
+    remove_file_if_exists(launcher_backup)?;
+    if launcher_destination.exists() {
+        fs::rename(launcher_destination, launcher_backup)
+            .map_err(|err| OperationError::install(err.to_string()))?;
+    }
+    if let Err(err) = replace_mingit_installation(portable_root, staging_root, backup_root) {
+        let _ = restore_backup_if_needed(launcher_destination, launcher_backup);
+        return Err(err);
+    }
+    if let Err(err) = write_launcher() {
+        let _ = restore_mingit_transaction_failure(
+            portable_root,
+            backup_root,
+            launcher_destination,
+            launcher_backup,
+        );
+        return Err(err);
+    }
+    remove_dir_if_exists(backup_root)?;
+    remove_file_if_exists(launcher_backup)?;
     Ok(())
 }
 
@@ -358,4 +475,92 @@ fn write_mingit_launcher(
         },
     )
     .map_err(|err| OperationError::install(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{finalize_mingit_installation_with_launcher_writer, mingit_launcher_backup_path};
+    use crate::error::OperationError;
+
+    #[test]
+    fn mingit_finalize_restores_previous_installation_when_launcher_write_fails() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let staging_root = managed_dir.join("git-portable.stage");
+        let backup_root = managed_dir.join("git-portable.backup");
+        let launcher_destination = managed_dir.join("git.cmd");
+        std::fs::create_dir_all(portable_root.join("cmd")).expect("create old portable root");
+        std::fs::create_dir_all(staging_root.join("cmd")).expect("create staging portable root");
+        std::fs::write(portable_root.join("cmd").join("git.exe"), b"old").expect("write old git");
+        std::fs::write(staging_root.join("cmd").join("git.exe"), b"new").expect("write staged git");
+        std::fs::write(&launcher_destination, b"old-launcher").expect("write old launcher");
+
+        let err = finalize_mingit_installation_with_launcher_writer(
+            &portable_root,
+            &staging_root,
+            &backup_root,
+            &launcher_destination,
+            &mingit_launcher_backup_path(&launcher_destination),
+            || Err(OperationError::install("launcher write failed")),
+        )
+        .expect_err("launcher failure should roll back portable root");
+
+        assert!(err.to_string().contains("launcher write failed"));
+        assert_eq!(
+            std::fs::read(portable_root.join("cmd").join("git.exe")).expect("restored git"),
+            b"old"
+        );
+        assert_eq!(
+            std::fs::read(&launcher_destination).expect("restored launcher"),
+            b"old-launcher"
+        );
+        assert!(
+            !backup_root.exists(),
+            "transaction cleanup should remove backup root"
+        );
+    }
+
+    #[test]
+    fn mingit_finalize_restores_interrupted_backups_before_reinstall() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let staging_root = managed_dir.join("git-portable.stage");
+        let backup_root = managed_dir.join("git-portable.backup");
+        let launcher_destination = managed_dir.join("git.cmd");
+        let launcher_backup = mingit_launcher_backup_path(&launcher_destination);
+        std::fs::create_dir_all(backup_root.join("cmd")).expect("create backup portable root");
+        std::fs::create_dir_all(staging_root.join("cmd")).expect("create staging portable root");
+        std::fs::write(backup_root.join("cmd").join("git.exe"), b"old").expect("write backup git");
+        std::fs::write(staging_root.join("cmd").join("git.exe"), b"new").expect("write staged git");
+        std::fs::write(&launcher_backup, b"old-launcher").expect("write backup launcher");
+
+        finalize_mingit_installation_with_launcher_writer(
+            &portable_root,
+            &staging_root,
+            &backup_root,
+            &launcher_destination,
+            &launcher_backup,
+            || {
+                std::fs::write(&launcher_destination, b"new-launcher")
+                    .map_err(|err| OperationError::install(err.to_string()))
+            },
+        )
+        .expect("interrupted backups should self-heal before reinstall");
+
+        assert_eq!(
+            std::fs::read(portable_root.join("cmd").join("git.exe")).expect("installed git"),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(&launcher_destination).expect("installed launcher"),
+            b"new-launcher"
+        );
+        assert!(!backup_root.exists(), "backup root should be cleaned");
+        assert!(
+            !launcher_backup.exists(),
+            "launcher backup should be cleaned"
+        );
+    }
 }

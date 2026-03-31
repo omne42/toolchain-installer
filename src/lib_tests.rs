@@ -1602,7 +1602,8 @@ async fn install_git_from_public_release_preserves_existing_install_on_failed_up
 }
 
 #[test]
-fn replace_mingit_installation_swaps_staging_and_cleans_backup() -> anyhow::Result<()> {
+fn replace_mingit_installation_swaps_staging_and_keeps_backup_for_followup_steps()
+-> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let portable_root = temp.path().join("git-portable");
     let staging_root = temp.path().join("git-portable.stage");
@@ -1623,7 +1624,10 @@ fn replace_mingit_installation_swaps_staging_and_cleans_backup() -> anyhow::Resu
 
     assert_eq!(std::fs::read(&old_git)?, b"NEW-GIT");
     assert!(!staging_root.exists());
-    assert!(!backup_root.exists());
+    assert_eq!(
+        std::fs::read(backup_root.join("PortableGit").join("cmd").join("git.exe"))?,
+        b"OLD-GIT"
+    );
     Ok(())
 }
 
