@@ -64,15 +64,31 @@ pub(crate) async fn execute_uv_tool_item(
                 destination.display()
             ));
         }
-        backup.discard()?;
+        let detail = build_uv_tool_success_detail(
+            &backup,
+            build_managed_uv_usage_detail(&uv.program, uv_detail.clone()),
+        );
         Ok(build_installed_bootstrap_item(
             &item.id,
             candidate.label,
             BootstrapSourceKind::PackageIndex,
             &destination,
-            build_managed_uv_usage_detail(&uv.program, uv_detail.clone()),
+            detail,
         ))
     })
+}
+
+fn build_uv_tool_success_detail(
+    backup: &ManagedDestinationBackup,
+    detail: Option<String>,
+) -> Option<String> {
+    match backup.discard() {
+        Ok(()) => detail,
+        Err(err) => Some(match detail {
+            Some(detail) => format!("{detail}; warning: {err}"),
+            None => format!("warning: {err}"),
+        }),
+    }
 }
 
 fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {

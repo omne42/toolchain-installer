@@ -9,6 +9,7 @@ const VERSION_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const VERSION_PROBE_ATTEMPTS: usize = 3;
 const VERSION_PROBE_RETRY_DELAY: Duration = Duration::from_millis(100);
 
+#[cfg(test)]
 pub(crate) fn binary_reports_version(path: &Path) -> bool {
     run_version_probe_with_retries(path).is_some_and(|probe| probe.success)
 }
