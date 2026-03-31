@@ -9,7 +9,6 @@ const VERSION_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const VERSION_PROBE_ATTEMPTS: usize = 3;
 const VERSION_PROBE_RETRY_DELAY: Duration = Duration::from_millis(100);
 
-#[cfg(test)]
 pub(crate) fn binary_reports_version(path: &Path) -> bool {
     run_version_probe_with_retries(path).is_some_and(|probe| probe.success)
 }
@@ -140,6 +139,10 @@ mod tests {
     use super::python_version_matches_requirement;
     use super::{binary_reports_version, python_binary_matches_version};
 
+    fn portable_unix_script(body: &str) -> String {
+        format!("#!/usr/bin/env bash\n{body}")
+    }
+
     #[test]
     fn python_version_match_uses_component_boundaries() {
         assert!(python_version_matches_requirement("3.13.2", "3"));
@@ -158,9 +161,8 @@ mod tests {
 
         write_unix_probe_script(
             &script_path,
-            &format!(
-                r#"#!/bin/sh
-if [ "$1" != "--version" ]; then
+            &portable_unix_script(&format!(
+                r#"if [ "$1" != "--version" ]; then
   exit 2
 fi
 if [ ! -f "{}" ]; then
@@ -171,7 +173,7 @@ echo "uv 0.11.0"
 "#,
                 state_path.display(),
                 state_path.display()
-            ),
+            )),
         );
 
         assert!(binary_reports_version(&script_path));
@@ -186,9 +188,8 @@ echo "uv 0.11.0"
 
         write_unix_probe_script(
             &script_path,
-            &format!(
-                r#"#!/bin/sh
-if [ "$1" != "--version" ]; then
+            &portable_unix_script(&format!(
+                r#"if [ "$1" != "--version" ]; then
   exit 2
 fi
 if [ ! -f "{}" ]; then
@@ -199,7 +200,7 @@ echo "Python 3.13.12"
 "#,
                 state_path.display(),
                 state_path.display()
-            ),
+            )),
         );
 
         assert!(python_binary_matches_version(&script_path, "3.13.12"));

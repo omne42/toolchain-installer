@@ -3666,6 +3666,80 @@ async fn execute_uv_python_item_ignores_inherited_uv_environment_helper() -> any
     Ok(())
 }
 
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[test]
+fn execute_uv_python_item_reuses_healthy_host_uv_when_managed_uv_is_missing() -> anyhow::Result<()>
+{
+    let tmp = tempfile::tempdir()?;
+    let bin_dir = tmp.path().join("bin");
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&bin_dir)?;
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &bin_dir.join("uv"),
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  mkdir -p "{}"
+  cat > "{}/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "{}/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+            managed_dir.display(),
+            managed_dir.display(),
+            managed_dir.display()
+        ),
+    )?;
+
+    with_path_prepend(&bin_dir, || -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            let item = UvPythonPlanItem {
+                id: "python3.13.12".to_string(),
+                version: "3.13.12".to_string(),
+            };
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()?;
+
+            let result = execute_uv_python_item(
+                &item,
+                "x86_64-unknown-linux-gnu",
+                &managed_dir,
+                &test_runtime_config(),
+                &client,
+            )
+            .await?;
+
+            assert_eq!(result.status, BootstrapStatus::Installed);
+            assert_eq!(result.source_kind, Some(BootstrapSourceKind::Canonical));
+            assert!(
+                result
+                    .detail
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("using healthy host uv")
+            );
+            assert!(!managed_dir.join("uv").exists());
+            assert!(managed_dir.join("python3.13").exists());
+            Ok(())
+        })
+    })?;
+    Ok(())
+}
+
 #[cfg_attr(windows, ignore = "mock python shim is unix-specific")]
 #[test]
 fn find_managed_python_executable_requires_exact_patch_version() -> anyhow::Result<()> {
@@ -4203,6 +4277,144 @@ exit 2
     Ok(())
 }
 
+#[cfg_attr(windows, ignore = "mock uv/python shims are unix-specific")]
+#[test]
+fn execute_uv_tool_item_bootstraps_reusable_uv_from_package_index() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let bin_dir = tmp.path().join("bin");
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&bin_dir)?;
+    std::fs::create_dir_all(&managed_dir)?;
+    let pip_log = managed_dir.join("pip-bootstrap.log");
+    let uv_log = managed_dir.join("uv-tool.log");
+
+    write_executable(
+        &bin_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  exit 42
+fi
+exit 42
+"#,
+    )?;
+    write_executable(
+        &bin_dir.join("python3"),
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
+  target=""
+  index=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--target" ]; then
+      target="$2"
+      shift 2
+      continue
+    fi
+    if [ "$1" = "--index-url" ]; then
+      index="$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+  mkdir -p "$target"
+  printf '%s\n' "$index" > "{}"
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "uv" ] && [ "$3" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "uv" ] && [ "$3" = "tool" ] && [ "$4" = "install" ]; then
+  printf '%s\n' "$UV_DEFAULT_INDEX" > "{}"
+  mkdir -p "$UV_TOOL_BIN_DIR"
+  cat > "$UV_TOOL_BIN_DIR/ruff" <<'EOF'
+#!/bin/sh
+echo "ruff 0.1.0"
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+            pip_log.display(),
+            uv_log.display()
+        ),
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    with_path_prepend(&bin_dir, || -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            let item = UvToolPlanItem {
+                id: "ruff".to_string(),
+                package: "ruff".to_string(),
+                python: None,
+                binary_name: "ruff".to_string(),
+                binary_name_explicit: false,
+            };
+            let cfg = InstallerRuntimeConfig {
+                github_releases: GitHubReleasePolicy {
+                    api_bases: vec!["http://127.0.0.1:9/api".to_string()],
+                    token: None,
+                },
+                package_indexes: PackageIndexPolicy {
+                    indexes: vec![index.clone()],
+                },
+                ..test_runtime_config()
+            };
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()?;
+
+            let result = execute_uv_tool_item(
+                &item,
+                "x86_64-unknown-linux-gnu",
+                &managed_dir,
+                &cfg,
+                &client,
+            )
+            .await?;
+
+            assert_eq!(result.status, BootstrapStatus::Installed);
+            assert_eq!(
+                result.source.as_deref(),
+                Some(format!("package-index:{index}").as_str())
+            );
+            assert!(
+                result
+                    .detail
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("bootstrapped reusable uv with `python3 -m pip`")
+            );
+            assert_eq!(std::fs::read_to_string(&pip_log)?.trim(), index);
+            assert_eq!(std::fs::read_to_string(&uv_log)?.trim(), index);
+            assert!(
+                managed_dir
+                    .join(".uv-bootstrap")
+                    .join("bin")
+                    .join("uv")
+                    .exists()
+            );
+            assert!(managed_dir.join("ruff").exists());
+            Ok(())
+        })
+    })?;
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
 async fn execute_uv_tool_item_ignores_inherited_uv_environment() -> anyhow::Result<()> {
@@ -4535,6 +4747,73 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
+async fn execute_uv_tool_item_rejects_broken_binary_after_install() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+  exit 23
+fi
+exit 23
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: false,
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await
+    .expect_err("broken managed binary should fail health check");
+    assert!(err.to_string().contains("failed --version health check"));
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
 async fn execute_uv_tool_item_restores_previous_binary_when_install_fails() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
@@ -4691,7 +4970,10 @@ if [ "$1" = "--version" ]; then
 fi
 if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
   mkdir -p "$UV_TOOL_BIN_DIR"
-  printf 'uv-tool-installed' > "$UV_TOOL_BIN_DIR/ruff-lsp"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "uv-tool-installed"
+EOF
   chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
   exit 0
 fi
@@ -4737,7 +5019,14 @@ exit 2
         result.destination.as_deref(),
         Some(destination.to_str().unwrap())
     );
-    assert_eq!(std::fs::read_to_string(&destination)?, "uv-tool-installed");
+    let output = std::process::Command::new(&destination)
+        .arg("--version")
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "uv-tool-installed"
+    );
     assert!(
         !destination
             .with_file_name("ruff-lsp.toolchain-installer-backup")
@@ -4768,7 +5057,10 @@ if [ "$1" = "--version" ]; then
 fi
 if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
   mkdir -p "$UV_TOOL_BIN_DIR"
-  printf 'uv-tool-installed' > "$UV_TOOL_BIN_DIR/ruff-lsp"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "uv-tool-installed"
+EOF
   chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
   chmod 0555 "{}"
   exit 0
@@ -4821,7 +5113,14 @@ exit 2
         result.destination.as_deref(),
         Some(destination.to_str().unwrap())
     );
-    assert_eq!(std::fs::read_to_string(&destination)?, "uv-tool-installed");
+    let output = std::process::Command::new(&destination)
+        .arg("--version")
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "uv-tool-installed"
+    );
     let backup_path = destination.with_file_name("ruff-lsp.toolchain-installer-backup");
     if result.detail.as_deref().is_some_and(|detail| {
         detail.contains("warning: cannot remove staged managed binary backup")
