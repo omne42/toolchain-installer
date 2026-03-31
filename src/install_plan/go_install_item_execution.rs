@@ -2,13 +2,13 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use omne_host_info_primitives::executable_suffix_for_target;
 use omne_process_primitives::{
     HostRecipeRequest, command_exists, command_path_exists, run_host_recipe,
 };
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::managed_toolchain::managed_environment_layout::validated_binary_suffix;
 use crate::managed_toolchain::{ManagedDestinationBackup, promote_staged_file};
 use crate::plan_items::{GoInstallPlanItem, GoInstallSource};
 
@@ -25,7 +25,7 @@ pub(crate) fn execute_go_install_item(
     let expected_destination = managed_dir.join(format!(
         "{}{}",
         item.binary_name,
-        executable_suffix_for_target(target_triple)
+        validated_binary_suffix(target_triple)
     ));
     let env = vec![("GOBIN".to_string(), stage_root.display().to_string())]
         .into_iter()

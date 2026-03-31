@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use omne_host_info_primitives::executable_suffix_for_target;
-
 use crate::error::{InstallerError, InstallerResult};
-use crate::managed_toolchain::managed_environment_layout::managed_python_installation_dir;
+use crate::managed_toolchain::managed_environment_layout::{
+    managed_python_installation_dir, validated_binary_suffix,
+};
 use crate::plan_items::{
     CargoInstallPlanItem, GoInstallPlanItem, NodePackageManager, NpmGlobalPlanItem,
     ReleasePlanItem, ResolvedPlanItem, UvToolPlanItem,
@@ -42,7 +42,7 @@ pub(crate) fn effective_destination_for_item(
             managed_dir,
         )),
         ResolvedPlanItem::Uv(_) => {
-            Some(managed_dir.join(format!("uv{}", executable_suffix_for_target(target_triple))))
+            Some(managed_dir.join(format!("uv{}", validated_binary_suffix(target_triple))))
         }
         ResolvedPlanItem::UvPython(_) => Some(managed_python_installation_dir(managed_dir)),
         ResolvedPlanItem::UvTool(item) => Some(resolve_uv_tool_destination(
@@ -73,7 +73,7 @@ pub(crate) fn resolve_release_destination(
 pub(crate) fn resolve_release_binary_name(item: &ReleasePlanItem, target_triple: &str) -> String {
     item.binary_name
         .clone()
-        .unwrap_or_else(|| format!("{}{}", item.id, executable_suffix_for_target(target_triple)))
+        .unwrap_or_else(|| format!("{}{}", item.id, validated_binary_suffix(target_triple)))
 }
 
 pub(crate) fn resolve_cargo_install_destination(
@@ -84,7 +84,7 @@ pub(crate) fn resolve_cargo_install_destination(
     cargo_install_root(managed_dir).join("bin").join(format!(
         "{}{}",
         item.binary_name,
-        executable_suffix_for_target(target_triple)
+        validated_binary_suffix(target_triple)
     ))
 }
 
@@ -147,7 +147,7 @@ pub(crate) fn resolve_go_install_destination(
     managed_dir.join(format!(
         "{}{}",
         item.binary_name,
-        executable_suffix_for_target(target_triple)
+        validated_binary_suffix(target_triple)
     ))
 }
 
@@ -159,7 +159,7 @@ pub(crate) fn resolve_uv_tool_destination(
     managed_dir.join(format!(
         "{}{}",
         item.binary_name,
-        executable_suffix_for_target(target_triple)
+        validated_binary_suffix(target_triple)
     ))
 }
 

@@ -5,7 +5,6 @@ use omne_artifact_install_primitives::{
     ArtifactDownloadCandidate, ArtifactInstallError, BinaryArchiveInstallRequest,
     InstalledArchiveBinary, download_and_install_binary_from_archive,
 };
-use omne_host_info_primitives::executable_suffix_for_target;
 use omne_integrity_primitives::parse_sha256_digest;
 
 use crate::artifact::InstallSource;
@@ -15,6 +14,7 @@ use crate::download_sources::{
 use crate::error::{OperationError, OperationResult};
 use crate::github_release_metadata::fetch_latest_release_metadata;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
+use crate::managed_toolchain::managed_environment_layout::validated_binary_suffix;
 pub(crate) async fn install_uv_from_public_release(
     target_triple: &str,
     destination: &Path,
@@ -32,7 +32,7 @@ pub(crate) async fn install_uv_from_public_release(
         &cfg.download_sources.mirror_prefixes,
         None,
     );
-    let binary_name = format!("uv{}", executable_suffix_for_target(target_triple));
+    let binary_name = format!("uv{}", validated_binary_suffix(target_triple));
     let archive_binary_hint = uv_archive_binary_hint(&asset.name, &binary_name);
     let fallback_archive_binary_hint =
         uv_archive_binary_hint_fallback(&binary_name, archive_binary_hint.as_deref());

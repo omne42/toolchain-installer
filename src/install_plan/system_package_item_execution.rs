@@ -22,14 +22,19 @@ pub(crate) fn execute_system_package_item(
     let recipes = match item.mode {
         SystemPackageMode::AptGet => vec![SystemPackageManager::AptGet.install_recipe(&package)],
         SystemPackageMode::Explicit(manager) => vec![manager.install_recipe(&package)],
-        SystemPackageMode::Auto => detect_host_platform()
-            .map(|platform| {
-                default_system_package_install_recipes_for_os(
-                    platform.operating_system().as_str(),
-                    &package,
-                )
-            })
-            .unwrap_or_default(),
+        SystemPackageMode::Auto => match detect_host_platform() {
+            Some(platform) => default_system_package_install_recipes_for_os(
+                platform.operating_system().as_str(),
+                &package,
+            )
+            .map_err(|err| {
+                OperationError::install(format!(
+                    "no available package manager recipe for `{}`: {err}",
+                    item.package
+                ))
+            })?,
+            None => Vec::new(),
+        },
     };
     if recipes.is_empty() {
         return Err(OperationError::install(format!(

@@ -18,7 +18,8 @@ pub fn validate_install_plan(
     let host_triple = detect_host_target_triple()
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(requested_target_triple, &host_triple);
+    let target_triple = resolve_target_triple(requested_target_triple, &host_triple)
+        .map_err(|err| InstallerError::usage(err.to_string()))?;
     validate_plan_structure(plan, &host_triple, &target_triple, None).map(|_| ())
 }
 
@@ -29,7 +30,8 @@ pub fn validate_install_plan_with_request(
     let host_triple = detect_host_target_triple()
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
+    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple)
+        .map_err(|err| InstallerError::usage(err.to_string()))?;
     let resolved_items = validate_plan_structure(
         plan,
         &host_triple,
