@@ -373,7 +373,10 @@ mod tests {
             .expect("discard warning should be reported");
 
         assert!(detail.contains("cleanup warning"));
-        assert!(detail.contains(&format!("stale backup remains at {}", protected_backup.display())));
+        assert!(detail.contains(&format!(
+            "stale backup remains at {}",
+            protected_backup.display()
+        )));
         assert!(detail.contains(&original.display().to_string()));
     }
 }
