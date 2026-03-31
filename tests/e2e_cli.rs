@@ -1002,7 +1002,7 @@ EOF
 
 #[cfg(unix)]
 #[test]
-fn npm_global_falls_back_to_installed_package_binary() {
+fn npm_global_rejects_package_local_binary_without_expected_entrypoint() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
     let fake_npm = fake_bin_dir.join("npm");
@@ -1028,6 +1028,7 @@ EOF
         .env("PATH", &fake_bin_dir)
         .args([
             "--json",
+            "--strict",
             "--managed-dir",
             managed_dir.to_str().expect("utf8 path"),
             "--method",
@@ -1040,23 +1041,28 @@ EOF
             "http-server",
         ])
         .assert()
-        .success()
+        .code(5)
         .get_output()
         .stdout
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
-    let expected = managed_dir
+    let package_binary = managed_dir
         .join("lib")
         .join("node_modules")
         .join("http-server")
         .join("bin")
         .join("http-server");
-    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
     assert_eq!(
         json["items"][0]["destination"],
-        expected.display().to_string()
+        managed_dir
+            .join("bin")
+            .join("http-server")
+            .display()
+            .to_string()
     );
-    assert!(expected.exists());
+    assert!(package_binary.exists());
 }
 
 #[cfg(unix)]
@@ -1252,7 +1258,7 @@ echo "stale"
 
 #[cfg(unix)]
 #[test]
-fn npm_global_manifest_path_beats_nested_dependency_binary() {
+fn npm_global_rejects_package_manifest_binary_without_expected_entrypoint() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
     let fake_npm = fake_bin_dir.join("npm");
@@ -1285,6 +1291,7 @@ EOF
         .env("PATH", &fake_bin_dir)
         .args([
             "--json",
+            "--strict",
             "--managed-dir",
             managed_dir.to_str().expect("utf8 path"),
             "--method",
@@ -1297,21 +1304,37 @@ EOF
             "http-server",
         ])
         .assert()
-        .success()
+        .code(5)
         .get_output()
         .stdout
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
-    let expected = managed_dir
+    let package_binary = managed_dir
         .join("lib")
         .join("node_modules")
         .join("http-server")
         .join("bin")
         .join("http-server");
+    let nested_binary = managed_dir
+        .join("lib")
+        .join("node_modules")
+        .join("http-server")
+        .join("node_modules")
+        .join("other")
+        .join("bin")
+        .join("http-server");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
     assert_eq!(
         json["items"][0]["destination"],
-        expected.display().to_string()
+        managed_dir
+            .join("bin")
+            .join("http-server")
+            .display()
+            .to_string()
     );
+    assert!(package_binary.exists());
+    assert!(nested_binary.exists());
 }
 
 #[cfg(unix)]
@@ -1433,7 +1456,7 @@ EOF
 
 #[cfg(unix)]
 #[test]
-fn npm_global_bun_falls_back_to_discovered_executable() {
+fn npm_global_bun_rejects_noncanonical_binary_location() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
     let fake_bun = fake_bin_dir.join("bun");
@@ -1457,6 +1480,7 @@ EOF
         .env("PATH", &fake_bin_dir)
         .args([
             "--json",
+            "--strict",
             "--managed-dir",
             managed_dir.to_str().expect("utf8 path"),
             "--method",
@@ -1471,23 +1495,28 @@ EOF
             "bun",
         ])
         .assert()
-        .success()
+        .code(5)
         .get_output()
         .stdout
         .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
-    let expected = managed_dir
+    let discovered_binary = managed_dir
         .join("install")
         .join("global")
         .join("node_modules")
         .join(".bin")
         .join("http-server");
-    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
     assert_eq!(
         json["items"][0]["destination"],
-        expected.display().to_string()
+        managed_dir
+            .join("bin")
+            .join("http-server")
+            .display()
+            .to_string()
     );
-    assert!(expected.exists());
+    assert!(discovered_binary.exists());
 }
 
 #[cfg(unix)]

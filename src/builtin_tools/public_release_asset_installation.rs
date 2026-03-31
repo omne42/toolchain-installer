@@ -271,72 +271,17 @@ pub(crate) fn replace_mingit_installation(
     Ok(())
 }
 
-const MINGIT_GIT_ENTRY_SUFFIXES: [&str; 4] = [
-    "/cmd/git.exe",
-    "/mingw64/bin/git.exe",
-    "/usr/bin/git.exe",
-    "/bin/git.exe",
-];
-
-fn mingit_git_entry_priority(path: &str) -> Option<usize> {
-    MINGIT_GIT_ENTRY_SUFFIXES
-        .iter()
-        .position(|suffix| path.ends_with(suffix))
-}
+const MINGIT_GIT_ENTRY_PATH: &str = "PortableGit/cmd/git.exe";
 
 fn discover_mingit_executable(portable_root: &Path) -> OperationResult<(PathBuf, String)> {
-    let mut best_match: Option<(usize, String, PathBuf)> = None;
-    let mut stack = vec![portable_root.to_path_buf()];
-
-    while let Some(dir) = stack.pop() {
-        let entries = fs::read_dir(&dir).map_err(|err| OperationError::install(err.to_string()))?;
-        for entry in entries {
-            let entry = entry.map_err(|err| OperationError::install(err.to_string()))?;
-            let file_type = entry
-                .file_type()
-                .map_err(|err| OperationError::install(err.to_string()))?;
-            let path = entry.path();
-            if file_type.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !file_type.is_file() {
-                continue;
-            }
-
-            let relative = path.strip_prefix(portable_root).map_err(|err| {
-                OperationError::install(format!(
-                    "portable git path is not under extracted root: {err}"
-                ))
-            })?;
-            let normalized = relative.to_string_lossy().replace('\\', "/");
-            let Some(priority) = mingit_git_entry_priority(&normalized) else {
-                continue;
-            };
-            let should_replace = best_match
-                .as_ref()
-                .map(|(current_priority, current_path, _)| {
-                    priority < *current_priority
-                        || (priority == *current_priority && normalized < *current_path)
-                })
-                .unwrap_or(true);
-            if should_replace {
-                best_match = Some((priority, normalized, path));
-            }
-        }
+    let extracted_git = portable_root.join(MINGIT_GIT_ENTRY_PATH);
+    if !extracted_git.is_file() {
+        Err(OperationError::install(format!(
+            "git executable not found in MinGit archive; expected `{MINGIT_GIT_ENTRY_PATH}`"
+        )))
+    } else {
+        Ok((extracted_git, MINGIT_GIT_ENTRY_PATH.to_string()))
     }
-
-    let (_, matched_archive_path, extracted_git) = best_match.ok_or_else(|| {
-        OperationError::install(format!(
-            "git executable not found in MinGit archive; expected one of: {}",
-            MINGIT_GIT_ENTRY_SUFFIXES
-                .iter()
-                .map(|path| format!("`{}`", path.trim_start_matches('/')))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-    })?;
-    Ok((extracted_git, matched_archive_path))
 }
 
 fn write_mingit_launcher(

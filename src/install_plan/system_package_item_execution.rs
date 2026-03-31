@@ -2,9 +2,7 @@ use std::ffi::OsString;
 
 use omne_host_info_primitives::detect_host_platform;
 use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
-use omne_system_package_primitives::{
-    SystemPackageManager, try_default_system_package_install_recipes_for_os,
-};
+use omne_system_package_primitives::try_default_system_package_install_recipes_for_os;
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
@@ -20,11 +18,6 @@ pub(crate) fn execute_system_package_item(
         ))
     };
     let recipes = match item.mode {
-        SystemPackageMode::AptGet => vec![
-            SystemPackageManager::AptGet
-                .try_install_recipe(&item.package)
-                .map_err(invalid_package_name)?,
-        ],
         SystemPackageMode::Explicit(manager) => vec![
             manager
                 .try_install_recipe(&item.package)
