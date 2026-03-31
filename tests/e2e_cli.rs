@@ -1,6 +1,7 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{Cursor, Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
@@ -10,6 +11,14 @@ fn bootstrap_cmd() -> assert_cmd::Command {
     let mut cmd = cargo_bin_cmd!("toolchain-installer");
     cmd.arg("bootstrap");
     cmd
+}
+
+fn path_with_prepend(path: &Path) -> OsString {
+    let mut entries = vec![path.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        entries.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(entries).expect("join PATH")
 }
 
 #[test]
@@ -45,7 +54,7 @@ fn bootstrap_unknown_tool_ignores_plain_path_file_and_stays_unsupported() {
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", temp.path())
+        .env("PATH", path_with_prepend(temp.path()))
         .args(["--json", "--tool", "demo-tool"])
         .assert()
         .success()
@@ -952,7 +961,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$workspace" ] || exit 9
 [ -f "$workspace/package.json" ] || exit 10
-/bin/mkdir -p "$workspace/node_modules/react"
+mkdir -p "$workspace/node_modules/react"
 exit 0
 "#,
     );
@@ -967,7 +976,7 @@ exit 0
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--method",
@@ -1021,19 +1030,19 @@ fn npm_global_uses_custom_managed_dir_as_prefix_root() {
         &fake_npm,
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
-/bin/mkdir -p "$npm_config_prefix/bin"
-/bin/cat > "$npm_config_prefix/bin/http-server" <<'EOF'
+mkdir -p "$npm_config_prefix/bin"
+cat > "$npm_config_prefix/bin/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
 EOF
-/bin/chmod +x "$npm_config_prefix/bin/http-server"
+chmod +x "$npm_config_prefix/bin/http-server"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-npm-prefix");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1072,22 +1081,22 @@ fn npm_global_falls_back_to_installed_package_binary() {
         &fake_npm,
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
-/bin/mkdir -p "$npm_config_prefix/lib/node_modules/http-server/bin"
-/bin/cat > "$npm_config_prefix/lib/node_modules/http-server/package.json" <<'EOF'
+mkdir -p "$npm_config_prefix/lib/node_modules/http-server/bin"
+cat > "$npm_config_prefix/lib/node_modules/http-server/package.json" <<'EOF'
 {"name":"http-server","bin":{"http-server":"bin/http-server"}}
 EOF
-/bin/cat > "$npm_config_prefix/lib/node_modules/http-server/bin/http-server" <<'EOF'
+cat > "$npm_config_prefix/lib/node_modules/http-server/bin/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
 EOF
-/bin/chmod +x "$npm_config_prefix/lib/node_modules/http-server/bin/http-server"
+chmod +x "$npm_config_prefix/lib/node_modules/http-server/bin/http-server"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-npm-prefix");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1131,7 +1140,7 @@ fn npm_global_does_not_report_success_from_unrelated_stale_binary() {
         &fake_npm,
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
-/bin/mkdir -p "$npm_config_prefix"
+mkdir -p "$npm_config_prefix"
 exit 0
 "#,
     );
@@ -1150,7 +1159,7 @@ echo "stale"
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--strict",
@@ -1190,16 +1199,16 @@ fn npm_global_allows_leaf_symlink_destination_on_repeat_install() {
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
 package_dir="$npm_config_prefix/lib/node_modules/http-server"
-/bin/mkdir -p "$package_dir/bin" "$npm_config_prefix/bin"
-/bin/cat > "$package_dir/package.json" <<'EOF'
+mkdir -p "$package_dir/bin" "$npm_config_prefix/bin"
+cat > "$package_dir/package.json" <<'EOF'
 {"name":"http-server","bin":{"http-server":"bin/http-server"}}
 EOF
-/bin/cat > "$package_dir/bin/http-server" <<'EOF'
+cat > "$package_dir/bin/http-server" <<'EOF'
 #!/bin/sh
 echo "fresh $(date +%s%N)"
 EOF
-/bin/chmod +x "$package_dir/bin/http-server"
-/bin/ln -sfn ../lib/node_modules/http-server/bin/http-server "$npm_config_prefix/bin/http-server"
+chmod +x "$package_dir/bin/http-server"
+ln -sfn ../lib/node_modules/http-server/bin/http-server "$npm_config_prefix/bin/http-server"
 "#,
     );
 
@@ -1220,14 +1229,14 @@ EOF
 
     let mut first = bootstrap_cmd();
     first
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args(args)
         .assert()
         .success();
 
     let mut second = bootstrap_cmd();
     let output = second
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args(args)
         .assert()
         .success()
@@ -1257,9 +1266,9 @@ fn npm_global_rejects_stale_manifest_binary_when_install_did_not_refresh_it() {
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
 package_dir="$npm_config_prefix/lib/node_modules/http-server"
-/bin/mkdir -p "$package_dir/bin"
+mkdir -p "$package_dir/bin"
 if [ ! -f "$package_dir/package.json" ]; then
-  /bin/cat > "$package_dir/package.json" <<'EOF'
+  cat > "$package_dir/package.json" <<'EOF'
 {"name":"http-server","bin":{"http-server":"bin/http-server"}}
 EOF
 fi
@@ -1287,7 +1296,7 @@ echo "stale"
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--strict",
@@ -1323,28 +1332,28 @@ fn npm_global_manifest_path_beats_nested_dependency_binary() {
         r#"#!/bin/sh
 [ -n "$npm_config_prefix" ] || exit 9
 package_dir="$npm_config_prefix/lib/node_modules/http-server"
-/bin/mkdir -p "$package_dir/bin"
-/bin/mkdir -p "$package_dir/node_modules/other/bin"
-/bin/cat > "$package_dir/package.json" <<'EOF'
+mkdir -p "$package_dir/bin"
+mkdir -p "$package_dir/node_modules/other/bin"
+cat > "$package_dir/package.json" <<'EOF'
 {"name":"http-server","bin":{"http-server":"bin/http-server"}}
 EOF
-/bin/cat > "$package_dir/bin/http-server" <<'EOF'
+cat > "$package_dir/bin/http-server" <<'EOF'
 #!/bin/sh
 echo "primary"
 EOF
-/bin/cat > "$package_dir/node_modules/other/bin/http-server" <<'EOF'
+cat > "$package_dir/node_modules/other/bin/http-server" <<'EOF'
 #!/bin/sh
 echo "nested"
 EOF
-/bin/chmod +x "$package_dir/bin/http-server"
-/bin/chmod +x "$package_dir/node_modules/other/bin/http-server"
+chmod +x "$package_dir/bin/http-server"
+chmod +x "$package_dir/node_modules/other/bin/http-server"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-npm-prefix");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1390,19 +1399,19 @@ case ":$PATH:" in
   *":$PNPM_HOME:"*) ;;
   *) exit 10 ;;
 esac
-/bin/mkdir -p "$PNPM_HOME"
-/bin/cat > "$PNPM_HOME/http-server" <<'EOF'
+mkdir -p "$PNPM_HOME"
+cat > "$PNPM_HOME/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
 EOF
-/bin/chmod +x "$PNPM_HOME/http-server"
+chmod +x "$PNPM_HOME/http-server"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-pnpm-home");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1449,20 +1458,20 @@ case ":$PATH:" in
   *":$BUN_INSTALL_BIN:"*) ;;
   *) exit 11 ;;
 esac
-/bin/mkdir -p "$BUN_INSTALL_GLOBAL_DIR"
-/bin/mkdir -p "$BUN_INSTALL_BIN"
-/bin/cat > "$BUN_INSTALL_BIN/http-server" <<'EOF'
+mkdir -p "$BUN_INSTALL_GLOBAL_DIR"
+mkdir -p "$BUN_INSTALL_BIN"
+cat > "$BUN_INSTALL_BIN/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
 EOF
-/bin/chmod +x "$BUN_INSTALL_BIN/http-server"
+chmod +x "$BUN_INSTALL_BIN/http-server"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-bun-root");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1504,19 +1513,19 @@ fn npm_global_bun_falls_back_to_discovered_executable() {
         r#"#!/bin/sh
 [ -n "$BUN_INSTALL_GLOBAL_DIR" ] || exit 9
 [ -n "$BUN_INSTALL_BIN" ] || exit 10
-/bin/mkdir -p "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin"
-/bin/cat > "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin/http-server" <<'EOF'
+mkdir -p "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin"
+cat > "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin/http-server" <<'EOF'
 #!/bin/sh
 echo "14.1.1"
 EOF
-/bin/chmod +x "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin/http-server"
+chmod +x "$BUN_INSTALL_GLOBAL_DIR/node_modules/.bin/http-server"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-bun-root");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1571,19 +1580,19 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$root" ] || exit 9
-/bin/mkdir -p "$root/bin"
-/bin/cat > "$root/bin/demo-cargo" <<'EOF'
+mkdir -p "$root/bin"
+cat > "$root/bin/demo-cargo" <<'EOF'
 #!/bin/sh
 echo "demo-cargo 0.1.0"
 EOF
-/bin/chmod +x "$root/bin/demo-cargo"
+chmod +x "$root/bin/demo-cargo"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-managed");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1623,19 +1632,19 @@ fn go_install_reports_source_kind_on_success() {
         &fake_go,
         r#"#!/bin/sh
 [ -n "$GOBIN" ] || exit 9
-/bin/mkdir -p "$GOBIN"
-/bin/cat > "$GOBIN/demo-go" <<'EOF'
+mkdir -p "$GOBIN"
+cat > "$GOBIN/demo-go" <<'EOF'
 #!/bin/sh
 echo "demo-go"
 EOF
-/bin/chmod +x "$GOBIN/demo-go"
+chmod +x "$GOBIN/demo-go"
 "#,
     );
 
     let managed_dir = temp.path().join("custom-managed");
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
@@ -1686,7 +1695,7 @@ echo "stale"
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--strict",
@@ -1740,7 +1749,7 @@ echo "stale"
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--strict",
@@ -1798,7 +1807,7 @@ echo "rustfmt"
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--method",
@@ -1851,12 +1860,12 @@ done
 [ -d "$path" ] || exit 9
 [ -f "$path/Cargo.toml" ] || exit 10
 [ -n "$root" ] || exit 11
-/bin/mkdir -p "$root/bin"
-/bin/cat > "$root/bin/demo-cli" <<'EOF'
+mkdir -p "$root/bin"
+cat > "$root/bin/demo-cli" <<'EOF'
 #!/bin/sh
 echo "demo-cli 0.1.0"
 EOF
-/bin/chmod +x "$root/bin/demo-cli"
+chmod +x "$root/bin/demo-cli"
 "#,
     );
 
@@ -1896,7 +1905,7 @@ edition = "2021"
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .current_dir(&other_cwd)
-        .env("PATH", &fake_bin_dir)
+        .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
             "--managed-dir",
