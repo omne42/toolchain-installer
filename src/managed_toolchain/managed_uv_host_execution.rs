@@ -142,6 +142,33 @@ mod tests {
         assert!(err.contains("timed out"));
     }
 
+    #[cfg_attr(windows, ignore = "probe script is unix-specific")]
+    #[test]
+    fn run_managed_uv_recipe_timeout_reports_captured_stdio() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script_path = tmp.path().join("uv");
+        write_unix_script(
+            &script_path,
+            &portable_unix_script(
+                r#"echo "stdout-before-timeout"
+echo "stderr-before-timeout" >&2
+sleep 5
+"#,
+            ),
+        );
+
+        let err = run_managed_uv_recipe_with_timeout(
+            script_path.as_os_str(),
+            &[],
+            &[],
+            Duration::from_millis(50),
+        )
+        .expect_err("hung process should time out");
+
+        assert!(err.contains("stdout-before-timeout"));
+        assert!(err.contains("stderr-before-timeout"));
+    }
+
     fn write_unix_script(path: &Path, body: &str) {
         fs::write(path, body).expect("write script");
         #[cfg(unix)]

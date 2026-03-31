@@ -1,14 +1,18 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use omne_fs_primitives::{AdvisoryLockGuard, lock_advisory_file_in_ambient_root};
+
 pub(crate) struct ManagedDestinationBackup {
     original: PathBuf,
     backup: Option<PathBuf>,
     label: &'static str,
+    _lock: AdvisoryLockGuard,
 }
 
 impl ManagedDestinationBackup {
     pub(crate) fn stash(original: &Path, label: &'static str) -> Result<Self, String> {
+        let lock = acquire_destination_lock(original, label)?;
         let backup = destination_backup_path(original);
         reconcile_backup_before_stash(original, &backup, label)?;
         if !original.exists() {
@@ -16,6 +20,7 @@ impl ManagedDestinationBackup {
                 original: original.to_path_buf(),
                 backup: None,
                 label,
+                _lock: lock,
             });
         }
         std::fs::rename(original, &backup).map_err(|err| {
@@ -29,6 +34,7 @@ impl ManagedDestinationBackup {
             original: original.to_path_buf(),
             backup: Some(backup),
             label,
+            _lock: lock,
         })
     }
 
@@ -186,6 +192,43 @@ fn destination_backup_path(destination: &Path) -> PathBuf {
     ))
 }
 
+fn acquire_destination_lock(destination: &Path, label: &str) -> Result<AdvisoryLockGuard, String> {
+    let lock_root = destination.parent().unwrap_or_else(|| Path::new("."));
+    let lock_file = destination_lock_file_name(destination);
+    lock_advisory_file_in_ambient_root(
+        lock_root,
+        label,
+        &lock_file,
+        "managed destination lock file",
+    )
+    .map_err(|err| {
+        format!(
+            "cannot lock {} {} before reinstall: {err}",
+            label,
+            destination.display()
+        )
+    })
+}
+
+fn destination_lock_file_name(destination: &Path) -> PathBuf {
+    let label = destination
+        .file_name()
+        .map(|name| sanitize_lock_component(&name.to_string_lossy()))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "managed-tool".to_string());
+    PathBuf::from(format!(".toolchain-installer-lock-{label}.lock"))
+}
+
+fn sanitize_lock_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect()
+}
+
 fn quarantine_backup_path(backup_path: &Path) -> Result<PathBuf, String> {
     let parent = backup_path
         .parent()
@@ -212,6 +255,9 @@ fn quarantine_backup_path(backup_path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     use super::{ManagedDestinationBackup, promote_staged_file};
 
@@ -366,6 +412,7 @@ mod tests {
             original: original.clone(),
             backup: Some(protected_backup.clone()),
             label: "managed binary",
+            _lock: super::acquire_destination_lock(&original, "managed binary").expect("lock"),
         };
 
         let detail = backup
@@ -378,5 +425,38 @@ mod tests {
             protected_backup.display()
         )));
         assert!(detail.contains(&original.display().to_string()));
+    }
+
+    #[test]
+    fn stash_serializes_same_destination_until_first_guard_drops() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let original = temp.path().join("managed-tool");
+        std::fs::write(&original, "original").expect("write original");
+
+        let first = ManagedDestinationBackup::stash(&original, "managed binary").expect("stash");
+        let (tx, rx) = mpsc::channel();
+        let original_for_thread = original.clone();
+        let handle = thread::spawn(move || {
+            let second = ManagedDestinationBackup::stash(&original_for_thread, "managed binary")
+                .expect("second stash");
+            second.restore().expect("second restore");
+            tx.send(()).expect("send completion");
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "second stash should wait for the advisory lock"
+        );
+
+        first.restore().expect("restore first");
+        drop(first);
+
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("second stash should complete after lock release");
+        handle.join().expect("join thread");
+        assert_eq!(
+            std::fs::read_to_string(&original).expect("read restored original"),
+            "original"
+        );
     }
 }

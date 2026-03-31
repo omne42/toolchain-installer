@@ -155,7 +155,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 当目标是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；`bin\\tool.exe` 和 `bin/tool.exe` 会落到同一个托管相对路径，不再依赖当前宿主机是否把反斜杠当普通字符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - `uv_tool` 若显式提供 `binary_name`，installer 会改用 `uv tool install --from <package> <binary_name>`，把请求的可执行文件名直接纳入上游安装契约，而不是只在安装后被动检查结果路径。
-- `cargo_install`、`go_install`、`uv_tool` 在替换同名目标路径时，会先把旧路径整体暂存到同级 canonical backup；旧路径无论原先是文件还是目录，安装成功后都会清理备份，失败时恢复原状，不会把目录误当文件导致残留 `.toolchain-installer-backup`。
+- `cargo_install`、`go_install`、`uv_tool` 在替换同名目标路径时，会先按最终 `destination` 获取同级 advisory lock，再把旧路径整体暂存到 canonical backup；并发 installer 命中同一目标时会串行等待，不会因为共享固定备份名而互相删掉对方的新产物。旧路径无论原先是文件还是目录，安装成功后都会清理备份，失败时恢复原状，不会把目录误当文件导致残留 `.toolchain-installer-backup`。
 - 如果上一次安装在 stash 之后异常中断，下一次 `cargo_install`、`go_install`、`uv_tool` 重试会先用 canonical backup 自愈恢复旧目标，再重新暂存；如果成功路径上的旧 backup 已经只剩清理残留，则会自动移到同级 `*.stale-*` 隔离名，避免后续重试继续被固定备份名卡死。
 - 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一路径，也不能形成父子路径重叠，避免后执行项覆盖先执行项目录树。
 - 对 Windows target，冲突校验始终按大小写不敏感语义比较路径；对 Darwin target，则按目标路径所在宿主文件系统的真实大小写语义比较，不再把所有 macOS 卷一律当成大小写不敏感。
