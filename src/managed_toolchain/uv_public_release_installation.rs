@@ -58,7 +58,7 @@ pub(crate) async fn install_uv_from_public_release(
     } = downloaded;
     Ok(InstallSource::new(
         source.url,
-        result_source_kind_for_download_candidate(source.kind),
+        result_source_kind_for_download_candidate(&source.source_label),
     )
     .with_archive_match(archive_match.into()))
 }

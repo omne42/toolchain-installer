@@ -75,7 +75,9 @@ pub(crate) async fn execute_release_item(
             tool: item.id.clone(),
             status: BootstrapStatus::Installed,
             source: Some(redact_source_url(&source.url)),
-            source_kind: Some(result_source_kind_for_download_candidate(source.kind)),
+            source_kind: Some(result_source_kind_for_download_candidate(
+                &source.source_label,
+            )),
             archive_match: Some(archive_match.into()),
             destination: Some(destination.display().to_string()),
             detail: None,
@@ -103,7 +105,7 @@ pub(crate) async fn execute_release_item(
         status: BootstrapStatus::Installed,
         source: Some(redact_source_url(&downloaded_source.url)),
         source_kind: Some(result_source_kind_for_download_candidate(
-            downloaded_source.kind,
+            &downloaded_source.source_label,
         )),
         archive_match: None,
         destination: Some(destination.display().to_string()),
