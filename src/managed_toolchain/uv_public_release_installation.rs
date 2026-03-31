@@ -2,8 +2,8 @@ use std::path::Path;
 
 use github_kit::GitHubReleaseAsset;
 use omne_artifact_install_primitives::{
-    ArtifactDownloadCandidate, ArtifactInstallError, BinaryArchiveInstallRequest,
-    InstalledArchiveBinary, download_and_install_binary_from_archive,
+    ArtifactDownloadCandidate, ArtifactInstallError, ArtifactInstallErrorDetail,
+    BinaryArchiveInstallRequest, InstalledArchiveBinary, download_and_install_binary_from_archive,
 };
 use omne_integrity_primitives::parse_sha256_digest;
 
@@ -87,7 +87,6 @@ async fn download_uv_archive_binary(
         Err(err)
             if should_retry_uv_archive_with_fallback(
                 &err,
-                request.binary_name,
                 request.archive_binary_hint,
                 fallback_archive_binary_hint,
             ) =>
@@ -104,15 +103,12 @@ async fn download_uv_archive_binary(
 
 fn should_retry_uv_archive_with_fallback(
     err: &ArtifactInstallError,
-    binary_name: &str,
     archive_binary_hint: Option<&str>,
     fallback_archive_binary_hint: Option<&str>,
 ) -> bool {
     archive_binary_hint != fallback_archive_binary_hint
         && fallback_archive_binary_hint.is_some()
-        && err
-            .to_string()
-            .contains(&format!("binary `{binary_name}` not found"))
+        && err.detail() == Some(ArtifactInstallErrorDetail::ArchiveBinaryNotFound)
 }
 
 fn uv_archive_binary_hint(asset_name: &str, binary_name: &str) -> Option<String> {
@@ -132,4 +128,36 @@ fn archive_root_name(asset_name: &str) -> Option<&str> {
         .strip_suffix(".tar.gz")
         .or_else(|| asset_name.strip_suffix(".tar.xz"))
         .or_else(|| asset_name.strip_suffix(".zip"))
+}
+
+#[cfg(test)]
+mod tests {
+    use omne_artifact_install_primitives::{ArtifactInstallError, ArtifactInstallErrorDetail};
+
+    use super::should_retry_uv_archive_with_fallback;
+
+    #[test]
+    fn uv_archive_fallback_requires_structured_missing_binary_detail() {
+        let err = ArtifactInstallError::install_with_detail(
+            ArtifactInstallErrorDetail::ArchiveBinaryNotFound,
+            "binary missing",
+        );
+
+        assert!(should_retry_uv_archive_with_fallback(
+            &err,
+            Some("uv-x86_64-unknown-linux-gnu/uv"),
+            Some("uv"),
+        ));
+    }
+
+    #[test]
+    fn uv_archive_fallback_ignores_plain_install_errors() {
+        let err = ArtifactInstallError::install("binary `uv` not found in tar.gz archive");
+
+        assert!(!should_retry_uv_archive_with_fallback(
+            &err,
+            Some("uv-x86_64-unknown-linux-gnu/uv"),
+            Some("uv"),
+        ));
+    }
 }
