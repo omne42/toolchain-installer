@@ -1043,6 +1043,83 @@ exit 0
     assert!(workspace_dir.join("node_modules").join("react").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_package_plan_file_resolves_relative_destination_against_plan_directory() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+workspace=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    workspace="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+[ -n "$workspace" ] || exit 9
+[ -f "$workspace/package.json" ] || exit 10
+/bin/mkdir -p "$workspace/node_modules/react"
+exit 0
+"#,
+    );
+
+    let managed_dir = temp.path().join("managed");
+    let plan_dir = temp.path().join("plans");
+    let workspace_dir = plan_dir.join("apps").join("demo-web");
+    std::fs::create_dir_all(&workspace_dir).expect("create workspace dir");
+    std::fs::write(
+        workspace_dir.join("package.json"),
+        r#"{"name":"demo-web","private":true}"#,
+    )
+    .expect("write package.json");
+
+    let plan_path = plan_dir.join("workspace-plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "react",
+      "method": "workspace_package",
+      "package": "react@18.3.1",
+      "destination": "apps/demo-web"
+    }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args([
+            "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--plan-file",
+        ])
+        .arg(&plan_path)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        workspace_dir.display().to_string()
+    );
+    assert!(workspace_dir.join("node_modules").join("react").exists());
+    assert!(!managed_dir.join("apps").join("demo-web").exists());
+}
+
 #[test]
 fn npm_global_rejects_destination_field() {
     let mut cmd = bootstrap_cmd();
