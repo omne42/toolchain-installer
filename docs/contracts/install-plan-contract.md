@@ -129,7 +129,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 托管落盘方法的 Unix 风格绝对路径如 `/tmp/demo` 会被拒绝，避免绕过托管目录边界。
 - 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
 - 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo` 这类 root-relative 路径。
-- 只有当宿主机本身是 Windows 时，托管落盘方法才接受 `C:\tools\demo.exe` 这类 Windows 绝对路径，并按绝对路径保留；在 Linux/macOS 宿主上，即使 `target_triple` 是 Windows，也会在执行前拒绝这类目标，避免把它误当成普通相对文件名落到错误位置。
+- 托管落盘方法同样拒绝 `C:\tools\demo.exe` 这类 Windows 绝对路径；不能借“宿主机本身是 Windows”或“显式把 `target_triple` 设成 Windows”把写入绕出 `managed_dir`。
 - `workspace_package` 同样只在 Windows 宿主上接受 `C:\workspace\app` 这类 Windows 绝对目录；非 Windows 宿主必须使用当前宿主机有效的绝对路径语法。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
 - `release.archive_binary` 表示 archive 内目标二进制的相对路径；installer 会先规范斜杠，并在常见“单一根目录” archive 上自动补齐该根目录，兼容 shared runtime 当前要求的精确 archive 路径匹配。
@@ -140,6 +140,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `system_package`、`apt` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
 - 多个 `workspace_package` item 可以指向同一个 workspace；这表示对同一工作区重复执行依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
+- `npm_global` 使用 `bun` 时，如果 `managed_dir` 本身已经是 `.../bin`，最终 CLI 入口会直接落在这层 `bin/` 下，不会再额外嵌一层 `bin/bin/`。
 - `npm_global`、`cargo_install`、`go_install`、`uv_tool` 若未显式提供 `binary_name`，installer 会优先从 `package` 或解析后的本地/远端来源推导默认二进制名；只有确实推不出来时才回退到 `id`。
 - `cargo_install`、`go_install` 若显式提供 `binary_name`，它表示最终托管目标文件名；installer 会先在隔离 staging 目录执行安装，再把本次实际产出的目标二进制提升到该文件名。若 staging 产出了多个二进制且没有一个名字直接匹配请求的 `binary_name`，整项会返回失败而不是猜测。
 - `cargo_install` 若显式提供 `binary_name`，installer 还会把它传给 `cargo install --bin <binary_name>`；如果上游 crate 根本不导出这个可执行文件，整项会直接失败，而不是靠旧文件误报成功。
@@ -147,7 +148,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的包元数据证明“请求的包名/版本当前确实已安装”；孤儿旧 binary 不会被当成成功安装。
 - `npm_global` 在托管目录内做包目录或回退二进制探测时不会跟随目录 symlink，避免循环目录把安装流程拖死；同时会跳过不可读目录、不可读 manifest 和坏 manifest，不会因为单个坏条目把幂等重跑误判成失败。
 - `cargo_install` 若 `managed_dir` 本身不是 `bin/` 目录，结果二进制会落到 `managed_dir/bin/<binary>`，不会越过调用方给定的托管根。
-- plan 文件中的本地相对路径输入（例如 `cargo_install`/`go_install` 的本地包路径，以及 `workspace_package` 的相对工作区目录）按 plan 文件所在目录解析，而不是按 CLI 进程当前工作目录解析。
+- plan 文件中的本地相对路径输入（例如 `cargo_install`/`go_install` 的本地包路径，以及 `workspace_package` 的相对工作区目录）按 plan 文件所在目录解析；解析时会先对 plan 基准目录做词法规范化，不会因为 `plans/../plans` 这类等价写法绕过后续目标冲突校验。
 - 当目标是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；`bin\\tool.exe` 和 `bin/tool.exe` 会落到同一个托管相对路径，不再依赖当前宿主机是否把反斜杠当普通字符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - `uv_tool` 若显式提供 `binary_name`，installer 会改用 `uv tool install --from <package> <binary_name>`，把请求的可执行文件名直接纳入上游安装契约，而不是只在安装后被动检查结果路径。

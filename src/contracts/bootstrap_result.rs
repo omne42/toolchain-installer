@@ -91,6 +91,8 @@ pub struct BootstrapResult {
     pub items: Vec<BootstrapItem>,
 }
 
+pub type InstallExecutionResult = BootstrapResult;
+
 pub fn has_failure(items: &[BootstrapItem]) -> bool {
     items
         .iter()

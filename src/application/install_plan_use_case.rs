@@ -1,9 +1,9 @@
 use crate::contracts::{
-    BootstrapResult, ExecutionRequest, InstallPlan, OUTPUT_SCHEMA_VERSION,
+    ExecutionRequest, InstallExecutionResult, InstallPlan, OUTPUT_SCHEMA_VERSION,
     build_failed_bootstrap_item,
 };
+use crate::error::InstallerResult;
 use crate::error::OperationError;
-use crate::error::{InstallerError, InstallerResult};
 use crate::install_plan::install_plan_validation::{
     validate_destination_conflicts, validate_plan_structure,
 };
@@ -12,26 +12,20 @@ use crate::install_plan::item_destination_resolution::{
     validate_managed_path_boundary,
 };
 use crate::install_plan::item_method_dispatch::execute_plan_item;
-use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 
 use super::execution_context::ExecutionContext;
 
 pub async fn apply_install_plan(
     plan: &InstallPlan,
     request: &ExecutionRequest,
-) -> InstallerResult<BootstrapResult> {
-    let host_triple = detect_host_target_triple()
-        .map(str::to_string)
-        .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple)
-        .map_err(|err| InstallerError::usage(err.to_string()))?;
+) -> InstallerResult<InstallExecutionResult> {
+    let ctx = ExecutionContext::for_install_plan(request)?;
     let resolved_items = validate_plan_structure(
         plan,
-        &host_triple,
-        &target_triple,
+        &ctx.host_triple,
+        &ctx.target_triple,
         request.plan_base_dir.as_deref(),
     )?;
-    let ctx = ExecutionContext::for_install_plan(request)?;
     validate_destination_conflicts(&resolved_items, &ctx.target_triple, &ctx.managed_dir)?;
 
     let mut items = Vec::new();
@@ -83,7 +77,7 @@ pub async fn apply_install_plan(
         items.push(bootstrap_item);
     }
 
-    Ok(BootstrapResult {
+    Ok(InstallExecutionResult {
         schema_version: OUTPUT_SCHEMA_VERSION,
         host_triple: ctx.host_triple,
         target_triple: ctx.target_triple,
