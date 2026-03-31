@@ -36,6 +36,7 @@
    - `id` 与 `binary_name` 都必须是纯叶子名，不允许把路径片段塞进默认目标名。
    - 相对路径只会解析到 `managed_dir` 下；当目标是 Windows 时，`bin\\tool.exe` 与 `bin/tool.exe` 会按同一相对层级处理。
    - 解析后若两个 item 指向同一目标路径，或一个目标路径嵌套在另一个目标路径之下，plan 会在执行前直接拒绝。
+   - `npm_global` 允许复用托管目录里已有的 leaf symlink 入口，但这个 symlink 解析后的目标仍必须留在 `managed_dir` 内；不能借复用入口把实际执行路径指到托管根外部。
 10. 托管 bootstrap 健康检查
    - Windows managed `git` 的 launcher 只允许指向 `managed_dir` 内的 MinGit payload；带 `..` 的逃逸路径会被直接视为损坏安装。
    - Windows managed `git` 的 launcher 还必须落在 `managed_dir/git-portable/PortableGit/` 这棵 payload 子树内；即使仍在 `git-portable/` 下，只要指向其他旁路目录也会被视为损坏安装。

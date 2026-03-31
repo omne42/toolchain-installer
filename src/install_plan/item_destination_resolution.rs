@@ -355,6 +355,7 @@ pub(crate) fn validate_managed_path_boundary(
     for (index, component) in components.iter().enumerate() {
         current.push(component.as_os_str());
         if allow_leaf_symlink && index + 1 == components.len() {
+            validate_allowed_leaf_symlink(&current, managed_dir)?;
             continue;
         }
         reject_symlink_path_component(&current, managed_dir)?;
@@ -448,6 +449,54 @@ fn reject_symlink_path_component(candidate: &Path, managed_dir: &Path) -> Result
             managed_dir.display(),
             candidate.display()
         ));
+    }
+    Ok(())
+}
+
+fn validate_allowed_leaf_symlink(candidate: &Path, managed_dir: &Path) -> Result<(), String> {
+    let metadata = match std::fs::symlink_metadata(candidate) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(format!(
+                "cannot inspect managed destination component `{}`: {err}",
+                candidate.display()
+            ));
+        }
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+
+    let target = std::fs::read_link(candidate).map_err(|err| {
+        format!(
+            "cannot inspect managed destination symlink `{}`: {err}",
+            candidate.display()
+        )
+    })?;
+    let parent = candidate.parent().unwrap_or(managed_dir);
+    let resolved = if destination_is_absolute(&target) {
+        normalize_lexical_path(&target)
+    } else {
+        normalize_lexical_path(&parent.join(target))
+    };
+    if !resolved.starts_with(managed_dir) {
+        return Err(format!(
+            "managed destination under `{}` escapes via symlink leaf `{}` -> `{}`",
+            managed_dir.display(),
+            candidate.display(),
+            resolved.display()
+        ));
+    }
+
+    reject_symlink_path_component(managed_dir, managed_dir)?;
+    let relative = resolved
+        .strip_prefix(managed_dir)
+        .map_err(|err| format!("cannot compute managed-relative destination: {err}"))?;
+    let mut current = managed_dir.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        reject_symlink_path_component(&current, managed_dir)?;
     }
     Ok(())
 }
@@ -773,5 +822,28 @@ mod tests {
 
         validate_managed_path_boundary(&managed_dir.join("bin").join("demo"), &managed_dir, true)
             .expect("leaf symlink should be allowed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_managed_path_boundary_rejects_leaf_symlink_that_escapes_managed_dir() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = tmp.path().join("managed");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(managed_dir.join("bin")).expect("create managed bin");
+        std::fs::create_dir_all(&outside).expect("create outside dir");
+        std::fs::write(outside.join("demo"), "outside").expect("write outside file");
+        symlink(outside.join("demo"), managed_dir.join("bin").join("demo"))
+            .expect("create escaping symlink");
+
+        let err = validate_managed_path_boundary(
+            &managed_dir.join("bin").join("demo"),
+            &managed_dir,
+            true,
+        )
+        .expect_err("escaping leaf symlink should be rejected");
+        assert!(err.contains("escapes via symlink leaf"));
     }
 }

@@ -342,7 +342,65 @@ exit 0
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
-fn cargo_install_promotes_single_staged_binary_to_requested_destination_name() {
+fn cargo_install_promotes_matching_staged_binary_to_requested_destination_name() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cargo = tmp.path().join("cargo");
+    write_executable(
+        &cargo,
+        r#"#!/bin/sh
+root=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--root" ]; then
+    root="$2"
+    shift 2
+    continue
+  fi
+  if [ "$1" = "--bin" ]; then
+    if [ "$2" != "alias-tool" ]; then
+      echo "unexpected cargo --bin value: $2" >&2
+      exit 7
+    fi
+    shift 2
+    continue
+  fi
+  shift
+done
+mkdir -p "$root/bin"
+printf 'cargo-installed' > "$root/bin/alias-tool"
+chmod +x "$root/bin/alias-tool"
+"#,
+    )
+    .expect("write cargo");
+    let managed_dir = tmp.path().join("managed");
+    let item = CargoInstallPlanItem {
+        id: "cargo-demo".to_string(),
+        source: CargoInstallSource::RegistryPackage {
+            package: "demo-tool".to_string(),
+            version: None,
+        },
+        binary_name: "alias-tool".to_string(),
+        binary_name_explicit: true,
+    };
+
+    let result = with_path_prepend(tmp.path(), || {
+        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
+    })
+    .expect("cargo install should succeed");
+
+    let destination = managed_dir.join("bin").join("alias-tool");
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read installed cargo binary"),
+        "cargo-installed"
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn cargo_install_rejects_single_staged_binary_that_does_not_match_explicit_binary_name() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cargo = tmp.path().join("cargo");
     write_executable(
@@ -382,19 +440,18 @@ chmod +x "$root/bin/actual-tool"
         binary_name_explicit: true,
     };
 
-    let result = with_path_prepend(tmp.path(), || {
+    let err = with_path_prepend(tmp.path(), || {
         execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
     })
-    .expect("cargo install should succeed");
+    .expect_err("explicit binary name mismatch should fail");
 
-    let destination = managed_dir.join("bin").join("alias-tool");
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(destination.to_str().unwrap())
+    assert!(
+        err.to_string()
+            .contains("did not match the requested binary name `alias-tool`")
     );
-    assert_eq!(
-        std::fs::read_to_string(&destination).expect("read installed cargo binary"),
-        "cargo-installed"
+    assert!(
+        !managed_dir.join("bin").join("alias-tool").exists(),
+        "mismatched staged binary must not be promoted into the managed destination"
     );
 }
 
