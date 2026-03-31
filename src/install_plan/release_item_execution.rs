@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use omne_artifact_install_primitives::{
-    ArtifactDownloadCandidate, ArtifactInstallError, BinaryArchiveInstallRequest,
-    DownloadBinaryRequest, InstalledArchiveBinary, download_and_install_binary_from_archive,
-    download_binary_to_destination, is_binary_archive_asset_name,
+    ArtifactDownloadCandidate, ArtifactInstallError, ArtifactInstallErrorDetail,
+    BinaryArchiveInstallRequest, DownloadBinaryRequest, InstalledArchiveBinary,
+    download_and_install_binary_from_archive, download_binary_to_destination,
+    is_binary_archive_asset_name,
 };
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
@@ -126,7 +127,6 @@ async fn download_release_archive_binary(
         Err(err)
             if should_retry_release_archive_binary_with_fallback(
                 &err,
-                request.binary_name,
                 request.archive_binary_hint,
                 fallback_archive_binary_hint,
             ) =>
@@ -143,15 +143,12 @@ async fn download_release_archive_binary(
 
 fn should_retry_release_archive_binary_with_fallback(
     err: &ArtifactInstallError,
-    binary_name: &str,
     archive_binary_hint: Option<&str>,
     fallback_archive_binary_hint: Option<&str>,
 ) -> bool {
     archive_binary_hint != fallback_archive_binary_hint
         && fallback_archive_binary_hint.is_some()
-        && err
-            .to_string()
-            .contains(&format!("binary `{binary_name}` not found"))
+        && err.detail() == Some(ArtifactInstallErrorDetail::ArchiveBinaryNotFound)
 }
 
 fn release_archive_binary_hint(asset_name: &str, archive_binary: Option<&str>) -> Option<String> {
@@ -189,9 +186,11 @@ fn archive_root_name(asset_name: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    use omne_artifact_install_primitives::{ArtifactInstallError, ArtifactInstallErrorDetail};
+
     use super::{
         normalize_archive_binary_hint, release_archive_binary_hint,
-        release_archive_binary_hint_fallback,
+        release_archive_binary_hint_fallback, should_retry_release_archive_binary_with_fallback,
     };
 
     #[test]
@@ -228,5 +227,30 @@ mod tests {
             normalize_archive_binary_hint(Some("\\demo\\bin\\demo.exe")),
             Some("demo/bin/demo.exe".to_string())
         );
+    }
+
+    #[test]
+    fn release_archive_binary_fallback_requires_structured_missing_binary_detail() {
+        let err = ArtifactInstallError::install_with_detail(
+            ArtifactInstallErrorDetail::ArchiveBinaryNotFound,
+            "binary missing",
+        );
+
+        assert!(should_retry_release_archive_binary_with_fallback(
+            &err,
+            Some("root/bin/demo"),
+            Some("bin/demo"),
+        ));
+    }
+
+    #[test]
+    fn release_archive_binary_fallback_ignores_plain_install_errors() {
+        let err = ArtifactInstallError::install("binary `demo` not found in zip archive");
+
+        assert!(!should_retry_release_archive_binary_with_fallback(
+            &err,
+            Some("root/bin/demo"),
+            Some("bin/demo"),
+        ));
     }
 }
