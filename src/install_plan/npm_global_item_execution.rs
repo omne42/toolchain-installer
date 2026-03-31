@@ -271,12 +271,14 @@ fn resolve_npm_global_destination(
         return Some(destination);
     }
 
-    if let Some(destination) =
-        resolve_installed_package_dir(package, fallback_package_dir, package_search_root)
-            .and_then(|package_dir| resolve_package_bin_script(&package_dir, package, binary_name))
-            .filter(|path| command_path_exists(path))
+    for package_dir in
+        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
     {
-        return Some(destination);
+        if let Some(destination) = resolve_package_bin_script(&package_dir, package, binary_name)
+            .filter(|path| command_path_exists(path))
+        {
+            return Some(destination);
+        }
     }
 
     if let Some(destination) =
@@ -297,8 +299,8 @@ fn capture_installation_state(
     fallback_search_root: Option<&Path>,
 ) -> HashMap<PathBuf, Option<FileFingerprint>> {
     let mut paths = candidate_binary_paths(binary_path, binary_name);
-    if let Some(package_dir) =
-        resolve_installed_package_dir(package, fallback_package_dir, package_search_root)
+    for package_dir in
+        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
     {
         let manifest_path = package_dir.join("package.json");
         paths.push(manifest_path.clone());
@@ -370,20 +372,19 @@ fn managed_package_matches_request(
     package_search_root: Option<&Path>,
     fallback_search_root: Option<&Path>,
 ) -> bool {
-    let Some(package_dir) =
-        resolve_installed_package_dir(package, fallback_package_dir, package_search_root)
-    else {
-        return false;
-    };
-    let manifest_path = package_dir.join("package.json");
-    if !manifest_satisfies_package_request(&manifest_path, package) {
-        return false;
-    }
-
-    if let Some(path) = resolve_package_bin_script(&package_dir, package, binary_name)
-        && command_path_exists(&path)
+    for package_dir in
+        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
     {
-        return true;
+        let manifest_path = package_dir.join("package.json");
+        if !manifest_satisfies_package_request(&manifest_path, package) {
+            continue;
+        }
+
+        if let Some(path) = resolve_package_bin_script(&package_dir, package, binary_name)
+            && command_path_exists(&path)
+        {
+            return true;
+        }
     }
 
     fallback_search_root
@@ -391,18 +392,24 @@ fn managed_package_matches_request(
         .is_some()
 }
 
-fn resolve_installed_package_dir(
+fn resolve_installed_package_dirs(
     package: &str,
     direct_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
-) -> Option<PathBuf> {
-    direct_package_dir
-        .filter(|path| path.join("package.json").is_file())
-        .map(Path::to_path_buf)
-        .or_else(|| {
-            package_search_root
-                .and_then(|root| find_package_dir_under_root(root, npm_package_name(package)))
-        })
+) -> Vec<PathBuf> {
+    let mut package_dirs = Vec::new();
+    if let Some(path) = direct_package_dir.filter(|path| path.join("package.json").is_file()) {
+        package_dirs.push(path.to_path_buf());
+    }
+    if let Some(root) = package_search_root {
+        package_dirs.extend(find_package_dirs_under_root(
+            root,
+            package_request_name_constraint(package),
+        ));
+    }
+    package_dirs.sort();
+    package_dirs.dedup();
+    package_dirs
 }
 
 fn manifest_satisfies_package_request(manifest_path: &Path, package: &str) -> bool {
@@ -415,16 +422,19 @@ fn manifest_satisfies_package_request(manifest_path: &Path, package: &str) -> bo
     let Some(name) = manifest.get("name").and_then(|value| value.as_str()) else {
         return false;
     };
-    if name != npm_package_name(package) {
+    let request = npm_package_request(package);
+    if let Some(expected_name) = request.package_name()
+        && name != expected_name
+    {
         return false;
     }
 
-    match npm_package_version(package) {
-        Some(version) => manifest
+    match request {
+        NpmPackageRequest::ExactVersion { version, .. } => manifest
             .get("version")
             .and_then(|value| value.as_str())
             .is_some_and(|installed| installed == version),
-        None => true,
+        NpmPackageRequest::Named { .. } | NpmPackageRequest::ExplicitSource { .. } => true,
     }
 }
 
@@ -509,35 +519,9 @@ fn resolve_bun_package_dir(global_dir: &Path, package: &str) -> Option<PathBuf> 
     if direct.exists() {
         return Some(direct);
     }
-    find_package_dir_under_root(global_dir, npm_package_name(package))
-}
-
-fn find_package_dir_under_root(root: &Path, package_name: &str) -> Option<PathBuf> {
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let manifest_path = dir.join("package.json");
-        if manifest_path.is_file()
-            && std::fs::read_to_string(&manifest_path)
-                .ok()
-                .and_then(|manifest| package_name_from_manifest(&manifest))
-                .is_some_and(|name| name == package_name)
-        {
-            return Some(dir);
-        }
-
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if entry_is_plain_directory(&entry) {
-                stack.push(entry.path());
-            }
-        }
-    }
-    None
+    find_package_dirs_under_root(global_dir, Some(npm_package_name(package)))
+        .into_iter()
+        .next()
 }
 
 #[cfg(windows)]
@@ -619,6 +603,56 @@ fn package_name_from_manifest(manifest: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NpmPackageRequest<'a> {
+    ExactVersion {
+        package_name: &'a str,
+        version: &'a str,
+    },
+    Named {
+        package_name: &'a str,
+    },
+    ExplicitSource {
+        package_name: Option<&'a str>,
+    },
+}
+
+impl NpmPackageRequest<'_> {
+    fn package_name(&self) -> Option<&str> {
+        match self {
+            Self::ExactVersion { package_name, .. } | Self::Named { package_name } => {
+                Some(package_name)
+            }
+            Self::ExplicitSource { package_name } => *package_name,
+        }
+    }
+}
+
+fn npm_package_request(package: &str) -> NpmPackageRequest<'_> {
+    if node_package_spec_uses_explicit_source(package) {
+        return NpmPackageRequest::ExplicitSource {
+            package_name: npm_package_name_from_explicit_source(package),
+        };
+    }
+
+    let package_name = npm_package_name(package);
+    match npm_package_version(package) {
+        Some(version) if npm_package_version_is_exact(version) => NpmPackageRequest::ExactVersion {
+            package_name,
+            version,
+        },
+        Some(_) | None => NpmPackageRequest::Named { package_name },
+    }
+}
+
+fn package_request_name_constraint(package: &str) -> Option<&str> {
+    match npm_package_request(package) {
+        NpmPackageRequest::ExactVersion { package_name, .. }
+        | NpmPackageRequest::Named { package_name } => Some(package_name),
+        NpmPackageRequest::ExplicitSource { package_name } => package_name,
+    }
+}
+
 fn npm_package_name(package: &str) -> &str {
     let package = package.trim();
     if package.starts_with('@') {
@@ -644,10 +678,86 @@ fn npm_package_version(package: &str) -> Option<&str> {
     (!version.is_empty()).then_some(version)
 }
 
+fn npm_package_version_is_exact(version: &str) -> bool {
+    let version = version.trim();
+    if version.is_empty()
+        || version.eq_ignore_ascii_case("latest")
+        || version.contains([' ', '^', '~', '<', '>', '=', '*', '|'])
+        || version.ends_with(".x")
+        || version.ends_with(".*")
+    {
+        return false;
+    }
+
+    let version = version.strip_prefix('v').unwrap_or(version);
+    version.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+        && version
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '+'))
+}
+
+fn npm_package_name_from_explicit_source(package: &str) -> Option<&str> {
+    let package = package.trim();
+    if let Some(alias) = package.split_once("@npm:").map(|(alias, _)| alias)
+        && !alias.is_empty()
+    {
+        return Some(alias);
+    }
+    package.strip_prefix("npm:").map(npm_package_name)
+}
+
+fn node_package_spec_uses_explicit_source(package: &str) -> bool {
+    [
+        "file:",
+        "git:",
+        "git+",
+        "http://",
+        "https://",
+        "github:",
+        "workspace:",
+        "link:",
+        "npm:",
+    ]
+    .iter()
+    .any(|prefix| package.starts_with(prefix))
+        || package.contains("@npm:")
+}
+
 fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf> {
     find_matching_binary_paths_under_dir(root, binary_name)
         .into_iter()
         .find(|path| command_path_exists(path))
+}
+
+fn find_package_dirs_under_root(root: &Path, package_name: Option<&str>) -> Vec<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let manifest_path = dir.join("package.json");
+        if manifest_path.is_file() {
+            let matches_name = std::fs::read_to_string(&manifest_path)
+                .ok()
+                .and_then(|manifest| package_name_from_manifest(&manifest))
+                .is_some_and(|name| package_name.is_none_or(|expected| name == expected));
+            if matches_name {
+                matches.push(dir.clone());
+            }
+        }
+
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            if entry_is_plain_directory(&entry) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    matches.sort();
+    matches
 }
 
 fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<PathBuf> {
@@ -771,10 +881,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_npm_global_recipe, capture_installation_state, file_fingerprint, find_binary_at_path,
-        find_matching_binary_paths_under_dir, find_package_dir_under_root,
-        installation_result_is_acceptable, npm_global_package_dir, package_bin_relative_path,
-        resolve_npm_global_destination, resolve_package_bin_script,
+        NpmPackageRequest, build_npm_global_recipe, capture_installation_state, file_fingerprint,
+        find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
+        installation_result_is_acceptable, npm_global_package_dir, npm_package_request,
+        package_bin_relative_path, resolve_npm_global_destination, resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
 
@@ -981,6 +1091,215 @@ mod tests {
     }
 
     #[test]
+    fn npm_package_request_only_treats_exact_versions_as_exact() {
+        assert_eq!(
+            npm_package_request("http-server@14.1.1"),
+            NpmPackageRequest::ExactVersion {
+                package_name: "http-server",
+                version: "14.1.1",
+            }
+        );
+        assert_eq!(
+            npm_package_request("http-server@latest"),
+            NpmPackageRequest::Named {
+                package_name: "http-server",
+            }
+        );
+        assert_eq!(
+            npm_package_request("http-server@^14"),
+            NpmPackageRequest::Named {
+                package_name: "http-server",
+            }
+        );
+        assert_eq!(
+            npm_package_request("file:../packages/http-server"),
+            NpmPackageRequest::ExplicitSource { package_name: None }
+        );
+        assert_eq!(
+            npm_package_request("alias@npm:http-server@14.1.1"),
+            NpmPackageRequest::ExplicitSource {
+                package_name: Some("alias"),
+            }
+        );
+    }
+
+    #[test]
+    fn installation_result_accepts_noop_for_tag_spec_with_matching_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_dir = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        let binary_path = temp.path().join("bin").join("http-server");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "http-server",
+            "14.1.1",
+            "bin/http-server",
+        );
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@latest",
+            "http-server",
+            Some(&package_dir),
+            None,
+            None,
+        );
+
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "http-server@latest",
+            "http-server",
+            Some(&package_dir),
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_noop_for_explicit_source_with_matching_package_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_dir = temp.path().join("global").join("pkg");
+        let binary_path = temp.path().join("bin").join("demo");
+        write_package_with_binary(&package_dir, &binary_path, "demo", "1.0.0", "bin/demo");
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "file:../packages/demo",
+            "demo",
+            Some(&package_dir),
+            None,
+            None,
+        );
+
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "file:../packages/demo",
+            "demo",
+            Some(&package_dir),
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_rejects_orphan_binary_without_package_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("demo");
+        write_binary(&binary_path);
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "file:../packages/demo",
+            "demo",
+            None,
+            None,
+            None,
+        );
+
+        assert!(!installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "file:../packages/demo",
+            "demo",
+            None,
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_skips_invalid_direct_package_dir_and_scans_search_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let direct_package_dir = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        let search_root = temp.path().join("global");
+        let scanned_package_dir = search_root.join("store").join("http-server");
+        let binary_path = temp.path().join("bin").join("http-server");
+
+        std::fs::create_dir_all(&direct_package_dir).expect("create direct package dir");
+        std::fs::write(direct_package_dir.join("package.json"), "{not-json")
+            .expect("write broken manifest");
+        write_package_with_binary(
+            &scanned_package_dir,
+            &binary_path,
+            "http-server",
+            "14.1.1",
+            "bin/http-server",
+        );
+
+        assert_eq!(
+            resolve_npm_global_destination(
+                &binary_path,
+                "http-server@latest",
+                "http-server",
+                Some(&direct_package_dir),
+                Some(&search_root),
+                None,
+            ),
+            Some(binary_path)
+        );
+    }
+
+    #[test]
+    fn find_package_dirs_under_root_skips_bad_manifest_and_keeps_searching() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let bad = root.join("bad");
+        let good = root.join("good");
+        std::fs::create_dir_all(&bad).expect("create bad dir");
+        std::fs::create_dir_all(&good).expect("create good dir");
+        std::fs::write(bad.join("package.json"), "{not-json").expect("write broken manifest");
+        std::fs::write(
+            good.join("package.json"),
+            r#"{"name":"http-server","version":"14.1.1"}"#,
+        )
+        .expect("write good manifest");
+
+        assert_eq!(
+            find_package_dirs_under_root(root, Some("http-server")),
+            vec![good]
+        );
+    }
+
+    fn write_package_with_binary(
+        package_dir: &Path,
+        binary_path: &Path,
+        package_name: &str,
+        version: &str,
+        relative_binary_path: &str,
+    ) {
+        std::fs::create_dir_all(package_dir).expect("create package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            format!(
+                r#"{{"name":"{package_name}","version":"{version}","bin":"{relative_binary_path}"}}"#
+            ),
+        )
+        .expect("write manifest");
+        write_binary(&package_dir.join(relative_binary_path));
+        write_binary(binary_path);
+    }
+
+    fn write_binary(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create binary parent");
+        }
+        std::fs::write(path, "#!/bin/sh\nexit 0\n").expect("write binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+        }
+    }
+
+    #[test]
     fn resolve_package_bin_script_uses_manifest_instead_of_scanning_package_dir() {
         let temp = tempfile::tempdir().expect("tempdir");
         let package_dir = temp
@@ -1072,7 +1391,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn find_package_dir_under_root_skips_directory_symlink_loops() {
+    fn find_package_dirs_under_root_skips_directory_symlink_loops() {
         use std::os::unix::fs::symlink;
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1086,13 +1405,13 @@ mod tests {
         .expect("write package.json");
         symlink(&search_root, search_root.join("loop")).expect("create loop symlink");
 
-        let resolved = find_package_dir_under_root(&search_root, "http-server");
-        assert_eq!(resolved, Some(package_dir));
+        let resolved = find_package_dirs_under_root(&search_root, Some("http-server"));
+        assert_eq!(resolved, vec![package_dir]);
     }
 
     #[cfg(unix)]
     #[test]
-    fn find_package_dir_under_root_does_not_traverse_external_directory_symlink() {
+    fn find_package_dirs_under_root_does_not_traverse_external_directory_symlink() {
         use std::os::unix::fs::symlink;
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1114,12 +1433,12 @@ mod tests {
         .expect("write external package.json");
         symlink(&external_root, search_root.join("escape")).expect("create escape symlink");
 
-        let resolved = find_package_dir_under_root(&search_root, "http-server");
-        assert_eq!(resolved, Some(package_dir));
+        let resolved = find_package_dirs_under_root(&search_root, Some("http-server"));
+        assert_eq!(resolved, vec![package_dir]);
     }
 
     #[test]
-    fn find_package_dir_under_root_skips_unreadable_or_invalid_manifests() {
+    fn find_package_dirs_under_root_skips_unreadable_or_invalid_manifests() {
         let temp = tempfile::tempdir().expect("tempdir");
         let search_root = temp.path().join("global");
         let broken_dir = search_root.join("node_modules").join("broken");
@@ -1133,8 +1452,8 @@ mod tests {
         )
         .expect("write package manifest");
 
-        let resolved = find_package_dir_under_root(&search_root, "http-server");
-        assert_eq!(resolved, Some(package_dir));
+        let resolved = find_package_dirs_under_root(&search_root, Some("http-server"));
+        assert_eq!(resolved, vec![package_dir]);
     }
 
     #[test]
