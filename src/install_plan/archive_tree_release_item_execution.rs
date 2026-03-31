@@ -3,13 +3,14 @@ use std::path::Path;
 use omne_artifact_install_primitives::{
     ArchiveTreeInstallRequest, download_and_install_archive_tree, is_archive_tree_asset_name,
 };
+use reqwest::Url;
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::download_sources::{
     build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
-use crate::external_gateway::infer_gateway_candidate_for_git_release;
+use crate::external_gateway::gateway_candidate_for_release_download_url;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::plan_items::ArchiveTreeReleasePlanItem;
 
@@ -39,7 +40,9 @@ pub(crate) async fn execute_archive_tree_release_item(
         )));
     }
     let expected_sha = item.sha256.as_ref();
-    let gateway = infer_gateway_candidate_for_git_release(cfg, &url);
+    let gateway = gateway_candidate_for_release_download_url(cfg, &url);
+    let github_client = build_release_download_client(cfg, &url)?;
+    let download_client = github_client.as_ref().unwrap_or(client);
 
     let candidates = build_download_candidates(
         &url,
@@ -47,7 +50,7 @@ pub(crate) async fn execute_archive_tree_release_item(
         gateway.as_deref(),
     );
     let selected = download_and_install_archive_tree(
-        client,
+        download_client,
         &candidates,
         &ArchiveTreeInstallRequest {
             canonical_url: &url,
@@ -72,4 +75,34 @@ pub(crate) async fn execute_archive_tree_release_item(
         error_code: None,
         failure_code: None,
     })
+}
+
+fn build_release_download_client(
+    cfg: &InstallerRuntimeConfig,
+    url: &str,
+) -> OperationResult<Option<reqwest::Client>> {
+    if !is_github_release_asset_url(url) {
+        return Ok(None);
+    }
+    reqwest::Client::builder()
+        .http1_only()
+        .timeout(cfg.download.http_timeout)
+        .user_agent("toolchain-installer")
+        .build()
+        .map(Some)
+        .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
+}
+
+fn is_github_release_asset_url(url: &str) -> bool {
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    if parsed.host_str() != Some("github.com") {
+        return false;
+    }
+    let Some(segments) = parsed.path_segments() else {
+        return false;
+    };
+    let segments = segments.collect::<Vec<_>>();
+    segments.len() >= 6 && segments[2] == "releases" && segments[3] == "download"
 }
