@@ -2481,6 +2481,15 @@ fn resolve_target_triple_accepts_supported_trimmed_override() {
 }
 
 #[test]
+fn resolve_target_triple_rejects_unknown_trimmed_override() {
+    let detected = resolve_target_triple(Some("  custom-target  "), "x86_64-unknown-linux-gnu");
+    assert_eq!(
+        detected,
+        Err(TargetTripleError::Unsupported("custom-target".to_string()))
+    );
+}
+
+#[test]
 fn resolve_managed_toolchain_dir_uses_override() {
     let path = PathBuf::from("/tmp/toolchain-test");
     let out = resolve_managed_toolchain_dir(Some(path.as_path()), "x86_64-unknown-linux-gnu")
