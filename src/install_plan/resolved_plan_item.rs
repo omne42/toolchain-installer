@@ -546,7 +546,19 @@ fn looks_like_explicit_go_local_path(package: &str) -> bool {
         || package.starts_with("..\\")
         || package.starts_with('/')
         || package.starts_with('\\')
+        || looks_like_bare_relative_go_local_path(package)
         || looks_like_windows_drive_path(package)
+}
+
+fn looks_like_bare_relative_go_local_path(package: &str) -> bool {
+    if package.contains('@') || package.contains('\\') {
+        return false;
+    }
+
+    let Some((first_segment, _)) = package.split_once('/') else {
+        return false;
+    };
+    !first_segment.is_empty() && !first_segment.contains('.') && !first_segment.contains(':')
 }
 
 fn looks_like_windows_drive_path(package: &str) -> bool {
@@ -1058,6 +1070,74 @@ mod tests {
         assert_eq!(
             item.source,
             GoInstallSource::LocalPath(PathBuf::from("cmd/demo"))
+        );
+        assert_eq!(item.binary_name, "demo");
+    }
+
+    #[test]
+    fn resolve_go_install_uses_plan_base_dir_for_bare_relative_local_path() {
+        let item = InstallPlanItem {
+            id: "go-local".to_string(),
+            method: "go_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("cmd/demo".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::GoInstall(item) = resolved else {
+            panic!("expected go_install plan item");
+        };
+        assert_eq!(
+            item.source,
+            GoInstallSource::LocalPath(PathBuf::from("/repo/plans/cmd/demo"))
+        );
+        assert_eq!(item.binary_name, "demo");
+    }
+
+    #[test]
+    fn resolve_go_install_keeps_versioned_bare_path_as_remote_package_spec() {
+        let item = InstallPlanItem {
+            id: "go-remote".to_string(),
+            method: "go_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("cmd/demo@latest".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::GoInstall(item) = resolved else {
+            panic!("expected go_install plan item");
+        };
+        assert_eq!(
+            item.source,
+            GoInstallSource::PackageSpec("cmd/demo@latest".to_string())
         );
         assert_eq!(item.binary_name, "demo");
     }

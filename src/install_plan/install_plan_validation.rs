@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use omne_fs_primitives::filesystem_is_case_sensitive;
 use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 
 use crate::contracts::{ExecutionRequest, InstallPlan, PLAN_SCHEMA_VERSION};
@@ -176,7 +177,8 @@ fn destination_conflict_is_allowed(
 
 fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<String> {
     let windows_target = target_triple.contains("windows");
-    let case_insensitive_target = windows_target || target_triple.contains("darwin");
+    let case_insensitive_target = windows_target
+        || (target_triple.contains("darwin") && path_uses_case_insensitive_filesystem(path));
     let windows_path;
     let comparable_path = if windows_target {
         windows_path = path.to_string_lossy().replace('\\', "/");
@@ -206,6 +208,29 @@ fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<Str
         .collect()
 }
 
+fn path_uses_case_insensitive_filesystem(path: &Path) -> bool {
+    let Some(existing_root) = nearest_existing_directory(path) else {
+        return false;
+    };
+
+    !filesystem_is_case_sensitive(&existing_root)
+}
+
+fn nearest_existing_directory(path: &Path) -> Option<PathBuf> {
+    let mut candidate = path.to_path_buf();
+    if candidate.extension().is_some() || candidate.file_name().is_some() && !candidate.is_dir() {
+        candidate = candidate.parent().unwrap_or(path).to_path_buf();
+    }
+
+    loop {
+        if candidate.exists() {
+            return candidate.is_dir().then_some(candidate);
+        }
+        let parent = candidate.parent()?;
+        candidate = parent.to_path_buf();
+    }
+}
+
 fn destinations_overlap(existing: &[String], candidate: &[String]) -> bool {
     is_component_prefix(candidate, existing) || is_component_prefix(existing, candidate)
 }
@@ -220,10 +245,13 @@ mod tests {
 
     use crate::contracts::{InstallPlan, InstallPlanItem, PLAN_SCHEMA_VERSION};
 
-    use super::{validate_plan_with_base_dir, validate_plan_with_managed_dir};
+    use super::{
+        path_uses_case_insensitive_filesystem, validate_plan_with_base_dir,
+        validate_plan_with_managed_dir,
+    };
 
     #[test]
-    fn validate_destination_conflicts_rejects_case_only_collisions_on_macos() {
+    fn validate_destination_conflicts_matches_darwin_case_sensitivity_of_host_filesystem() {
         let plan = InstallPlan {
             schema_version: Some(PLAN_SCHEMA_VERSION),
             items: vec![
@@ -231,16 +259,25 @@ mod tests {
                 release_item("ruff-lower", "bin/ruff"),
             ],
         };
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = tmp.path().join("managed");
 
-        let err = validate_plan_with_managed_dir(
+        let result = validate_plan_with_managed_dir(
             &plan,
             "aarch64-apple-darwin",
             "aarch64-apple-darwin",
-            Path::new("/tmp/managed"),
-        )
-        .expect_err("macOS should reject case-only destination collisions");
+            &managed_dir,
+        );
 
-        assert!(err.to_string().contains("resolve to the same destination"));
+        if path_uses_case_insensitive_filesystem(&managed_dir) {
+            let err = result.expect_err(
+                "case-insensitive filesystem should reject case-only destination collisions",
+            );
+            assert!(err.to_string().contains("resolve to the same destination"));
+        } else {
+            result
+                .expect("case-sensitive filesystem should allow case-only destination differences");
+        }
     }
 
     #[test]
