@@ -113,12 +113,15 @@ fn build_uv_tool_success_detail(
     backup: &ManagedDestinationBackup,
     detail: Option<String>,
 ) -> Option<String> {
-    match backup.discard() {
-        Ok(()) => detail,
-        Err(err) => Some(match detail {
-            Some(detail) => format!("{detail}; warning: {err}"),
-            None => format!("warning: {err}"),
-        }),
+    merge_detail(detail, backup.discard_with_warning())
+}
+
+fn merge_detail(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first}; {second}")),
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (None, None) => None,
     }
 }
 
@@ -146,7 +149,7 @@ fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {
 mod tests {
     use std::ffi::OsString;
 
-    use super::build_uv_tool_install_args;
+    use super::{build_uv_tool_install_args, merge_detail};
     use crate::plan_items::UvToolPlanItem;
 
     #[test]
@@ -188,6 +191,20 @@ mod tests {
                 .into_iter()
                 .map(OsString::from)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn merge_detail_appends_cleanup_warning() {
+        assert_eq!(
+            merge_detail(
+                Some("managed uv detail".to_string()),
+                Some("managed binary installed at /tmp/demo but cleanup warning: stale backup remains".to_string()),
+            ),
+            Some(
+                "managed uv detail; managed binary installed at /tmp/demo but cleanup warning: stale backup remains"
+                    .to_string()
+            )
         );
     }
 }

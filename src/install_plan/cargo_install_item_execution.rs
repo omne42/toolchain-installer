@@ -102,14 +102,7 @@ pub(crate) fn execute_cargo_install_item(
         &expected_destination,
         || cleanup_stage_root(&stage_root),
     );
-    let detail = merge_cleanup_detail(
-        detail,
-        finalize_backup_cleanup(
-            "cargo_install binary",
-            &expected_destination,
-            backup.discard(),
-        ),
-    );
+    let detail = merge_cleanup_detail(detail, backup.discard_with_warning());
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -248,34 +241,6 @@ fn build_success_cleanup_detail(
     })
 }
 
-fn finalize_backup_cleanup(
-    label: &str,
-    destination: &Path,
-    cleanup_result: Result<(), String>,
-) -> Option<String> {
-    let err = cleanup_result.err()?;
-    let backup_path = destination_backup_path(destination);
-    if !backup_path.exists() {
-        return Some(format!(
-            "{label} installed at {} but cleanup warning: {err}",
-            destination.display()
-        ));
-    }
-
-    match quarantine_backup_path(&backup_path) {
-        Ok(quarantined_path) => Some(format!(
-            "{label} installed at {} but cleanup warning: {err}; moved stale backup to {}",
-            destination.display(),
-            quarantined_path.display()
-        )),
-        Err(quarantine_err) => Some(format!(
-            "{label} installed at {} but cleanup warning: {err}; stale backup remains at {} ({quarantine_err})",
-            destination.display(),
-            backup_path.display()
-        )),
-    }
-}
-
 fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option<String> {
     match (first, second) {
         (Some(first), Some(second)) => Some(format!("{first}; {second}")),
@@ -283,39 +248,6 @@ fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option
         (None, Some(second)) => Some(second),
         (None, None) => None,
     }
-}
-
-fn destination_backup_path(destination: &Path) -> PathBuf {
-    destination.with_file_name(format!(
-        "{}.toolchain-installer-backup",
-        destination
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("managed-tool")
-    ))
-}
-
-fn quarantine_backup_path(backup_path: &Path) -> Result<PathBuf, String> {
-    let parent = backup_path
-        .parent()
-        .ok_or_else(|| format!("cannot resolve parent for backup {}", backup_path.display()))?;
-    let file_name = backup_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("managed-tool.toolchain-installer-backup");
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let quarantined = parent.join(format!("{file_name}.stale-{}-{nonce}", std::process::id()));
-    std::fs::rename(backup_path, &quarantined).map_err(|err| {
-        format!(
-            "cannot move stale backup {} aside to {}: {err}",
-            backup_path.display(),
-            quarantined.display()
-        )
-    })?;
-    Ok(quarantined)
 }
 
 #[cfg(test)]
@@ -391,7 +323,6 @@ mod tests {
         assert!(detail.contains("/tmp/stage"));
         assert!(detail.contains("/tmp/managed/bin/demo"));
     }
-
     #[test]
     fn finalize_backup_cleanup_quarantines_stale_backup_path() {
         let temp = tempfile::tempdir().expect("tempdir");
