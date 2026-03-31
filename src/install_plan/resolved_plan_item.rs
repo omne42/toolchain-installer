@@ -779,13 +779,27 @@ fn npm_package_name(package: &str) -> &str {
 }
 
 fn source_spec_leaf_name(package: &str) -> Option<String> {
-    let (_, rest) = package.split_once(':')?;
-    let rest = rest.trim().trim_end_matches(".git").trim_end_matches('/');
-    let leaf = rest.rsplit(['/', '\\']).next().unwrap_or(rest).trim();
-    if leaf.is_empty() || leaf == "." || leaf == ".." {
-        return None;
+    let package = package.trim();
+    if let Some(rest) = package.strip_prefix("npm:") {
+        return package_leaf_name(npm_package_name(rest));
     }
-    Some(leaf.to_string())
+
+    let rest = package
+        .strip_prefix("git+")
+        .or_else(|| package.split_once(':').map(|(_, rest)| rest))
+        .unwrap_or(package);
+    let rest = trim_source_spec_suffix(rest);
+    package_leaf_name(rest)
+}
+
+fn trim_source_spec_suffix(raw: &str) -> &str {
+    raw.trim()
+        .split(['#', '?'])
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .trim_end_matches(".git")
+        .trim_end_matches('/')
 }
 
 fn require_uv_python_version(item_id: &str, raw_version: Option<&str>) -> InstallerResult<String> {
@@ -933,6 +947,66 @@ mod tests {
             panic!("expected npm_global plan item");
         };
         assert_eq!(item.package_spec, "@scope/pkg@1.2.3");
+    }
+
+    #[test]
+    fn resolve_npm_global_defaults_binary_name_for_npm_source_spec() {
+        let item = InstallPlanItem {
+            id: "scope-tool".to_string(),
+            method: "npm_global".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("npm:@scope/cli@1.2.3".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::NpmGlobal(item) = resolved else {
+            panic!("expected npm_global plan item");
+        };
+        assert_eq!(item.binary_name, "cli");
+    }
+
+    #[test]
+    fn resolve_npm_global_defaults_binary_name_for_github_source_spec() {
+        let item = InstallPlanItem {
+            id: "repo-tool".to_string(),
+            method: "npm_global".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("github:owner/repo#semver:^1".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::NpmGlobal(item) = resolved else {
+            panic!("expected npm_global plan item");
+        };
+        assert_eq!(item.binary_name, "repo");
     }
 
     #[test]

@@ -67,15 +67,18 @@ pub(crate) fn execute_cargo_install_item(
         return Err(OperationError::from_host_recipe(err));
     }
 
-    let staged_binary =
-        match select_staged_binary(&stage_root.join("bin"), expected_destination.file_name()) {
-            Ok(binary) => binary,
-            Err(err) => {
-                cleanup_stage_root(&stage_root).ok();
-                backup.restore().map_err(OperationError::install)?;
-                return Err(OperationError::install(err));
-            }
-        };
+    let staged_binary = match select_staged_binary(
+        &stage_root.join("bin"),
+        expected_destination.file_name(),
+        item.binary_name_explicit,
+    ) {
+        Ok(binary) => binary,
+        Err(err) => {
+            cleanup_stage_root(&stage_root).ok();
+            backup.restore().map_err(OperationError::install)?;
+            return Err(OperationError::install(err));
+        }
+    };
 
     if let Err(err) = promote_staged_file(
         &staged_binary,
@@ -169,6 +172,7 @@ fn cleanup_stage_root(stage_root: &Path) -> Result<(), String> {
 fn select_staged_binary(
     stage_bin_dir: &Path,
     expected_name: Option<&OsStr>,
+    require_expected_name_match: bool,
 ) -> Result<PathBuf, String> {
     let entries = std::fs::read_dir(stage_bin_dir).map_err(|err| {
         format!(
@@ -185,12 +189,35 @@ fn select_staged_binary(
         .collect::<Vec<_>>();
     binaries.sort();
 
-    if let Some(expected_name) = expected_name
-        && let Some(binary) = binaries
+    if let Some(expected_name) = expected_name {
+        if let Some(binary) = binaries
             .iter()
             .find(|binary| binary.file_name().is_some_and(|name| name == expected_name))
-    {
-        return Ok(binary.clone());
+        {
+            return Ok(binary.clone());
+        }
+        if require_expected_name_match {
+            return match binaries.as_slice() {
+                [] => Err(format!(
+                    "cargo_install succeeded but produced no staged binary under {}",
+                    stage_bin_dir.display()
+                )),
+                [binary] => Err(format!(
+                    "cargo_install produced staged binary `{}` under {} but it did not match the requested binary name `{}`",
+                    binary
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("<unknown>"),
+                    stage_bin_dir.display(),
+                    expected_name.to_string_lossy()
+                )),
+                _ => Err(format!(
+                    "cargo_install produced multiple staged binaries under {} but none matched the requested binary name `{}`",
+                    stage_bin_dir.display(),
+                    expected_name.to_string_lossy()
+                )),
+            };
+        }
     }
 
     match binaries.as_slice() {
@@ -293,11 +320,12 @@ fn quarantine_backup_path(backup_path: &Path) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
 
     use super::{
         build_cargo_install_args, build_success_cleanup_detail, destination_backup_path,
-        finalize_backup_cleanup,
+        finalize_backup_cleanup, select_staged_binary,
     };
     use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
@@ -386,6 +414,31 @@ mod tests {
         );
         let quarantined = find_quarantined_backup(destination.parent().expect("parent"));
         assert_eq!(quarantined.len(), 1, "backup should be moved aside once");
+    }
+
+    #[test]
+    fn select_staged_binary_rejects_unique_mismatch_for_explicit_binary_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stage_bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&stage_bin_dir).expect("create staged bin");
+        std::fs::write(stage_bin_dir.join("actual-tool"), "binary").expect("write staged binary");
+
+        let err = select_staged_binary(&stage_bin_dir, Some(OsStr::new("alias-tool")), true)
+            .expect_err("explicit binary name mismatch should fail");
+        assert!(err.contains("did not match the requested binary name `alias-tool`"));
+    }
+
+    #[test]
+    fn select_staged_binary_keeps_single_fallback_for_inferred_binary_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stage_bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&stage_bin_dir).expect("create staged bin");
+        let staged_binary = stage_bin_dir.join("actual-tool");
+        std::fs::write(&staged_binary, "binary").expect("write staged binary");
+
+        let selected = select_staged_binary(&stage_bin_dir, Some(OsStr::new("alias-tool")), false)
+            .expect("inferred binary name may still fall back to the only staged binary");
+        assert_eq!(selected, staged_binary);
     }
 
     fn find_quarantined_backup(parent: &Path) -> Vec<PathBuf> {

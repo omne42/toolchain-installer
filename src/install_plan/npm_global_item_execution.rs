@@ -179,10 +179,10 @@ fn build_npm_global_recipe(
             let layout = bun_install_layout(managed_dir)?;
             let global_dir = layout.global_dir;
             let binary_dir = layout.binary_dir;
+            let package_root = global_dir.join("node_modules");
             let binary_path =
                 binary_dir.join(global_binary_filename(binary_name, manager, target_triple));
-            let fallback_package_dir =
-                package_dir_with_root(&global_dir.join("node_modules"), &package);
+            let fallback_package_dir = package_dir_with_root(&package_root, &package);
             Ok(NpmGlobalRecipe {
                 program: resolve_command_path("bun")
                     .and_then(|path| path.into_os_string().into_string().ok())
@@ -201,7 +201,7 @@ fn build_npm_global_recipe(
                 ],
                 binary_path,
                 fallback_package_dir: Some(fallback_package_dir),
-                package_search_root: None,
+                package_search_root: Some(package_root),
                 fallback_search_root: Some(global_dir.join("node_modules").join(".bin")),
                 source: "npm:bun".to_string(),
             })
@@ -1468,7 +1468,7 @@ mod tests {
         std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
         std::fs::write(
             package_dir.join("package.json"),
-            r#"{"name":"http-server","bin":{"http-server":"bin/http-server"}}"#,
+            r#"{"name":"http-server","version":"14.1.1","bin":{"http-server":"bin/http-server"}}"#,
         )
         .expect("write manifest");
         std::fs::write(package_dir.join("bin").join("http-server"), "demo").expect("write bin");
@@ -1541,6 +1541,108 @@ mod tests {
             "http-server",
             Some(&package_dir),
             None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_npm_source_spec_when_manifest_matches_real_package() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("@scope").join("http-server");
+        std::fs::create_dir_all(binary_path.parent().expect("binary parent"))
+            .expect("create binary parent");
+        std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+        std::fs::write(&binary_path, "#!/bin/sh\nexit 0\n").expect("write binary");
+        std::fs::write(
+            package_dir.join("bin").join("http-server"),
+            "#!/bin/sh\nexit 0\n",
+        )
+        .expect("write package bin");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"@scope/http-server","version":"14.1.1","bin":{"http-server":"bin/http-server"}}"#,
+        )
+        .expect("write manifest");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+            std::fs::set_permissions(
+                package_dir.join("bin").join("http-server"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .expect("chmod package bin");
+        }
+
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "npm:@scope/http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        );
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "npm:@scope/http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_github_source_spec_when_manifest_exposes_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("repo-tool");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("repo-tool-package");
+        std::fs::create_dir_all(binary_path.parent().expect("binary parent"))
+            .expect("create binary parent");
+        std::fs::create_dir_all(package_dir.join("dist")).expect("create package dir");
+        std::fs::write(&binary_path, "#!/bin/sh\nexit 0\n").expect("write binary");
+        std::fs::write(
+            package_dir.join("dist").join("repo-tool.js"),
+            "#!/bin/sh\nexit 0\n",
+        )
+        .expect("write package bin");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"custom-package-name","bin":{"repo-tool":"dist/repo-tool.js"}}"#,
+        )
+        .expect("write manifest");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+            std::fs::set_permissions(
+                package_dir.join("dist").join("repo-tool.js"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .expect("chmod package bin");
+        }
+
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "github:owner/repo-tool#main",
+            "repo-tool",
+            None,
+            Some(&package_root),
+            None,
+        );
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "github:owner/repo-tool#main",
+            "repo-tool",
+            None,
+            Some(&package_root),
             None,
         ));
     }
