@@ -152,6 +152,7 @@
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
 - `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。
+- Windows 上的 `bootstrap --tool git` 会把 MinGit payload 切换和 `git.cmd` launcher 更新作为同一个事务提交；如果 launcher 写入失败，会恢复旧的 `git-portable/` 与旧 launcher，而不是留下半更新状态。
 
 ## 继续阅读
 
