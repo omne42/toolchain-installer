@@ -1119,6 +1119,7 @@ mod tests {
 
     #[test]
     fn resolve_pip_uses_plan_base_dir_for_relative_local_path() {
+        let plan_base = Path::new("/repo/plans");
         let item = InstallPlanItem {
             id: "pip-demo".to_string(),
             method: "pip".to_string(),
@@ -1137,14 +1138,17 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
-            Some(Path::new("/repo/plans")),
+            Some(plan_base),
         )
         .expect("resolved");
 
         let ResolvedPlanItem::Pip(item) = resolved else {
             panic!("expected pip plan item");
         };
-        assert_eq!(item.package, "/repo/plans/packages/demo");
+        assert_eq!(
+            Path::new(&item.package),
+            plan_base.join("packages").join("demo").as_path()
+        );
     }
 
     #[test]
@@ -1175,6 +1179,7 @@ mod tests {
 
     #[test]
     fn resolve_npm_global_uses_plan_base_dir_for_relative_local_path() {
+        let plan_base = Path::new("/repo/plans");
         let item = InstallPlanItem {
             id: "npm-demo".to_string(),
             method: "npm_global".to_string(),
@@ -1193,14 +1198,17 @@ mod tests {
             &item,
             "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
-            Some(Path::new("/repo/plans")),
+            Some(plan_base),
         )
         .expect("resolved");
 
         let ResolvedPlanItem::NpmGlobal(item) = resolved else {
             panic!("expected npm_global plan item");
         };
-        assert_eq!(item.package_spec, "/repo/plans/packages/demo");
+        assert_eq!(
+            Path::new(&item.package_spec),
+            plan_base.join("packages").join("demo").as_path()
+        );
         assert_eq!(item.binary_name, "demo");
     }
 
