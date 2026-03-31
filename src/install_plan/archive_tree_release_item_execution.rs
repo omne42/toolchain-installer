@@ -10,7 +10,7 @@ use crate::download_sources::{
     build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
-use crate::external_gateway::gateway_candidate_for_release_download_url;
+use crate::external_gateway::gateway_candidate_for_git_release_download_url;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::plan_items::ArchiveTreeReleasePlanItem;
 
@@ -40,7 +40,7 @@ pub(crate) async fn execute_archive_tree_release_item(
         )));
     }
     let expected_sha = item.sha256.as_ref();
-    let gateway = gateway_candidate_for_release_download_url(cfg, &url);
+    let gateway = gateway_candidate_for_git_release_download_url(cfg, &url);
     let github_client = build_release_download_client(cfg, &url)?;
     let download_client = github_client.as_ref().unwrap_or(client);
 
