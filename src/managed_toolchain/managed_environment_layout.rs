@@ -11,6 +11,22 @@ pub(crate) fn managed_uv_binary_path(target_triple: &str, managed_dir: &Path) ->
     managed_dir.join(format!("uv{}", validated_binary_suffix(target_triple)))
 }
 
+pub(crate) fn bootstrap_uv_root(managed_dir: &Path) -> PathBuf {
+    managed_dir.join(".uv-bootstrap")
+}
+
+pub(crate) fn bootstrap_uv_binary_path(target_triple: &str, bootstrap_root: &Path) -> PathBuf {
+    let binary_name = format!("uv{}", validated_binary_suffix(target_triple));
+    if target_triple.contains("windows") {
+        return bootstrap_root.join("Scripts").join(binary_name);
+    }
+    bootstrap_root.join("bin").join(binary_name)
+}
+
+pub(crate) fn bootstrap_uv_site_packages_dir(bootstrap_root: &Path) -> PathBuf {
+    bootstrap_root.join("site-packages")
+}
+
 pub(crate) fn managed_tool_binary_path(
     executable_name: &str,
     target_triple: &str,

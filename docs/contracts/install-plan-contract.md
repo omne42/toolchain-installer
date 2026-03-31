@@ -160,6 +160,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 对 Windows target，冲突校验始终按大小写不敏感语义比较路径；对 Darwin target，则按目标路径所在宿主文件系统的真实大小写语义比较，不再把所有 macOS 卷一律当成大小写不敏感。
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，并预留它在 `managed_dir` 顶层实际可能写出的 `python` / `python3` / `python3.x` shim 名称；因此它会继续拦截其他方法写入这棵子树或这些顶层解释器入口，但多个 `uv_python` item 彼此不会仅因共享这些托管路径就在执行前互相冲突。
 - `uv`、`uv_python`、`uv_tool` 只有在已有托管 `uv` 通过 `--version` 健康检查后才会直接复用；若托管 `uv` 文件存在但健康检查失败，会先自愈重装再继续执行。
+- `uv` 方法始终保证结果落到 `managed_dir/uv[.exe]`；即使宿主机已装了健康的 `uv`，它也不会把宿主二进制直接当成 `uv` item 的安装结果。
+- `uv_python`、`uv_tool` 在缺少健康托管 `uv` 时，会先按顺序尝试复用健康 host `uv`、再尝试用宿主 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举一个可复用 `uv`；只有这些本地可复用路径都失败后，才会回退到 GitHub public release 下载独立 `uv` 二进制。
 - `uv_python` 只有在 `managed_dir` 下实际发现匹配版本的 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0` 不构成成功条件。
 - `uv_python` 的版本匹配按版本段比较：请求 `3` 可以接受托管目录里的任意 `3.x.y`，请求 `3.13` 可以接受 `3.13.x`，但请求 `3.13.1` 不会误接受 `3.13.12`。
 - `uv_python` 当请求 `3` 或 `3.13` 这类 family selector 时，会在所有匹配的托管解释器里选择版本最高的那个，不会因为目录字典序或旧安装残留而回退到更老的 patch 版本。

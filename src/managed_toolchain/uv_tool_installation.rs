@@ -14,7 +14,9 @@ use crate::managed_toolchain::managed_environment_layout::{
     managed_tool_binary_path, managed_uv_process_env,
 };
 use crate::managed_toolchain::managed_uv_host_execution::run_managed_uv_recipe;
-use crate::managed_toolchain::managed_uv_installation::ensure_managed_uv;
+use crate::managed_toolchain::managed_uv_installation::{
+    ManagedUvBootstrapMode, ensure_managed_uv,
+};
 use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidates;
 use crate::managed_toolchain::uv_installation_source_candidates::{
     package_index_installation_source_candidates, prioritize_reachable_installation_sources,
@@ -29,7 +31,16 @@ pub(crate) async fn execute_uv_tool_item(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<BootstrapItem> {
-    let (uv, uv_detail) = ensure_managed_uv(target_triple, managed_dir, cfg, client).await?;
+    let (uv, uv_detail) = ensure_managed_uv(
+        target_triple,
+        managed_dir,
+        cfg,
+        client,
+        ManagedUvBootstrapMode::Reusable {
+            preferred_python: item.python.as_deref(),
+        },
+    )
+    .await?;
     let base_env = managed_uv_process_env(managed_dir);
     let candidates = prioritize_reachable_installation_sources(
         client,
