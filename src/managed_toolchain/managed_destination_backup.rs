@@ -356,17 +356,24 @@ mod tests {
     fn discard_with_warning_reports_stale_backup_when_cleanup_cannot_quarantine() {
         let temp = tempfile::tempdir().expect("tempdir");
         let original = temp.path().join("managed-tool");
+        #[cfg(target_os = "linux")]
+        let protected_backup = PathBuf::from("/proc");
+        #[cfg(target_os = "macos")]
+        let protected_backup = PathBuf::from("/System");
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let protected_backup = PathBuf::from("/dev");
         let backup = ManagedDestinationBackup {
             original: original.clone(),
-            backup: Some(PathBuf::from("/proc")),
+            backup: Some(protected_backup.clone()),
             label: "managed binary",
         };
 
         let detail = backup
             .discard_with_warning()
             .expect("discard warning should be reported");
+
         assert!(detail.contains("cleanup warning"));
-        assert!(detail.contains("stale backup remains at /proc"));
+        assert!(detail.contains(&format!("stale backup remains at {}", protected_backup.display())));
         assert!(detail.contains(&original.display().to_string()));
     }
 }
