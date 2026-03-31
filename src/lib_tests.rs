@@ -13,7 +13,7 @@ use omne_artifact_install_primitives::{
     install_archive_tree_from_bytes, install_binary_from_archive,
 };
 use omne_host_info_primitives::{
-    detect_host_platform, executable_suffix_for_target, resolve_target_triple,
+    TargetTripleError, detect_host_platform, executable_suffix_for_target, resolve_target_triple,
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
@@ -2478,6 +2478,15 @@ fn resolve_target_triple_accepts_supported_trimmed_override() {
         "x86_64-unknown-linux-gnu",
     );
     assert_eq!(detected, Ok("x86_64-pc-windows-msvc".to_string()));
+}
+
+#[test]
+fn resolve_target_triple_rejects_unknown_trimmed_override() {
+    let detected = resolve_target_triple(Some("  custom-target  "), "x86_64-unknown-linux-gnu");
+    assert_eq!(
+        detected,
+        Err(TargetTripleError::Unsupported("custom-target".to_string()))
+    );
 }
 
 #[test]
