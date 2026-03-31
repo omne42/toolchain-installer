@@ -128,8 +128,7 @@ fn build_npm_global_recipe(
     match manager {
         NodePackageManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
-            let package_root = prefix_root.join("lib").join("node_modules");
-            let fallback_package_dir = package_dir_with_root(&package_root, &package);
+            let fallback_package_dir = npm_global_package_dir(&prefix_root, &package);
             let binary_path = if target_triple.contains("windows") {
                 prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
             } else {
@@ -152,7 +151,7 @@ fn build_npm_global_recipe(
                 )],
                 binary_path,
                 fallback_package_dir: Some(fallback_package_dir),
-                package_search_root: Some(package_root),
+                package_search_root: None,
                 fallback_search_root: None,
                 source: "npm:npm".to_string(),
             })
