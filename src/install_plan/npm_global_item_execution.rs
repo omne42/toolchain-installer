@@ -128,7 +128,8 @@ fn build_npm_global_recipe(
     match manager {
         NodePackageManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
-            let fallback_package_dir = npm_global_package_dir(&prefix_root, &package);
+            let package_root = prefix_root.join("lib").join("node_modules");
+            let fallback_package_dir = package_dir_with_root(&package_root, &package);
             let binary_path = if target_triple.contains("windows") {
                 prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
             } else {
@@ -151,7 +152,7 @@ fn build_npm_global_recipe(
                 )],
                 binary_path,
                 fallback_package_dir: Some(fallback_package_dir),
-                package_search_root: None,
+                package_search_root: Some(package_root),
                 fallback_search_root: None,
                 source: "npm:npm".to_string(),
             })
@@ -376,7 +377,7 @@ fn managed_package_matches_request(
         resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
     {
         let manifest_path = package_dir.join("package.json");
-        if !manifest_satisfies_package_request(&manifest_path, package) {
+        if !manifest_satisfies_package_request(&manifest_path, package, binary_name) {
             continue;
         }
 
@@ -412,7 +413,11 @@ fn resolve_installed_package_dirs(
     package_dirs
 }
 
-fn manifest_satisfies_package_request(manifest_path: &Path, package: &str) -> bool {
+fn manifest_satisfies_package_request(
+    manifest_path: &Path,
+    package: &str,
+    binary_name: &str,
+) -> bool {
     let Ok(manifest) = std::fs::read_to_string(manifest_path) else {
         return false;
     };
@@ -434,10 +439,14 @@ fn manifest_satisfies_package_request(manifest_path: &Path, package: &str) -> bo
             .get("version")
             .and_then(|value| value.as_str())
             .is_some_and(|installed| installed == version),
-        NpmPackageRequest::Named { .. } | NpmPackageRequest::ExplicitSource { .. } => true,
+        NpmPackageRequest::Named { .. } => true,
+        NpmPackageRequest::ExplicitSource { .. } => {
+            package_bin_relative_path(&manifest, package, binary_name).is_some()
+        }
     }
 }
 
+#[cfg(test)]
 fn npm_global_package_dir(prefix_root: &Path, package: &str) -> PathBuf {
     package_dir_with_root(&prefix_root.join("lib").join("node_modules"), package)
 }
@@ -707,6 +716,9 @@ fn npm_package_name_from_explicit_source(package: &str) -> Option<&str> {
 }
 
 fn node_package_spec_uses_explicit_source(package: &str) -> bool {
+    if node_package_spec_is_local_path(package) {
+        return true;
+    }
     [
         "file:",
         "git:",
@@ -721,6 +733,36 @@ fn node_package_spec_uses_explicit_source(package: &str) -> bool {
     .iter()
     .any(|prefix| package.starts_with(prefix))
         || package.contains("@npm:")
+}
+
+fn node_package_spec_is_local_path(package: &str) -> bool {
+    let package = package.trim();
+    if package.starts_with("git+")
+        || package.starts_with("git:")
+        || package.starts_with("github:")
+        || package.starts_with("workspace:")
+        || package.starts_with("link:")
+        || package.starts_with("npm:")
+        || package.starts_with("file:")
+        || package.contains("://")
+    {
+        return false;
+    }
+    package == "."
+        || package == ".."
+        || package.starts_with("./")
+        || package.starts_with(".\\")
+        || package.starts_with("../")
+        || package.starts_with("..\\")
+        || package.starts_with('/')
+        || package.starts_with('\\')
+        || looks_like_windows_drive_path(package)
+        || (package.contains(['/', '\\']) && !package.starts_with('@'))
+}
+
+fn looks_like_windows_drive_path(package: &str) -> bool {
+    let bytes = package.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf> {
@@ -1116,6 +1158,10 @@ mod tests {
             NpmPackageRequest::ExplicitSource { package_name: None }
         );
         assert_eq!(
+            npm_package_request("../packages/http-server"),
+            NpmPackageRequest::ExplicitSource { package_name: None }
+        );
+        assert_eq!(
             npm_package_request("alias@npm:http-server@14.1.1"),
             NpmPackageRequest::ExplicitSource {
                 package_name: Some("alias"),
@@ -1181,6 +1227,33 @@ mod tests {
             "demo",
             Some(&package_dir),
             None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_noop_for_local_path_source_with_matching_package_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_root = temp.path().join("global");
+        let package_dir = package_root.join("pkg");
+        let binary_path = temp.path().join("bin").join("demo");
+        write_package_with_binary(&package_dir, &binary_path, "demo", "1.0.0", "bin/demo");
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "../packages/demo",
+            "demo",
+            None,
+            Some(&package_root),
+            None,
+        );
+
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "../packages/demo",
+            "demo",
+            None,
+            Some(&package_root),
             None,
         ));
     }

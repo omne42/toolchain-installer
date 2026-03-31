@@ -224,6 +224,46 @@ fn strict_mode_fails_when_item_failed() {
 }
 
 #[test]
+fn pip_option_like_package_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "pip",
+            "--id",
+            "pip-demo",
+            "--package=--editable",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("does not allow `package` to look like a command-line option"));
+}
+
+#[test]
+fn npm_global_option_like_package_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "npm_global",
+            "--id",
+            "npm-demo",
+            "--package=--workspace",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("does not allow `package` to look like a command-line option"));
+}
+
+#[test]
 fn strict_mode_unknown_method_still_returns_usage_exit_code() {
     let mut cmd = bootstrap_cmd();
     cmd.args([
