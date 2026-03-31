@@ -63,7 +63,9 @@ pub(crate) async fn execute_archive_tree_release_item(
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
         source: Some(redact_source_url(&selected.url)),
-        source_kind: Some(result_source_kind_for_download_candidate(selected.kind)),
+        source_kind: Some(result_source_kind_for_download_candidate(
+            &selected.source_label,
+        )),
         archive_match: None,
         destination: Some(destination.display().to_string()),
         detail: None,
