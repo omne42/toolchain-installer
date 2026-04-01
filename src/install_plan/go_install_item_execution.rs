@@ -20,6 +20,9 @@ pub(crate) fn execute_go_install_item(
     if !command_exists("go") {
         return Err(OperationError::install("go command not found"));
     }
+    if let GoInstallSource::LocalPath(package_path) = &item.source {
+        validate_local_package_path(package_path).map_err(OperationError::install)?;
+    }
     let stage_root =
         create_stage_root(managed_dir, "go-install").map_err(OperationError::install)?;
     let expected_destination = managed_dir.join(format!(
@@ -35,20 +38,6 @@ pub(crate) fn execute_go_install_item(
         .map_err(OperationError::install)?;
     let resolved_package = match &item.source {
         GoInstallSource::LocalPath(package_path) => {
-            if !package_path.exists() {
-                cleanup_stage_root(&stage_root).ok();
-                return Err(OperationError::install(format!(
-                    "go_install local path does not exist: {}",
-                    package_path.display()
-                )));
-            }
-            if !package_path.is_dir() {
-                cleanup_stage_root(&stage_root).ok();
-                return Err(OperationError::install(format!(
-                    "go_install local path must be a directory: {}",
-                    package_path.display()
-                )));
-            }
             let args = vec!["install".to_string(), ".".to_string()]
                 .into_iter()
                 .map(OsString::from)
@@ -122,6 +111,22 @@ pub(crate) fn execute_go_install_item(
         error_code: None,
         failure_code: None,
     })
+}
+
+fn validate_local_package_path(package_path: &Path) -> Result<(), String> {
+    if !package_path.exists() {
+        return Err(format!(
+            "go_install local path does not exist: {}",
+            package_path.display()
+        ));
+    }
+    if !package_path.is_dir() {
+        return Err(format!(
+            "go_install local path must be a directory: {}",
+            package_path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn create_stage_root(parent: &Path, prefix: &str) -> Result<PathBuf, String> {
