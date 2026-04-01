@@ -2,9 +2,7 @@ use std::ffi::OsString;
 
 use omne_host_info_primitives::detect_host_platform;
 use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
-use omne_system_package_primitives::{
-    SystemPackageManager, SystemPackageName, default_system_package_install_recipes_for_os,
-};
+use omne_system_package_primitives::try_default_system_package_install_recipes_for_os;
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
@@ -13,28 +11,28 @@ use crate::plan_items::{SystemPackageMode, SystemPackagePlanItem};
 pub(crate) fn execute_system_package_item(
     item: &SystemPackagePlanItem,
 ) -> OperationResult<BootstrapItem> {
-    let package = SystemPackageName::new(&item.package).map_err(|err| {
+    let invalid_package_name = |err| {
         OperationError::install(format!(
             "invalid system package name for `{}`: {err}",
             item.package
         ))
-    })?;
+    };
     let recipes = match item.mode {
-        SystemPackageMode::AptGet => vec![SystemPackageManager::AptGet.install_recipe(&package)],
-        SystemPackageMode::Explicit(manager) => vec![manager.install_recipe(&package)],
-        SystemPackageMode::Auto => match detect_host_platform() {
-            Some(platform) => default_system_package_install_recipes_for_os(
-                platform.operating_system().as_str(),
-                &package,
-            )
-            .map_err(|err| {
-                OperationError::install(format!(
-                    "no available package manager recipe for `{}`: {err}",
-                    item.package
-                ))
-            })?,
-            None => Vec::new(),
-        },
+        SystemPackageMode::Explicit(manager) => vec![
+            manager
+                .try_install_recipe(&item.package)
+                .map_err(invalid_package_name)?,
+        ],
+        SystemPackageMode::Auto => detect_host_platform()
+            .map(|platform| {
+                try_default_system_package_install_recipes_for_os(
+                    platform.operating_system().as_str(),
+                    &item.package,
+                )
+                .map_err(invalid_package_name)
+            })
+            .transpose()?
+            .unwrap_or_default(),
     };
     if recipes.is_empty() {
         return Err(OperationError::install(format!(

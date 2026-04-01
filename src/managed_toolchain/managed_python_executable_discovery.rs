@@ -1,7 +1,9 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-use super::managed_environment_layout::{managed_python_installation_dir, validated_binary_suffix};
+use omne_host_info_primitives::executable_suffix_for_target;
+
+use super::managed_environment_layout::managed_python_installation_dir;
 use super::version_probe::python_binary_version;
 
 pub(crate) fn find_managed_python_executable(
@@ -9,7 +11,7 @@ pub(crate) fn find_managed_python_executable(
     version: &str,
     target_triple: &str,
 ) -> Option<PathBuf> {
-    let ext = validated_binary_suffix(target_triple);
+    let ext = executable_suffix_for_target(target_triple);
     let mut best_match = None;
     for name in preferred_python_candidate_names(version, ext) {
         let candidate = managed_dir.join(name);
@@ -54,7 +56,7 @@ fn find_python_under_installation_dir(
         return None;
     }
 
-    let ext = validated_binary_suffix(target_triple);
+    let ext = executable_suffix_for_target(target_triple);
     let mut best_match = None;
     let mut stack = vec![installation_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {

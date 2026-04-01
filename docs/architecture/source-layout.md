@@ -58,7 +58,6 @@
 - `src/managed_toolchain/`
   - `managed_root_dir.rs`：托管工具链根目录解析与默认 `~/.omne_data/toolchain/<target>/bin` 布局。
   - `managed_environment_layout.rs`：`managed_dir` 周边的 `uv` 工具目录、Python 目录、缓存目录、环境变量和可执行目标路径布局。
-  - `managed_destination_backup.rs`：托管目标路径的临时备份、恢复、清理与 staged file 提升辅助，供 `cargo_install`、`go_install`、`uv_tool` 这些写入 `managed_dir` 的流程共享。
   - `bootstrap_item_construction.rs`：托管工具链安装成功后的 `BootstrapItem` 组装与 detail 归并。
   - `source_candidate_attempts.rs`：按候选安装来源顺序尝试执行，并聚合失败信息。
   - `managed_uv_host_execution.rs`：托管 `uv` 子流程执行辅助，负责在调用前移除继承的宿主 `UV_*` 环境变量，再注入 installer 自己的托管 `uv` 环境。

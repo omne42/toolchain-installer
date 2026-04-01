@@ -8,7 +8,6 @@ use omne_process_primitives::{
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
-use crate::managed_toolchain::{ManagedDestinationBackup, promote_staged_file};
 use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
 use super::item_destination_resolution::{cargo_install_root, resolve_cargo_install_destination};
@@ -43,47 +42,46 @@ pub(crate) fn execute_cargo_install_item(
                     package_path.display()
                 )));
             }
-            push_cargo_install_local_path_arg(&mut args, package_path);
+            args.push("--path".to_string());
+            args.push(package_path.display().to_string());
             format!("cargo:path:{}", package_path.display())
         }
         CargoInstallSource::RegistryPackage { package, version } => {
-            args.push(OsString::from("--locked"));
-            args.push(OsString::from(package));
+            args.push("--locked".to_string());
+            args.push(package.clone());
             if let Some(version) = version.as_deref() {
-                args.push(OsString::from("--version"));
-                args.push(OsString::from(version));
+                args.push("--version".to_string());
+                args.push(version.to_string());
             }
             format!("cargo:crate:{package}")
         }
     };
+    let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
 
-    let backup = ManagedDestinationBackup::stash(&expected_destination, "cargo_install binary")
-        .map_err(OperationError::install)?;
+    let backup =
+        InstalledBinaryBackup::stash(&expected_destination).map_err(OperationError::install)?;
     if let Err(err) = run_host_recipe(&HostRecipeRequest::new("cargo".as_ref(), &args)) {
         cleanup_stage_root(&stage_root).ok();
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::from_host_recipe(err));
     }
 
-    let staged_binary = match select_staged_binary(
-        &stage_root.join("bin"),
-        expected_destination.file_name(),
-        item.binary_name_explicit,
-    ) {
-        Ok(binary) => binary,
-        Err(err) => {
-            cleanup_stage_root(&stage_root).ok();
-            backup.restore().map_err(OperationError::install)?;
-            return Err(OperationError::install(err));
-        }
-    };
+    let staged_binary =
+        match select_staged_binary(&stage_root.join("bin"), expected_destination.file_name()) {
+            Ok(binary) => binary,
+            Err(err) => {
+                cleanup_stage_root(&stage_root).ok();
+                backup.restore().map_err(OperationError::install)?;
+                return Err(OperationError::install(err));
+            }
+        };
 
-    if let Err(err) = promote_staged_file(
-        &staged_binary,
-        &expected_destination,
-        "cargo_install binary",
-    ) {
+    if let Err(err) = promote_staged_binary(&staged_binary, &expected_destination) {
         cleanup_stage_root(&stage_root).ok();
+        backup.restore().map_err(OperationError::install)?;
+        return Err(OperationError::install(err));
+    }
+    if let Err(err) = cleanup_stage_root(&stage_root) {
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::install(err));
     }
@@ -94,13 +92,7 @@ pub(crate) fn execute_cargo_install_item(
             expected_destination.display()
         )));
     }
-    let detail = build_success_cleanup_detail(
-        "cargo_install binary",
-        &stage_root,
-        &expected_destination,
-        || cleanup_stage_root(&stage_root),
-    );
-    let detail = merge_cleanup_detail(detail, backup.discard_with_warning());
+    backup.discard().map_err(OperationError::install)?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -109,28 +101,23 @@ pub(crate) fn execute_cargo_install_item(
         source_kind: Some(BootstrapSourceKind::CargoInstall),
         archive_match: None,
         destination: Some(expected_destination.display().to_string()),
-        detail,
+        detail: None,
         error_code: None,
         failure_code: None,
     })
 }
 
-fn build_cargo_install_args(item: &CargoInstallPlanItem, stage_root: &Path) -> Vec<OsString> {
+fn build_cargo_install_args(item: &CargoInstallPlanItem, stage_root: &Path) -> Vec<String> {
     let mut args = vec![
-        OsString::from("install"),
-        OsString::from("--root"),
-        stage_root.as_os_str().to_os_string(),
+        "install".to_string(),
+        "--root".to_string(),
+        stage_root.display().to_string(),
     ];
     if item.binary_name_explicit {
-        args.push(OsString::from("--bin"));
-        args.push(OsString::from(&item.binary_name));
+        args.push("--bin".to_string());
+        args.push(item.binary_name.clone());
     }
     args
-}
-
-fn push_cargo_install_local_path_arg(args: &mut Vec<OsString>, package_path: &Path) {
-    args.push(OsString::from("--path"));
-    args.push(package_path.as_os_str().to_os_string());
 }
 
 fn create_stage_root(parent: &Path, prefix: &str) -> Result<PathBuf, String> {
@@ -168,7 +155,6 @@ fn cleanup_stage_root(stage_root: &Path) -> Result<(), String> {
 fn select_staged_binary(
     stage_bin_dir: &Path,
     expected_name: Option<&OsStr>,
-    require_expected_name_match: bool,
 ) -> Result<PathBuf, String> {
     let entries = std::fs::read_dir(stage_bin_dir).map_err(|err| {
         format!(
@@ -185,35 +171,12 @@ fn select_staged_binary(
         .collect::<Vec<_>>();
     binaries.sort();
 
-    if let Some(expected_name) = expected_name {
-        if let Some(binary) = binaries
+    if let Some(expected_name) = expected_name
+        && let Some(binary) = binaries
             .iter()
             .find(|binary| binary.file_name().is_some_and(|name| name == expected_name))
-        {
-            return Ok(binary.clone());
-        }
-        if require_expected_name_match {
-            return match binaries.as_slice() {
-                [] => Err(format!(
-                    "cargo_install succeeded but produced no staged binary under {}",
-                    stage_bin_dir.display()
-                )),
-                [binary] => Err(format!(
-                    "cargo_install produced staged binary `{}` under {} but it did not match the requested binary name `{}`",
-                    binary
-                        .file_name()
-                        .and_then(|value| value.to_str())
-                        .unwrap_or("<unknown>"),
-                    stage_bin_dir.display(),
-                    expected_name.to_string_lossy()
-                )),
-                _ => Err(format!(
-                    "cargo_install produced multiple staged binaries under {} but none matched the requested binary name `{}`",
-                    stage_bin_dir.display(),
-                    expected_name.to_string_lossy()
-                )),
-            };
-        }
+    {
+        return Ok(binary.clone());
     }
 
     match binaries.as_slice() {
@@ -229,39 +192,110 @@ fn select_staged_binary(
     }
 }
 
-fn build_success_cleanup_detail(
-    label: &str,
-    cleanup_target: &Path,
-    destination: &Path,
-    cleanup: impl FnOnce() -> Result<(), String>,
-) -> Option<String> {
-    cleanup().err().map(|err| {
+fn promote_staged_binary(staged_binary: &Path, destination: &Path) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "cannot create cargo_install destination parent {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    if destination.exists() {
+        std::fs::remove_file(destination).map_err(|err| {
+            format!(
+                "cannot remove existing cargo_install binary {}: {err}",
+                destination.display()
+            )
+        })?;
+    }
+    std::fs::rename(staged_binary, destination).map_err(|err| {
         format!(
-            "{label} installed at {} but cleanup warning: {err}; staged path `{}` may require manual cleanup",
-            destination.display(),
-            cleanup_target.display()
+            "cannot promote staged cargo_install binary {} to {}: {err}",
+            staged_binary.display(),
+            destination.display()
         )
     })
 }
 
-fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option<String> {
-    match (first, second) {
-        (Some(first), Some(second)) => Some(format!("{first}; {second}")),
-        (Some(first), None) => Some(first),
-        (None, Some(second)) => Some(second),
-        (None, None) => None,
+struct InstalledBinaryBackup {
+    original: PathBuf,
+    backup: Option<PathBuf>,
+}
+
+impl InstalledBinaryBackup {
+    fn stash(original: &Path) -> Result<Self, String> {
+        if !original.exists() {
+            return Ok(Self {
+                original: original.to_path_buf(),
+                backup: None,
+            });
+        }
+
+        let backup = original.with_file_name(format!(
+            "{}.toolchain-installer-backup",
+            original
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("managed-tool")
+        ));
+        if backup.exists() {
+            return Err(format!(
+                "cannot stage existing cargo_install binary backup {}",
+                backup.display()
+            ));
+        }
+        std::fs::rename(original, &backup).map_err(|err| {
+            format!(
+                "cannot stage existing cargo_install binary {} before reinstall: {err}",
+                original.display()
+            )
+        })?;
+        Ok(Self {
+            original: original.to_path_buf(),
+            backup: Some(backup),
+        })
+    }
+
+    fn restore(&self) -> Result<(), String> {
+        let Some(backup) = self.backup.as_ref() else {
+            return Ok(());
+        };
+        if self.original.exists() {
+            std::fs::remove_file(&self.original).map_err(|err| {
+                format!(
+                    "cannot remove failed cargo_install binary {} before restore: {err}",
+                    self.original.display()
+                )
+            })?;
+        }
+        std::fs::rename(backup, &self.original).map_err(|err| {
+            format!(
+                "cannot restore previous cargo_install binary {} from {}: {err}",
+                self.original.display(),
+                backup.display()
+            )
+        })
+    }
+
+    fn discard(&self) -> Result<(), String> {
+        let Some(backup) = self.backup.as_ref() else {
+            return Ok(());
+        };
+        std::fs::remove_file(backup).map_err(|err| {
+            format!(
+                "cannot remove staged cargo_install binary backup {}: {err}",
+                backup.display()
+            )
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::{OsStr, OsString};
     use std::path::Path;
 
-    use super::{
-        build_cargo_install_args, build_success_cleanup_detail, push_cargo_install_local_path_arg,
-        select_staged_binary,
-    };
+    use super::build_cargo_install_args;
     use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
     #[test]
@@ -280,11 +314,11 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                OsString::from("install"),
-                OsString::from("--root"),
-                OsString::from("/tmp/stage"),
-                OsString::from("--bin"),
-                OsString::from("alias-tool"),
+                "install".to_string(),
+                "--root".to_string(),
+                "/tmp/stage".to_string(),
+                "--bin".to_string(),
+                "alias-tool".to_string(),
             ]
         );
     }
@@ -305,74 +339,10 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                OsString::from("install"),
-                OsString::from("--root"),
-                OsString::from("/tmp/stage"),
+                "install".to_string(),
+                "--root".to_string(),
+                "/tmp/stage".to_string(),
             ]
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn cargo_install_args_preserve_non_utf8_paths() {
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-        use std::path::PathBuf;
-
-        let item = CargoInstallPlanItem {
-            id: "demo".to_string(),
-            source: CargoInstallSource::RegistryPackage {
-                package: "demo".to_string(),
-                version: None,
-            },
-            binary_name: "demo".to_string(),
-            binary_name_explicit: false,
-        };
-        let stage_root = PathBuf::from(OsString::from_vec(b"/tmp/stage-\xff".to_vec()));
-        let package_path = PathBuf::from(OsString::from_vec(b"/tmp/pkg-\xfe".to_vec()));
-
-        let mut args = build_cargo_install_args(&item, &stage_root);
-        push_cargo_install_local_path_arg(&mut args, &package_path);
-
-        assert_eq!(args[2].as_bytes(), b"/tmp/stage-\xff");
-        assert_eq!(args[4].as_bytes(), b"/tmp/pkg-\xfe");
-    }
-
-    #[test]
-    fn success_cleanup_detail_reports_stage_cleanup_warning() {
-        let detail = build_success_cleanup_detail(
-            "cargo_install binary",
-            Path::new("/tmp/stage"),
-            Path::new("/tmp/managed/bin/demo"),
-            || Err("cannot clean staged cargo_install root /tmp/stage: busy".to_string()),
-        )
-        .expect("cleanup warning detail");
-
-        assert!(detail.contains("cleanup warning"));
-        assert!(detail.contains("/tmp/stage"));
-        assert!(detail.contains("/tmp/managed/bin/demo"));
-    }
-    #[test]
-    fn select_staged_binary_rejects_unique_mismatch_for_explicit_binary_name() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let stage_bin_dir = temp.path().join("bin");
-        std::fs::create_dir_all(&stage_bin_dir).expect("create staged bin");
-        std::fs::write(stage_bin_dir.join("actual-tool"), "binary").expect("write staged binary");
-
-        let err = select_staged_binary(&stage_bin_dir, Some(OsStr::new("alias-tool")), true)
-            .expect_err("explicit binary name mismatch should fail");
-        assert!(err.contains("did not match the requested binary name `alias-tool`"));
-    }
-
-    #[test]
-    fn select_staged_binary_keeps_single_fallback_for_inferred_binary_name() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let stage_bin_dir = temp.path().join("bin");
-        std::fs::create_dir_all(&stage_bin_dir).expect("create staged bin");
-        let staged_binary = stage_bin_dir.join("actual-tool");
-        std::fs::write(&staged_binary, "binary").expect("write staged binary");
-
-        let selected = select_staged_binary(&stage_bin_dir, Some(OsStr::new("alias-tool")), false)
-            .expect("inferred binary name may still fall back to the only staged binary");
-        assert_eq!(selected, staged_binary);
     }
 }

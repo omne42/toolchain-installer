@@ -41,22 +41,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Resolve macOS temp root
-        if: runner.os == 'macOS'
-        run: |
-          REAL_TMPDIR="$(python3 - <<'PY'
-          import os
-          import pathlib
-
-          print(pathlib.Path(os.environ["TMPDIR"]).resolve())
-          PY
-          )"
-          {
-            echo "TMPDIR=$REAL_TMPDIR"
-            echo "TMP=$REAL_TMPDIR"
-            echo "TEMP=$REAL_TMPDIR"
-          } >> "$GITHUB_ENV"
-
       - name: Rust fmt
         run: cargo fmt --manifest-path Cargo.toml -- --check
 
@@ -108,22 +92,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Resolve macOS temp root
-        if: runner.os == 'macOS'
-        run: |
-          REAL_TMPDIR="$(python3 - <<'PY'
-          import os
-          import pathlib
-
-          print(pathlib.Path(os.environ["TMPDIR"]).resolve())
-          PY
-          )"
-          {
-            echo "TMPDIR=$REAL_TMPDIR"
-            echo "TMP=$REAL_TMPDIR"
-            echo "TEMP=$REAL_TMPDIR"
-          } >> "$GITHUB_ENV"
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -181,22 +149,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Resolve macOS temp root
-        if: runner.os == 'macOS'
-        run: |
-          REAL_TMPDIR="$(python3 - <<'PY'
-          import os
-          import pathlib
-
-          print(pathlib.Path(os.environ["TMPDIR"]).resolve())
-          PY
-          )"
-          {
-            echo "TMPDIR=$REAL_TMPDIR"
-            echo "TMP=$REAL_TMPDIR"
-            echo "TEMP=$REAL_TMPDIR"
-          } >> "$GITHUB_ENV"
 
       - name: Setup Python
         uses: actions/setup-python@v6

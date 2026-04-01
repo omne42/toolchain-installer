@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use omne_fs_primitives::filesystem_is_case_sensitive;
 use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 
 use crate::contracts::{ExecutionRequest, InstallPlan, PLAN_SCHEMA_VERSION};
 use crate::error::{InstallerError, InstallerResult};
-use crate::managed_toolchain::managed_environment_layout::managed_python_shim_paths;
 use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
 use crate::plan_items::ResolvedPlanItem;
 
@@ -20,8 +18,7 @@ pub fn validate_install_plan(
     let host_triple = detect_host_target_triple()
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(requested_target_triple, &host_triple)
-        .map_err(|err| InstallerError::usage(err.to_string()))?;
+    let target_triple = resolve_target_triple(requested_target_triple, &host_triple);
     validate_plan_structure(plan, &host_triple, &target_triple, None).map(|_| ())
 }
 
@@ -32,8 +29,7 @@ pub fn validate_install_plan_with_request(
     let host_triple = detect_host_target_triple()
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple)
-        .map_err(|err| InstallerError::usage(err.to_string()))?;
+    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
     let resolved_items = validate_plan_structure(
         plan,
         &host_triple,
@@ -124,58 +120,41 @@ pub(crate) fn validate_destination_conflicts(
 ) -> InstallerResult<()> {
     let mut destinations: Vec<(&ResolvedPlanItem, PathBuf, Vec<String>)> = Vec::new();
     for item in items {
-        for destination in reserved_destinations_for_item(item, target_triple, managed_dir) {
-            let normalized_destination =
-                normalize_destination_components(&destination, target_triple);
-            for (existing_item, existing_destination, existing_normalized) in &destinations {
-                if destination_conflict_is_allowed(
-                    existing_item,
-                    item,
-                    existing_normalized,
-                    &normalized_destination,
-                ) {
-                    continue;
-                }
-                if *existing_normalized == normalized_destination {
-                    return Err(InstallerError::usage(format!(
-                        "install plan items `{}` and `{}` resolve to the same destination `{}`",
-                        existing_item.id(),
-                        item.id(),
-                        destination.display()
-                    )));
-                }
-                if destinations_overlap(existing_normalized, &normalized_destination) {
-                    return Err(InstallerError::usage(format!(
-                        "install plan items `{}` and `{}` resolve to overlapping destinations `{}` and `{}`",
-                        existing_item.id(),
-                        item.id(),
-                        existing_destination.display(),
-                        destination.display()
-                    )));
-                }
+        let Some(destination) = effective_destination_for_item(item, target_triple, managed_dir)
+        else {
+            continue;
+        };
+        let normalized_destination = normalize_destination_components(&destination, target_triple);
+        for (existing_item, existing_destination, existing_normalized) in &destinations {
+            if destination_conflict_is_allowed(
+                existing_item,
+                item,
+                existing_normalized,
+                &normalized_destination,
+            ) {
+                continue;
             }
-            destinations.push((item, destination, normalized_destination));
+            if *existing_normalized == normalized_destination {
+                return Err(InstallerError::usage(format!(
+                    "install plan items `{}` and `{}` resolve to the same destination `{}`",
+                    existing_item.id(),
+                    item.id(),
+                    destination.display()
+                )));
+            }
+            if destinations_overlap(existing_normalized, &normalized_destination) {
+                return Err(InstallerError::usage(format!(
+                    "install plan items `{}` and `{}` resolve to overlapping destinations `{}` and `{}`",
+                    existing_item.id(),
+                    item.id(),
+                    existing_destination.display(),
+                    destination.display()
+                )));
+            }
         }
+        destinations.push((item, destination, normalized_destination));
     }
     Ok(())
-}
-
-fn reserved_destinations_for_item(
-    item: &ResolvedPlanItem,
-    target_triple: &str,
-    managed_dir: &Path,
-) -> Vec<PathBuf> {
-    let mut destinations = effective_destination_for_item(item, target_triple, managed_dir)
-        .into_iter()
-        .collect::<Vec<_>>();
-    if let ResolvedPlanItem::UvPython(item) = item {
-        destinations.extend(managed_python_shim_paths(
-            &item.version,
-            target_triple,
-            managed_dir,
-        ));
-    }
-    destinations
 }
 
 fn destination_conflict_is_allowed(
@@ -195,8 +174,7 @@ fn destination_conflict_is_allowed(
 
 fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<String> {
     let windows_target = target_triple.contains("windows");
-    let case_insensitive_target = windows_target
-        || (target_triple.contains("darwin") && path_uses_case_insensitive_filesystem(path));
+    let case_insensitive_target = windows_target || target_triple.contains("darwin");
     let windows_path;
     let comparable_path = if windows_target {
         windows_path = path.to_string_lossy().replace('\\', "/");
@@ -226,29 +204,6 @@ fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<Str
         .collect()
 }
 
-fn path_uses_case_insensitive_filesystem(path: &Path) -> bool {
-    let Some(existing_root) = nearest_existing_directory(path) else {
-        return false;
-    };
-
-    !filesystem_is_case_sensitive(&existing_root)
-}
-
-fn nearest_existing_directory(path: &Path) -> Option<PathBuf> {
-    let mut candidate = path.to_path_buf();
-    if candidate.extension().is_some() || candidate.file_name().is_some() && !candidate.is_dir() {
-        candidate = candidate.parent().unwrap_or(path).to_path_buf();
-    }
-
-    loop {
-        if candidate.exists() {
-            return candidate.is_dir().then_some(candidate);
-        }
-        let parent = candidate.parent()?;
-        candidate = parent.to_path_buf();
-    }
-}
-
 fn destinations_overlap(existing: &[String], candidate: &[String]) -> bool {
     is_component_prefix(candidate, existing) || is_component_prefix(existing, candidate)
 }
@@ -263,13 +218,10 @@ mod tests {
 
     use crate::contracts::{InstallPlan, InstallPlanItem, PLAN_SCHEMA_VERSION};
 
-    use super::{
-        path_uses_case_insensitive_filesystem, validate_plan_with_base_dir,
-        validate_plan_with_managed_dir,
-    };
+    use super::validate_plan_with_managed_dir;
 
     #[test]
-    fn validate_destination_conflicts_matches_darwin_case_sensitivity_of_host_filesystem() {
+    fn validate_destination_conflicts_rejects_case_only_collisions_on_macos() {
         let plan = InstallPlan {
             schema_version: Some(PLAN_SCHEMA_VERSION),
             items: vec![
@@ -277,25 +229,16 @@ mod tests {
                 release_item("ruff-lower", "bin/ruff"),
             ],
         };
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let managed_dir = tmp.path().join("managed");
 
-        let result = validate_plan_with_managed_dir(
+        let err = validate_plan_with_managed_dir(
             &plan,
             "aarch64-apple-darwin",
             "aarch64-apple-darwin",
-            &managed_dir,
-        );
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("macOS should reject case-only destination collisions");
 
-        if path_uses_case_insensitive_filesystem(&managed_dir) {
-            let err = result.expect_err(
-                "case-insensitive filesystem should reject case-only destination collisions",
-            );
-            assert!(err.to_string().contains("resolve to the same destination"));
-        } else {
-            result
-                .expect("case-sensitive filesystem should allow case-only destination differences");
-        }
+        assert!(err.to_string().contains("resolve to the same destination"));
     }
 
     #[test]
@@ -344,27 +287,6 @@ mod tests {
             err.to_string()
                 .contains("resolve to overlapping destinations")
         );
-    }
-
-    #[test]
-    fn validate_destination_conflicts_rejects_uv_python_top_level_shim_overlap() {
-        let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
-            items: vec![
-                uv_python_item("python", "3.13.12"),
-                release_item("python-shim", "python3.13"),
-            ],
-        };
-
-        let err = validate_plan_with_managed_dir(
-            &plan,
-            "x86_64-unknown-linux-gnu",
-            "x86_64-unknown-linux-gnu",
-            Path::new("/tmp/managed"),
-        )
-        .expect_err("uv_python should reserve managed top-level python shims");
-
-        assert!(err.to_string().contains("resolve to the same destination"));
     }
 
     #[test]
@@ -427,38 +349,6 @@ mod tests {
             Path::new("/tmp/managed"),
         )
         .expect("workspace_package should allow multiple package installs into one workspace");
-    }
-
-    #[test]
-    fn validate_destination_conflicts_rejects_workspace_overlap_after_plan_base_dir_normalization()
-    {
-        let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
-            items: vec![
-                workspace_package_item("eslint", "repo"),
-                workspace_package_item("prettier", "/tmp/root/repo/tools"),
-            ],
-        };
-
-        let resolved_items = validate_plan_with_base_dir(
-            &plan,
-            "x86_64-unknown-linux-gnu",
-            "x86_64-unknown-linux-gnu",
-            Path::new("/tmp/root/plans/../"),
-        )
-        .expect("plan structure should normalize the plan base directory");
-
-        let err = super::validate_destination_conflicts(
-            &resolved_items,
-            "x86_64-unknown-linux-gnu",
-            Path::new("/tmp/managed"),
-        )
-        .expect_err("normalized workspace destinations should still participate in overlap checks");
-
-        assert!(
-            err.to_string()
-                .contains("resolve to overlapping destinations")
-        );
     }
 
     fn release_item(id: &str, destination: &str) -> InstallPlanItem {

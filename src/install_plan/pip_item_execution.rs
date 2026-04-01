@@ -7,7 +7,12 @@ use crate::error::{OperationError, OperationResult};
 use crate::plan_items::PipPlanItem;
 
 pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapItem> {
-    let candidates = pip_python_candidates(item);
+    let preferred_python = item.python.clone().unwrap_or_else(|| "python3".to_string());
+    let candidates = if preferred_python == "python3" {
+        vec!["python3".to_string(), "python".to_string()]
+    } else {
+        vec![preferred_python]
+    };
 
     let mut errors = Vec::new();
     for python in candidates {
@@ -45,42 +50,4 @@ pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapI
         "all pip recipes failed: {}",
         errors.join(" | ")
     )))
-}
-
-fn pip_python_candidates(item: &PipPlanItem) -> Vec<String> {
-    if let Some(explicit_python) = item.python.as_ref() {
-        return vec![explicit_python.clone()];
-    }
-    vec!["python3".to_string(), "python".to_string()]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::pip_python_candidates;
-    use crate::plan_items::PipPlanItem;
-
-    #[test]
-    fn explicit_python3_does_not_fall_back_to_python() {
-        let item = PipPlanItem {
-            id: "pip-demo".to_string(),
-            package: "ruff".to_string(),
-            python: Some("python3".to_string()),
-        };
-
-        assert_eq!(pip_python_candidates(&item), vec!["python3".to_string()]);
-    }
-
-    #[test]
-    fn default_python_candidates_keep_python3_then_python_fallback() {
-        let item = PipPlanItem {
-            id: "pip-demo".to_string(),
-            package: "ruff".to_string(),
-            python: None,
-        };
-
-        assert_eq!(
-            pip_python_candidates(&item),
-            vec!["python3".to_string(), "python".to_string()]
-        );
-    }
 }

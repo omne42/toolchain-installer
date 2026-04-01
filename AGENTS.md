@@ -23,24 +23,20 @@
 
 - `src/main.rs`：二进制入口，只负责 CLI 启动。
 - `src/cli.rs`：二进制专属 CLI 参数模型、plan 文件读取与命令分发。
-- `src/application/`：顶层用例编排。
-  这里收口 `bootstrap_use_case.rs`、`install_plan_use_case.rs` 与 `execution_context.rs`，负责装配执行上下文、调用领域模块并汇总稳定输出。
-- `src/builtin_tools/`：内置 `bootstrap` 工具域。
-  这里承载默认工具选择，以及 `git` / `gh` 的 public release 资产选择与安装适配。
-- `src/install_plan/`：安装 plan 领域。
-  这里负责 `method` 归位、DTO -> `ResolvedPlanItem` 收敛、目标路径解析、冲突校验、方法分发，以及各 plan method 的执行实现。
+- `src/application/`：`bootstrap` / install-plan 用例编排与执行上下文装配。
+- `src/builtin_tools/`：内置 `bootstrap` 工具选择，以及 `git` / `gh` public release 安装适配。
+- `src/install_plan/`：安装 plan 校验、DTO -> 强类型条目收敛、目标路径解析、方法分发与各 method 执行。
+  这里通过 `plan_method.rs` 把原始 `method` 字符串归位到更明确的领域方法分类，并把 `install_plan_validation.rs`、`resolved_plan_item.rs`、`item_destination_resolution.rs`、`item_method_dispatch.rs`、`release_item_execution.rs`、`archive_tree_release_item_execution.rs`、`system_package_item_execution.rs`、`pip_item_execution.rs`、`workspace_package_item_execution.rs`、`cargo_install_item_execution.rs`、`rustup_component_item_execution.rs`、`go_install_item_execution.rs`、`npm_global_item_execution.rs` 拆开承载。
 - `src/artifact/`：内部 artifact 安装结果域。
   这里的 `install_source.rs` 只承载内部安装来源结果，不是外部 contract。
 - `src/managed_toolchain/`：围绕 `managed_dir` 的托管工具链环境领域，负责 `uv`、`uv python install`、`uv tool install` 的环境布局与编排。
   这里进一步拆成 `managed_root_dir.rs`、`managed_environment_layout.rs`、`managed_uv_host_execution.rs`、`managed_uv_installation.rs`、`uv_public_release_installation.rs`、`managed_python_executable_discovery.rs`、`uv_python_installation.rs`、`uv_tool_installation.rs`、`uv_installation_source_candidates.rs`、`source_candidate_attempts.rs`、`bootstrap_item_construction.rs`、`version_probe.rs`。
   `bootstrap` 补齐 `uv` 时也直接复用这里的 public release 安装能力，不再额外维护一个顶层 `uv` 域。
-- `src/github_release_metadata.rs`：installer 对 shared `github-kit` 的窄适配层。
-  这里只负责把运行期 GitHub API 配置收敛成统一的 latest release metadata 调用，不承载资产选择或来源候选顺序。
 - `src/download_sources.rs`：installer 自有的下载来源选择域，只承载下载候选构造与来源种类映射；GitHub release metadata client 已下沉到 foundation 的 `github-kit`。
+- `src/github_release_metadata.rs`：installer 对 `github-kit` 的窄适配层，负责把运行期 GitHub API base / token 配置接到 shared foundation client。
 - `src/external_gateway/`：installer 对外部 edge gateway 的内部集成域。
   这里承载 gateway 资产路由拼装与 `git-for-windows` release URL 推断，不和通用来源获取逻辑混层。
 - `src/contracts/`：稳定输入/输出契约，只承载 bootstrap request/result 与 install plan contract。
-- `src/plan_items.rs`：`install_plan` 与 `managed_toolchain` 共享的强类型安装项模型。
 - `src/error.rs`：错误类型与退出码。
 - `src/installer_runtime_config.rs`：installer 运行期配置与环境变量收敛。
   这里已经拆成 `github_releases`、`download_sources`、`download`、`package_indexes`、`python_mirrors`、`gateway` 这些内部策略子结构，不再让所有产品配置揉成一个平铺大对象。

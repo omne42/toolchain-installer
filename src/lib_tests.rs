@@ -13,12 +13,11 @@ use omne_artifact_install_primitives::{
     install_archive_tree_from_bytes, install_binary_from_archive,
 };
 use omne_host_info_primitives::{
-    TargetTripleError, detect_host_platform, executable_suffix_for_target, resolve_target_triple,
+    detect_host_platform, executable_suffix_for_target, resolve_target_triple,
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
-    SystemPackageManager, SystemPackageName, default_system_package_install_recipes_for_os,
-    try_default_system_package_install_recipes_for_os,
+    SystemPackageManager, try_default_system_package_install_recipes_for_os,
 };
 
 use crate::builtin_tools::{
@@ -34,7 +33,7 @@ use crate::contracts::{
 use crate::download_sources::make_download_candidates;
 use crate::error::ExitCode;
 use crate::external_gateway::{
-    gateway_candidate_for_git_release_download_url, make_gateway_asset_candidate,
+    infer_gateway_candidate_for_git_release, make_gateway_asset_candidate,
 };
 use crate::install_plan::cargo_install_item_execution::execute_cargo_install_item;
 use crate::install_plan::go_install_item_execution::execute_go_install_item;
@@ -271,33 +270,6 @@ fn assess_managed_bootstrap_state_reports_missing_install() {
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
-fn assess_managed_bootstrap_state_ignores_unknown_tool_even_when_binary_is_healthy() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let managed_dir = tmp.path().join("managed");
-    let destination = managed_dir.join("custom-tool");
-    write_executable(
-        &destination,
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "custom-tool 1.0.0"
-  exit 0
-fi
-exit 0
-"#,
-    )
-    .expect("write custom-tool");
-
-    let state = assess_managed_bootstrap_state(
-        "custom-tool",
-        "x86_64-unknown-linux-gnu",
-        &destination,
-        &managed_dir,
-    );
-    assert_eq!(state, ManagedBootstrapState::NeedsInstall);
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
 fn assess_managed_bootstrap_state_reports_healthy_binary_after_version_check() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
@@ -369,65 +341,7 @@ exit 0
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
-fn cargo_install_promotes_matching_staged_binary_to_requested_destination_name() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let cargo = tmp.path().join("cargo");
-    write_executable(
-        &cargo,
-        r#"#!/bin/sh
-root=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--root" ]; then
-    root="$2"
-    shift 2
-    continue
-  fi
-  if [ "$1" = "--bin" ]; then
-    if [ "$2" != "alias-tool" ]; then
-      echo "unexpected cargo --bin value: $2" >&2
-      exit 7
-    fi
-    shift 2
-    continue
-  fi
-  shift
-done
-mkdir -p "$root/bin"
-printf 'cargo-installed' > "$root/bin/alias-tool"
-chmod +x "$root/bin/alias-tool"
-"#,
-    )
-    .expect("write cargo");
-    let managed_dir = tmp.path().join("managed");
-    let item = CargoInstallPlanItem {
-        id: "cargo-demo".to_string(),
-        source: CargoInstallSource::RegistryPackage {
-            package: "demo-tool".to_string(),
-            version: None,
-        },
-        binary_name: "alias-tool".to_string(),
-        binary_name_explicit: true,
-    };
-
-    let result = with_path_prepend(tmp.path(), || {
-        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
-    })
-    .expect("cargo install should succeed");
-
-    let destination = managed_dir.join("bin").join("alias-tool");
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(destination.to_str().unwrap())
-    );
-    assert_eq!(
-        std::fs::read_to_string(&destination).expect("read installed cargo binary"),
-        "cargo-installed"
-    );
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn cargo_install_rejects_single_staged_binary_that_does_not_match_explicit_binary_name() {
+fn cargo_install_promotes_single_staged_binary_to_requested_destination_name() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cargo = tmp.path().join("cargo");
     write_executable(
@@ -467,116 +381,12 @@ chmod +x "$root/bin/actual-tool"
         binary_name_explicit: true,
     };
 
-    let err = with_path_prepend(tmp.path(), || {
-        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
-    })
-    .expect_err("explicit binary name mismatch should fail");
-
-    assert!(
-        err.to_string()
-            .contains("did not match the requested binary name `alias-tool`")
-    );
-    assert!(
-        !managed_dir.join("bin").join("alias-tool").exists(),
-        "mismatched staged binary must not be promoted into the managed destination"
-    );
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn cargo_install_restores_previous_binary_when_staged_output_is_missing() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let cargo = tmp.path().join("cargo");
-    write_executable(
-        &cargo,
-        r#"#!/bin/sh
-root=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--root" ]; then
-    root="$2"
-    shift 2
-    continue
-  fi
-  shift
-done
-mkdir -p "$root/bin"
-exit 0
-"#,
-    )
-    .expect("write cargo");
-    let managed_dir = tmp.path().join("managed");
-    let destination = managed_dir.join("bin").join("alias-tool");
-    let stale_binary = "#!/bin/sh\necho stale-cargo\n";
-    write_executable(&destination, stale_binary).expect("write stale cargo binary");
-    let item = CargoInstallPlanItem {
-        id: "cargo-demo".to_string(),
-        source: CargoInstallSource::RegistryPackage {
-            package: "demo-tool".to_string(),
-            version: None,
-        },
-        binary_name: "alias-tool".to_string(),
-        binary_name_explicit: true,
-    };
-
-    let err = with_path_prepend(tmp.path(), || {
-        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
-    })
-    .expect_err("missing staged cargo binary should fail");
-
-    assert!(err.to_string().contains("produced no staged binary"));
-    assert_eq!(
-        std::fs::read_to_string(&destination).expect("read restored cargo binary"),
-        stale_binary
-    );
-    assert!(
-        !destination
-            .with_file_name("alias-tool.toolchain-installer-backup")
-            .exists()
-    );
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn cargo_install_replaces_previous_directory_destination_and_cleans_backup() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let cargo = tmp.path().join("cargo");
-    write_executable(
-        &cargo,
-        r#"#!/bin/sh
-root=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--root" ]; then
-    root="$2"
-    shift 2
-    continue
-  fi
-  shift
-done
-mkdir -p "$root/bin"
-printf 'cargo-installed' > "$root/bin/alias-tool"
-chmod +x "$root/bin/alias-tool"
-"#,
-    )
-    .expect("write cargo");
-    let managed_dir = tmp.path().join("managed");
-    let destination = managed_dir.join("bin").join("alias-tool");
-    std::fs::create_dir_all(&destination).expect("create old directory destination");
-    std::fs::write(destination.join("old"), "stale").expect("write stale directory content");
-    let item = CargoInstallPlanItem {
-        id: "cargo-demo".to_string(),
-        source: CargoInstallSource::RegistryPackage {
-            package: "demo-tool".to_string(),
-            version: None,
-        },
-        binary_name: "alias-tool".to_string(),
-        binary_name_explicit: true,
-    };
-
     let result = with_path_prepend(tmp.path(), || {
         execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
     })
-    .expect("cargo install should replace directory destination");
+    .expect("cargo install should succeed");
 
+    let destination = managed_dir.join("bin").join("alias-tool");
     assert_eq!(
         result.destination.as_deref(),
         Some(destination.to_str().unwrap())
@@ -584,85 +394,6 @@ chmod +x "$root/bin/alias-tool"
     assert_eq!(
         std::fs::read_to_string(&destination).expect("read installed cargo binary"),
         "cargo-installed"
-    );
-    assert!(
-        !destination
-            .with_file_name("alias-tool.toolchain-installer-backup")
-            .exists()
-    );
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn cargo_install_recovers_from_stale_backup_before_reinstall() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let cargo = tmp.path().join("cargo");
-    write_executable(
-        &cargo,
-        r#"#!/bin/sh
-root=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--root" ]; then
-    root="$2"
-    shift 2
-    continue
-  fi
-  shift
-done
-mkdir -p "$root/bin"
-printf 'cargo-installed' > "$root/bin/alias-tool"
-chmod +x "$root/bin/alias-tool"
-"#,
-    )
-    .expect("write cargo");
-    let managed_dir = tmp.path().join("managed");
-    let destination = managed_dir.join("bin").join("alias-tool");
-    std::fs::create_dir_all(destination.parent().expect("destination parent"))
-        .expect("create destination parent");
-    write_executable(&destination, "#!/bin/sh\necho current-cargo\n").expect("write current");
-    let stale_backup = destination.with_file_name("alias-tool.toolchain-installer-backup");
-    std::fs::write(&stale_backup, "stale-backup").expect("write stale backup");
-    let item = CargoInstallPlanItem {
-        id: "cargo-demo".to_string(),
-        source: CargoInstallSource::RegistryPackage {
-            package: "demo-tool".to_string(),
-            version: None,
-        },
-        binary_name: "alias-tool".to_string(),
-        binary_name_explicit: true,
-    };
-
-    let result = with_path_prepend(tmp.path(), || {
-        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
-    })
-    .expect("cargo install should recover from stale backup");
-
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(destination.to_str().unwrap())
-    );
-    assert_eq!(
-        std::fs::read_to_string(&destination).expect("read installed cargo binary"),
-        "cargo-installed"
-    );
-    assert!(
-        !stale_backup.exists(),
-        "canonical backup should be consumed or removed during recovery"
-    );
-    let quarantined = std::fs::read_dir(destination.parent().expect("destination parent"))
-        .expect("read managed bin dir")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        quarantined.len(),
-        1,
-        "stale canonical backup should be quarantined once"
     );
 }
 
@@ -700,106 +431,6 @@ chmod +x "$GOBIN/actual-tool"
     assert_eq!(
         std::fs::read_to_string(&destination).expect("read installed go binary"),
         "go-installed"
-    );
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn go_install_recovers_from_stale_backup_before_reinstall() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let go = tmp.path().join("go");
-    write_executable(
-        &go,
-        r#"#!/bin/sh
-mkdir -p "$GOBIN"
-printf 'go-installed' > "$GOBIN/alias-tool"
-chmod +x "$GOBIN/alias-tool"
-"#,
-    )
-    .expect("write go");
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir).expect("create managed dir");
-    let destination = managed_dir.join("alias-tool");
-    write_executable(&destination, "#!/bin/sh\necho current-go\n").expect("write current");
-    let stale_backup = destination.with_file_name("alias-tool.toolchain-installer-backup");
-    std::fs::write(&stale_backup, "stale-backup").expect("write stale backup");
-    let item = GoInstallPlanItem {
-        id: "go-demo".to_string(),
-        source: GoInstallSource::PackageSpec("example.com/demo/cmd/demo@latest".to_string()),
-        binary_name: "alias-tool".to_string(),
-    };
-
-    let result = with_path_prepend(tmp.path(), || {
-        execute_go_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
-    })
-    .expect("go install should recover from stale backup");
-
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(destination.to_str().unwrap())
-    );
-    assert_eq!(
-        std::fs::read_to_string(&destination).expect("read installed go binary"),
-        "go-installed"
-    );
-    assert!(
-        !stale_backup.exists(),
-        "canonical backup should be consumed or removed during recovery"
-    );
-    let quarantined = std::fs::read_dir(&managed_dir)
-        .expect("read managed dir")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        quarantined.len(),
-        1,
-        "stale canonical backup should be quarantined once"
-    );
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn go_install_restores_previous_binary_when_staged_output_is_missing() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let go = tmp.path().join("go");
-    write_executable(
-        &go,
-        r#"#!/bin/sh
-mkdir -p "$GOBIN"
-exit 0
-"#,
-    )
-    .expect("write go");
-    let managed_dir = tmp.path().join("managed");
-    let destination = managed_dir.join("alias-tool");
-    let stale_binary = "#!/bin/sh\necho stale-go\n";
-    write_executable(&destination, stale_binary).expect("write stale go binary");
-    let item = GoInstallPlanItem {
-        id: "go-demo".to_string(),
-        source: GoInstallSource::PackageSpec("example.com/demo/cmd/demo@latest".to_string()),
-        binary_name: "alias-tool".to_string(),
-    };
-
-    let err = with_path_prepend(tmp.path(), || {
-        execute_go_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
-    })
-    .expect_err("missing staged go binary should fail");
-
-    assert!(err.to_string().contains("produced no staged binary"));
-    assert_eq!(
-        std::fs::read_to_string(&destination).expect("read restored go binary"),
-        stale_binary
-    );
-    assert!(
-        !destination
-            .with_file_name("alias-tool.toolchain-installer-backup")
-            .exists()
     );
 }
 
@@ -897,12 +528,11 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
     let payload = managed_dir
         .join("git-portable")
         .join("PortableGit")
-        .join("mingw64")
-        .join("bin");
+        .join("cmd");
     std::fs::create_dir_all(&payload).expect("create payload dir");
     std::fs::write(
         &destination,
-        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\mingw64\\bin\\git.exe\" %*\r\n",
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
     )
     .expect("write launcher");
     std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
@@ -1060,27 +690,6 @@ exit 42
     });
 }
 
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn host_command_is_healthy_rejects_mismatched_version_prefix() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    write_executable(
-        &tmp.path().join("gh"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "definitely-not-gh 1.0.0"
-  exit 0
-fi
-exit 0
-"#,
-    )
-    .expect("write gh");
-
-    with_path_prepend(tmp.path(), || {
-        assert!(!host_command_is_healthy("gh"));
-    });
-}
-
 #[cfg(unix)]
 #[test]
 fn host_command_is_healthy_rejects_non_executable_supported_host_file() {
@@ -1153,41 +762,6 @@ exit 0
     assert_eq!(result.items[0].tool, "custom-tool");
     assert_eq!(result.items[0].status, BootstrapStatus::Unsupported);
     assert_ne!(result.items[0].status, BootstrapStatus::Present);
-    Ok(())
-}
-
-#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
-#[test]
-fn bootstrap_reports_unsupported_tool_even_when_managed_dir_contains_healthy_binary()
--> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    write_executable(
-        &managed_dir.join("custom-tool"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "custom-tool 1.0.0"
-  exit 0
-fi
-exit 0
-"#,
-    )?;
-
-    let result = tokio::runtime::Runtime::new()
-        .expect("create runtime")
-        .block_on(crate::bootstrap(&BootstrapCommand {
-            execution: ExecutionRequest {
-                managed_dir: Some(managed_dir),
-                ..ExecutionRequest::default()
-            },
-            tools: vec!["custom-tool".to_string()],
-        }))?;
-
-    assert_eq!(result.items.len(), 1);
-    assert_eq!(result.items[0].tool, "custom-tool");
-    assert_eq!(result.items[0].status, BootstrapStatus::Unsupported);
-    assert_ne!(result.items[0].status, BootstrapStatus::Installed);
     Ok(())
 }
 
@@ -1358,7 +932,7 @@ fn installer_errors_preserve_freeform_user_text() {
 }
 
 #[test]
-fn gateway_candidate_for_git_release_download_url_parses_exact_git_release_url() {
+fn infer_gateway_candidate_for_git_release_parses_release_url() {
     let cfg = InstallerRuntimeConfig {
         gateway: GatewayRoutingPolicy {
             base: Some("https://gw.example".to_string()),
@@ -1366,29 +940,9 @@ fn gateway_candidate_for_git_release_download_url_parses_exact_git_release_url()
         },
         ..test_runtime_config()
     };
-    let candidate = gateway_candidate_for_git_release_download_url(
+    let candidate = infer_gateway_candidate_for_git_release(
         &cfg,
         "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip",
-    )
-    .expect("candidate");
-    assert_eq!(
-        candidate,
-        "https://gw.example/toolchain/git/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip"
-    );
-}
-
-#[test]
-fn gateway_candidate_for_git_release_download_url_ignores_query_and_fragment() {
-    let cfg = InstallerRuntimeConfig {
-        gateway: GatewayRoutingPolicy {
-            base: Some("https://gw.example".to_string()),
-            country: Some("CN".to_string()),
-        },
-        ..test_runtime_config()
-    };
-    let candidate = gateway_candidate_for_git_release_download_url(
-        &cfg,
-        "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip?download=1#fragment",
     )
     .expect("candidate");
     assert_eq!(
@@ -1424,21 +978,20 @@ fn select_mingit_release_asset_prefers_busybox_on_x64() {
 
 #[test]
 fn system_recipes_cover_linux() {
-    let package = SystemPackageName::new("git").expect("valid package name");
-    let recipes =
-        default_system_package_install_recipes_for_os("linux", &package).expect("linux recipes");
+    let recipes = try_default_system_package_install_recipes_for_os("linux", "git")
+        .expect("bootstrap package should remain valid");
     assert!(!recipes.is_empty());
     assert!(recipes.iter().any(|recipe| recipe.program == "apt-get"));
 }
 
 #[test]
 fn toolchain_installer_composes_current_host_system_recipes() {
-    let package = SystemPackageName::new("git").expect("valid package name");
     let _ = detect_host_platform().map(|platform| {
-        default_system_package_install_recipes_for_os(
+        try_default_system_package_install_recipes_for_os(
             platform.operating_system().as_str(),
-            &package,
+            "git",
         )
+        .expect("bootstrap package should remain valid")
     });
 }
 
@@ -1457,42 +1010,7 @@ fn system_package_manager_accepts_only_canonical_names() {
 }
 
 #[test]
-fn system_package_recipe_helpers_match_runtime_validation_contract() {
-    let package = SystemPackageName::new("git").expect("valid package name");
-    let apt_recipe = SystemPackageManager::AptGet.install_recipe(&package);
-    assert_eq!(apt_recipe.program, "apt-get");
-    assert_eq!(
-        apt_recipe.args,
-        vec![
-            "install".to_string(),
-            "-y".to_string(),
-            "--".to_string(),
-            "git".to_string()
-        ]
-    );
-
-    assert_eq!(
-        SystemPackageName::new("git core")
-            .expect_err("whitespace should be rejected")
-            .to_string(),
-        "package name must not contain whitespace"
-    );
-    assert_eq!(
-        SystemPackageName::new("../git")
-            .expect_err("path separators should be rejected")
-            .to_string(),
-        "package name must not contain path separators"
-    );
-    assert_eq!(
-        SystemPackageName::new("-git")
-            .expect_err("option-like names should be rejected")
-            .to_string(),
-        "package name must not look like a command-line option"
-    );
-}
-
-#[test]
-fn system_package_try_helpers_still_reject_invalid_package_names() {
+fn system_package_recipe_helpers_reject_invalid_package_names() {
     assert!(
         SystemPackageManager::AptGet
             .try_install_recipe("git core")
@@ -1718,8 +1236,8 @@ async fn install_git_from_public_release_windows_zip_builds_cmd_launcher() -> an
 }
 
 #[tokio::test]
-async fn install_git_from_public_release_windows_zip_accepts_mingw64_fallback() -> anyhow::Result<()>
-{
+async fn install_git_from_public_release_windows_zip_requires_canonical_cmd_entrypoint()
+-> anyhow::Result<()> {
     let archive_name = "MinGit-2.53.0.2-busybox-64-bit.zip";
     let archive_bytes = make_zip_archive(&[
         ("PortableGit/mingw64/bin/git.exe", b"MZ".as_slice(), 0o755),
@@ -1769,31 +1287,13 @@ async fn install_git_from_public_release_windows_zip_accepts_mingw64_fallback() 
     let tmp = tempfile::tempdir()?;
     let destination = tmp.path().join("git.cmd");
 
-    let source =
+    let err =
         install_git_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
-            .await?;
-    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
-    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
-    assert_eq!(
-        source
-            .archive_match
-            .as_ref()
-            .map(|matched| (matched.format, matched.path.as_str())),
-        Some((
-            BootstrapArchiveFormat::Zip,
-            "PortableGit/mingw64/bin/git.exe"
-        ))
-    );
-    let launcher = std::fs::read_to_string(&destination)?;
-    assert!(launcher.contains("git-portable\\PortableGit\\mingw64\\bin\\git.exe"));
+            .await
+            .expect_err("non-canonical MinGit layout should be rejected");
     assert!(
-        tmp.path()
-            .join("git-portable")
-            .join("PortableGit")
-            .join("mingw64")
-            .join("bin")
-            .join("msys-2.0.dll")
-            .exists()
+        err.detail().contains("expected `PortableGit/cmd/git.exe`"),
+        "unexpected error: {err:?}"
     );
 
     handle.join().expect("mock server thread join");
@@ -1875,8 +1375,7 @@ async fn install_git_from_public_release_preserves_existing_install_on_failed_up
 }
 
 #[test]
-fn replace_mingit_installation_swaps_staging_and_keeps_backup_for_followup_steps()
--> anyhow::Result<()> {
+fn replace_mingit_installation_swaps_staging_and_cleans_backup() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let portable_root = temp.path().join("git-portable");
     let staging_root = temp.path().join("git-portable.stage");
@@ -1897,10 +1396,7 @@ fn replace_mingit_installation_swaps_staging_and_keeps_backup_for_followup_steps
 
     assert_eq!(std::fs::read(&old_git)?, b"NEW-GIT");
     assert!(!staging_root.exists());
-    assert_eq!(
-        std::fs::read(backup_root.join("PortableGit").join("cmd").join("git.exe"))?,
-        b"OLD-GIT"
-    );
+    assert!(!backup_root.exists());
     Ok(())
 }
 
@@ -1976,7 +1472,7 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow::Result<()> {
+async fn install_uv_from_mock_windows_zip_requires_archive_root_binary() -> anyhow::Result<()> {
     let archive_name = "uv-x86_64-pc-windows-msvc.zip";
     let archive_bytes = make_zip_archive(&[("uv.exe", b"mock-windows-uv".as_slice(), 0o755)])?;
     let digest = sha256_hex(&archive_bytes);
@@ -2002,7 +1498,7 @@ async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow:
         release_body,
     );
     routes.insert(format!("/asset/{archive_name}"), archive_bytes);
-    let handle = spawn_mock_http_server(listener, routes, 3);
+    let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
         github_releases: GitHubReleasePolicy {
@@ -2020,20 +1516,13 @@ async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow:
     let tmp = tempfile::tempdir()?;
     let destination = tmp.path().join("uv.exe");
 
-    let source =
-        install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
-            .await?;
-    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
-    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
-    assert_eq!(
-        source
-            .archive_match
-            .as_ref()
-            .map(|matched| (matched.format, matched.path.as_str())),
-        Some((BootstrapArchiveFormat::Zip, "uv.exe"))
+    let err = install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+        .await
+        .expect_err("root-level Windows uv binary should be rejected");
+    assert!(
+        err.detail().contains("binary `uv.exe` not found"),
+        "unexpected error: {err:?}"
     );
-    let installed = std::fs::read(&destination)?;
-    assert_eq!(installed, b"mock-windows-uv");
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2344,49 +1833,6 @@ async fn apply_install_plan_installs_archive_release_when_url_has_query() -> any
 }
 
 #[tokio::test]
-async fn apply_install_plan_redacts_release_source_url_in_result() -> anyhow::Result<()> {
-    let binary_bytes = b"#!/bin/sh\necho redact-release\n".to_vec();
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let base = format!("http://127.0.0.1:{}/asset/demo", addr.port());
-    let request_url = format!("{base}?token=secret#ignored");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/asset/demo?token=secret".to_string(), binary_bytes);
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
-        items: vec![InstallPlanItem {
-            id: "demo-release".to_string(),
-            method: "release".to_string(),
-            version: None,
-            url: Some(request_url),
-            sha256: None,
-            archive_binary: None,
-            binary_name: Some("demo".to_string()),
-            destination: Some("demo".to_string()),
-            package: None,
-            manager: None,
-            python: None,
-        }],
-    };
-    let request = crate::ExecutionRequest {
-        managed_dir: Some(managed_dir),
-        ..Default::default()
-    };
-
-    let result = crate::apply_install_plan(&plan, &request).await?;
-    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
-    assert_eq!(result.items[0].source.as_deref(), Some(base.as_str()));
-
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[tokio::test]
 async fn apply_install_plan_installs_archive_release_with_relative_archive_binary_hint()
 -> anyhow::Result<()> {
     let archive_name = "node-v22.14.0-linux-x64.tar.xz";
@@ -2413,7 +1859,7 @@ async fn apply_install_plan_installs_archive_release_with_relative_archive_binar
             version: None,
             url: Some(format!("{base}/asset/{archive_name}")),
             sha256: None,
-            archive_binary: Some("bin/node".to_string()),
+            archive_binary: Some("node-v22.14.0-linux-x64/bin/node".to_string()),
             binary_name: Some("node".to_string()),
             destination: Some("node".to_string()),
             package: None,
@@ -2446,70 +1892,21 @@ async fn apply_install_plan_installs_archive_release_with_relative_archive_binar
 }
 
 #[tokio::test]
-async fn apply_install_plan_redacts_archive_tree_release_source_url_in_result() -> anyhow::Result<()>
-{
-    let archive_name = "demo-tree-redact.tar.gz";
-    let archive_bytes = make_tar_gz_archive(&[(
-        "demo-tree-redact/bin/demo",
-        b"#!/bin/sh\necho archive-tree-redact\n".as_slice(),
-        0o755,
-    )])?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let base = format!("http://127.0.0.1:{}/asset/{archive_name}", addr.port());
-    let request_url = format!(
-        "http://user:secret@127.0.0.1:{}/asset/{archive_name}?download=1#ignored",
-        addr.port()
-    );
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert(format!("/asset/{archive_name}?download=1"), archive_bytes);
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
-        items: vec![InstallPlanItem {
-            id: "demo-tree".to_string(),
-            method: "archive_tree_release".to_string(),
-            version: None,
-            url: Some(request_url),
-            sha256: None,
-            archive_binary: None,
-            binary_name: None,
-            destination: Some("tree".to_string()),
-            package: None,
-            manager: None,
-            python: None,
-        }],
-    };
-    let request = crate::ExecutionRequest {
-        managed_dir: Some(managed_dir),
-        ..Default::default()
-    };
-
-    let result = crate::apply_install_plan(&plan, &request).await?;
-    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
-    assert_eq!(result.items[0].source.as_deref(), Some(base.as_str()));
-
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[tokio::test]
-async fn apply_install_plan_installs_archive_release_with_unrooted_archive_binary_fallback()
+async fn apply_install_plan_rejects_archive_release_with_unrooted_archive_binary_hint()
 -> anyhow::Result<()> {
     let archive_name = "7z2600-linux-x64.tar.xz";
-    let archive_bytes =
-        make_tar_xz_archive(&[("7zz", b"#!/bin/sh\necho root-7zz\n".as_slice(), 0o755)])?;
+    let archive_bytes = make_tar_xz_archive(&[(
+        "7z2600-linux-x64/7zz",
+        b"#!/bin/sh\necho root-7zz\n".as_slice(),
+        0o755,
+    )])?;
 
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let addr = listener.local_addr()?;
     let base = format!("http://{addr}");
     let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
     routes.insert(format!("/asset/{archive_name}"), archive_bytes.clone());
-    let handle = spawn_mock_http_server(listener, routes, 2);
+    let handle = spawn_mock_http_server(listener, routes, 1);
 
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
@@ -2535,16 +1932,8 @@ async fn apply_install_plan_installs_archive_release_with_unrooted_archive_binar
     };
 
     let result = crate::apply_install_plan(&plan, &request).await?;
-    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
-    assert_eq!(
-        result.items[0]
-            .archive_match
-            .as_ref()
-            .map(|matched| (matched.format, matched.path.as_str())),
-        Some((BootstrapArchiveFormat::TarXz, "7zz"))
-    );
-    let installed = std::fs::read_to_string(managed_dir.join("7zz"))?;
-    assert!(installed.contains("root-7zz"));
+    assert_eq!(result.items[0].status, BootstrapStatus::Failed);
+    assert_eq!(result.items[0].failure_code, Some(ExitCode::Install));
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2637,6 +2026,7 @@ fn install_binary_from_tar_xz_uses_hint() -> anyhow::Result<()> {
         "node-v1.0.0-linux-x64.tar.xz",
         &archive,
         "node",
+        "node",
         &destination,
         Some("node-v1.0.0-linux-x64/bin/node"),
     )?;
@@ -2713,7 +2103,7 @@ fn make_gateway_asset_candidate_normalizes_base_trailing_slash() {
 }
 
 #[test]
-fn gateway_candidate_for_git_release_download_url_rejects_non_matching_or_embedded_paths() {
+fn infer_gateway_candidate_for_git_release_returns_none_for_non_matching_url() {
     let cfg = InstallerRuntimeConfig {
         gateway: GatewayRoutingPolicy {
             base: Some("https://gw.example".to_string()),
@@ -2722,40 +2112,15 @@ fn gateway_candidate_for_git_release_download_url_rejects_non_matching_or_embedd
         ..test_runtime_config()
     };
     assert!(
-        gateway_candidate_for_git_release_download_url(
-            &cfg,
-            "https://example.com/download/v1/file.zip"
-        )
-        .is_none()
-    );
-    assert!(
-        gateway_candidate_for_git_release_download_url(
-            &cfg,
-            "https://mirror.example/github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip"
-        )
-        .is_none()
-    );
-    assert!(
-        gateway_candidate_for_git_release_download_url(
-            &cfg,
-            "http://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip"
-        )
-        .is_none()
-    );
-    assert!(
-        gateway_candidate_for_git_release_download_url(
-            &cfg,
-            "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/nested/MinGit.zip"
-        )
-        .is_none()
+        infer_gateway_candidate_for_git_release(&cfg, "https://example.com/download/v1/file.zip")
+            .is_none()
     );
 }
 
 #[test]
 fn system_recipes_cover_macos() {
-    let package = SystemPackageName::new("git").expect("valid package name");
-    let recipes =
-        default_system_package_install_recipes_for_os("macos", &package).expect("macos recipes");
+    let recipes = try_default_system_package_install_recipes_for_os("macos", "git")
+        .expect("bootstrap package should remain valid");
     assert_eq!(recipes.len(), 1);
     assert_eq!(recipes[0].program, "brew");
 }
@@ -2764,30 +2129,15 @@ fn system_recipes_cover_macos() {
 fn target_binary_ext_matches_windows_and_unix() {
     assert_eq!(
         executable_suffix_for_target("x86_64-pc-windows-msvc"),
-        Ok(".exe")
+        ".exe"
     );
-    assert_eq!(
-        executable_suffix_for_target("x86_64-unknown-linux-gnu"),
-        Ok("")
-    );
+    assert_eq!(executable_suffix_for_target("x86_64-unknown-linux-gnu"), "");
 }
 
 #[test]
-fn resolve_target_triple_accepts_supported_trimmed_override() {
-    let detected = resolve_target_triple(
-        Some("  x86_64-pc-windows-msvc  "),
-        "x86_64-unknown-linux-gnu",
-    );
-    assert_eq!(detected, Ok("x86_64-pc-windows-msvc".to_string()));
-}
-
-#[test]
-fn resolve_target_triple_rejects_unknown_trimmed_override() {
+fn resolve_target_triple_uses_trimmed_override() {
     let detected = resolve_target_triple(Some("  custom-target  "), "x86_64-unknown-linux-gnu");
-    assert_eq!(
-        detected,
-        Err(TargetTripleError::Unsupported("custom-target".to_string()))
-    );
+    assert_eq!(detected, "custom-target");
 }
 
 #[test]
@@ -2957,7 +2307,7 @@ fn validate_plan_rejects_absolute_destination() {
 }
 
 #[test]
-fn validate_plan_rejects_windows_absolute_destination_on_non_windows_host() {
+fn validate_plan_accepts_windows_absolute_destination() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -2975,46 +2325,8 @@ fn validate_plan_rejects_windows_absolute_destination_on_non_windows_host() {
         }],
     };
 
-    let err = validate_plan(&plan, "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc")
-        .expect_err("non-windows host should reject windows absolute destination");
-    assert_eq!(err.exit_code(), ExitCode::Usage);
-    assert!(err.to_string().contains("cannot be an absolute path"));
-}
-
-#[test]
-fn validate_plan_resolves_workspace_package_destination_against_plan_base_dir() {
-    let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
-        items: vec![InstallPlanItem {
-            id: "workspace-react".to_string(),
-            method: "workspace_package".to_string(),
-            version: None,
-            url: None,
-            sha256: None,
-            archive_binary: None,
-            binary_name: None,
-            destination: Some("apps/demo-web".to_string()),
-            package: Some("react".to_string()),
-            manager: None,
-            python: None,
-        }],
-    };
-    let plan_base_dir = Path::new("/tmp/install-plans/demo");
-
-    let resolved = validate_plan_with_base_dir(
-        &plan,
-        "x86_64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-        plan_base_dir,
-    )
-    .expect("workspace destination should resolve");
-
-    match &resolved[0] {
-        ResolvedPlanItem::WorkspacePackage(item) => {
-            assert_eq!(item.destination, plan_base_dir.join("apps/demo-web"));
-        }
-        other => panic!("unexpected resolved item: {other:?}"),
-    }
+    validate_plan(&plan, "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc")
+        .expect("windows absolute destination should be accepted for windows targets");
 }
 
 #[test]
@@ -3406,7 +2718,7 @@ fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
 }
 
 #[test]
-fn validate_plan_rejects_windows_absolute_destination_for_release() {
+fn validate_plan_accepts_windows_absolute_destination_for_release() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -3424,15 +2736,21 @@ fn validate_plan_rejects_windows_absolute_destination_for_release() {
         }],
     };
 
-    let err = validate_plan_with_managed_dir(
+    let items = validate_plan_with_managed_dir(
         &plan,
         "x86_64-pc-windows-msvc",
         "x86_64-pc-windows-msvc",
         Path::new(r"C:\managed"),
     )
-    .expect_err("windows absolute destination should be rejected for managed release items");
-    assert_eq!(err.exit_code(), ExitCode::Usage);
-    assert!(err.to_string().contains("cannot be an absolute path"));
+    .expect("windows absolute destination should stay valid for managed release items");
+
+    assert_eq!(items.len(), 1);
+    match &items[0] {
+        ResolvedPlanItem::Release(item) => {
+            assert_eq!(item.destination, Some(PathBuf::from(r"C:\tools\demo.exe")));
+        }
+        other => panic!("unexpected item kind: {other:?}"),
+    }
 }
 
 #[test]
@@ -3750,7 +3068,7 @@ fn validate_plan_rejects_pip_destination_field() {
 }
 
 #[test]
-fn validate_plan_rejects_apt_with_non_apt_manager() {
+fn validate_plan_rejects_apt_alias_method() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -3772,7 +3090,7 @@ fn validate_plan_rejects_apt_with_non_apt_manager() {
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt should reject non-apt manager");
+    .expect_err("apt alias method should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
 }
 
@@ -3929,80 +3247,6 @@ async fn execute_uv_python_item_ignores_inherited_uv_environment_helper() -> any
     .await?;
 
     assert_eq!(result.status, BootstrapStatus::Installed);
-    Ok(())
-}
-
-#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
-#[test]
-fn execute_uv_python_item_reuses_healthy_host_uv_when_managed_uv_is_missing() -> anyhow::Result<()>
-{
-    let tmp = tempfile::tempdir()?;
-    let bin_dir = tmp.path().join("bin");
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&bin_dir)?;
-    std::fs::create_dir_all(&managed_dir)?;
-    write_executable(
-        &bin_dir.join("uv"),
-        &format!(
-            r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "python" ] && [ "$2" = "install" ]; then
-  mkdir -p "{}"
-  cat > "{}/python3.13" <<'EOF'
-#!/bin/sh
-echo "Python 3.13.12"
-EOF
-  chmod +x "{}/python3.13"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-            managed_dir.display(),
-            managed_dir.display(),
-            managed_dir.display()
-        ),
-    )?;
-
-    with_path_prepend(&bin_dir, || -> anyhow::Result<()> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        runtime.block_on(async {
-            let item = UvPythonPlanItem {
-                id: "python3.13.12".to_string(),
-                version: "3.13.12".to_string(),
-            };
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()?;
-
-            let result = execute_uv_python_item(
-                &item,
-                "x86_64-unknown-linux-gnu",
-                &managed_dir,
-                &test_runtime_config(),
-                &client,
-            )
-            .await?;
-
-            assert_eq!(result.status, BootstrapStatus::Installed);
-            assert_eq!(result.source_kind, Some(BootstrapSourceKind::Canonical));
-            assert!(
-                result
-                    .detail
-                    .as_deref()
-                    .unwrap_or_default()
-                    .contains("using healthy host uv")
-            );
-            assert!(!managed_dir.join("uv").exists());
-            assert!(managed_dir.join("python3.13").exists());
-            Ok(())
-        })
-    })?;
     Ok(())
 }
 
@@ -4543,144 +3787,6 @@ exit 2
     Ok(())
 }
 
-#[cfg_attr(windows, ignore = "mock uv/python shims are unix-specific")]
-#[test]
-fn execute_uv_tool_item_bootstraps_reusable_uv_from_package_index() -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let bin_dir = tmp.path().join("bin");
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&bin_dir)?;
-    std::fs::create_dir_all(&managed_dir)?;
-    let pip_log = managed_dir.join("pip-bootstrap.log");
-    let uv_log = managed_dir.join("uv-tool.log");
-
-    write_executable(
-        &bin_dir.join("uv"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  exit 42
-fi
-exit 42
-"#,
-    )?;
-    write_executable(
-        &bin_dir.join("python3"),
-        &format!(
-            r#"#!/bin/sh
-if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
-  target=""
-  index=""
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--target" ]; then
-      target="$2"
-      shift 2
-      continue
-    fi
-    if [ "$1" = "--index-url" ]; then
-      index="$2"
-      shift 2
-      continue
-    fi
-    shift
-  done
-  mkdir -p "$target"
-  printf '%s\n' "$index" > "{}"
-  exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "uv" ] && [ "$3" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "-m" ] && [ "$2" = "uv" ] && [ "$3" = "tool" ] && [ "$4" = "install" ]; then
-  printf '%s\n' "$UV_DEFAULT_INDEX" > "{}"
-  mkdir -p "$UV_TOOL_BIN_DIR"
-  cat > "$UV_TOOL_BIN_DIR/ruff" <<'EOF'
-#!/bin/sh
-echo "ruff 0.1.0"
-EOF
-  chmod +x "$UV_TOOL_BIN_DIR/ruff"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-            pip_log.display(),
-            uv_log.display()
-        ),
-    )?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    with_path_prepend(&bin_dir, || -> anyhow::Result<()> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        runtime.block_on(async {
-            let item = UvToolPlanItem {
-                id: "ruff".to_string(),
-                package: "ruff".to_string(),
-                python: None,
-                binary_name: "ruff".to_string(),
-                binary_name_explicit: false,
-            };
-            let cfg = InstallerRuntimeConfig {
-                github_releases: GitHubReleasePolicy {
-                    api_bases: vec!["http://127.0.0.1:9/api".to_string()],
-                    token: None,
-                },
-                package_indexes: PackageIndexPolicy {
-                    indexes: vec![index.clone()],
-                },
-                ..test_runtime_config()
-            };
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()?;
-
-            let result = execute_uv_tool_item(
-                &item,
-                "x86_64-unknown-linux-gnu",
-                &managed_dir,
-                &cfg,
-                &client,
-            )
-            .await?;
-
-            assert_eq!(result.status, BootstrapStatus::Installed);
-            assert_eq!(
-                result.source.as_deref(),
-                Some(format!("package-index:{index}").as_str())
-            );
-            assert!(
-                result
-                    .detail
-                    .as_deref()
-                    .unwrap_or_default()
-                    .contains("bootstrapped reusable uv with `python3 -m pip`")
-            );
-            assert_eq!(std::fs::read_to_string(&pip_log)?.trim(), index);
-            assert_eq!(std::fs::read_to_string(&uv_log)?.trim(), index);
-            assert!(
-                managed_dir
-                    .join(".uv-bootstrap")
-                    .join("bin")
-                    .join("uv")
-                    .exists()
-            );
-            assert!(managed_dir.join("ruff").exists());
-            Ok(())
-        })
-    })?;
-
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
 async fn execute_uv_tool_item_ignores_inherited_uv_environment() -> anyhow::Result<()> {
@@ -5007,498 +4113,6 @@ exit 2
     .await
     .expect_err("missing managed binary should fail");
     assert!(err.to_string().contains("expected managed binary"));
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
-#[tokio::test]
-async fn execute_uv_tool_item_rejects_broken_binary_after_install() -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    write_executable(
-        &managed_dir.join("uv"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
-#!/bin/sh
-if [ "$1" = "--version" ]; then
-  exit 23
-fi
-exit 23
-EOF
-  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-    )?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let item = UvToolPlanItem {
-        id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
-        python: None,
-        binary_name: "ruff-lsp".to_string(),
-        binary_name_explicit: false,
-    };
-    let cfg = InstallerRuntimeConfig {
-        package_indexes: PackageIndexPolicy {
-            indexes: vec![index],
-        },
-        ..test_runtime_config()
-    };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-
-    let err = execute_uv_tool_item(
-        &item,
-        "x86_64-unknown-linux-gnu",
-        &managed_dir,
-        &cfg,
-        &client,
-    )
-    .await
-    .expect_err("broken managed binary should fail health check");
-    assert!(err.to_string().contains("failed --version health check"));
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
-#[tokio::test]
-async fn execute_uv_tool_item_restores_previous_binary_when_install_fails() -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    let destination = managed_dir.join("ruff-lsp");
-    let stale_binary = "#!/bin/sh\necho stale-uv-tool\n";
-    write_executable(&destination, stale_binary)?;
-    write_executable(
-        &managed_dir.join("uv"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  exit 7
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-    )?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let item = UvToolPlanItem {
-        id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
-        python: None,
-        binary_name: "ruff-lsp".to_string(),
-        binary_name_explicit: false,
-    };
-    let cfg = InstallerRuntimeConfig {
-        package_indexes: PackageIndexPolicy {
-            indexes: vec![index],
-        },
-        ..test_runtime_config()
-    };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-
-    let err = execute_uv_tool_item(
-        &item,
-        "x86_64-unknown-linux-gnu",
-        &managed_dir,
-        &cfg,
-        &client,
-    )
-    .await
-    .expect_err("failing uv tool install should not reuse stale binary");
-
-    assert!(err.to_string().contains("failed"));
-    assert_eq!(std::fs::read_to_string(&destination)?, stale_binary);
-    assert!(
-        !destination
-            .with_file_name("ruff-lsp.toolchain-installer-backup")
-            .exists()
-    );
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
-#[tokio::test]
-async fn execute_uv_tool_item_restores_previous_binary_when_install_leaves_no_binary()
--> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    let destination = managed_dir.join("ruff-lsp");
-    let stale_binary = "#!/bin/sh\necho stale-uv-tool\n";
-    write_executable(&destination, stale_binary)?;
-    write_executable(
-        &managed_dir.join("uv"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-    )?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let item = UvToolPlanItem {
-        id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
-        python: None,
-        binary_name: "ruff-lsp".to_string(),
-        binary_name_explicit: false,
-    };
-    let cfg = InstallerRuntimeConfig {
-        package_indexes: PackageIndexPolicy {
-            indexes: vec![index],
-        },
-        ..test_runtime_config()
-    };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-
-    let err = execute_uv_tool_item(
-        &item,
-        "x86_64-unknown-linux-gnu",
-        &managed_dir,
-        &cfg,
-        &client,
-    )
-    .await
-    .expect_err("missing uv tool binary should not reuse stale binary");
-
-    assert!(err.to_string().contains("expected managed binary"));
-    assert_eq!(std::fs::read_to_string(&destination)?, stale_binary);
-    assert!(
-        !destination
-            .with_file_name("ruff-lsp.toolchain-installer-backup")
-            .exists()
-    );
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
-#[tokio::test]
-async fn execute_uv_tool_item_replaces_previous_directory_destination_and_cleans_backup()
--> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    let destination = managed_dir.join("ruff-lsp");
-    std::fs::create_dir_all(&destination)?;
-    std::fs::write(destination.join("old"), "stale")?;
-    write_executable(
-        &managed_dir.join("uv"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  mkdir -p "$UV_TOOL_BIN_DIR"
-  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
-#!/bin/sh
-echo "uv-tool-installed"
-EOF
-  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-    )?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let item = UvToolPlanItem {
-        id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
-        python: None,
-        binary_name: "ruff-lsp".to_string(),
-        binary_name_explicit: false,
-    };
-    let cfg = InstallerRuntimeConfig {
-        package_indexes: PackageIndexPolicy {
-            indexes: vec![index],
-        },
-        ..test_runtime_config()
-    };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-
-    let result = execute_uv_tool_item(
-        &item,
-        "x86_64-unknown-linux-gnu",
-        &managed_dir,
-        &cfg,
-        &client,
-    )
-    .await?;
-
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(destination.to_str().unwrap())
-    );
-    let output = std::process::Command::new(&destination)
-        .arg("--version")
-        .output()?;
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "uv-tool-installed"
-    );
-    assert!(
-        !destination
-            .with_file_name("ruff-lsp.toolchain-installer-backup")
-            .exists()
-    );
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[cfg(all(unix, not(windows)))]
-#[tokio::test]
-async fn execute_uv_tool_item_recovers_from_stale_backup_before_reinstall() -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    let destination = managed_dir.join("ruff-lsp");
-    write_executable(&destination, "#!/bin/sh\necho current-uv-tool\n")?;
-    let stale_backup = destination.with_file_name("ruff-lsp.toolchain-installer-backup");
-    std::fs::write(&stale_backup, "stale-backup")?;
-    write_executable(
-        &managed_dir.join("uv"),
-        r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  mkdir -p "$UV_TOOL_BIN_DIR"
-  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
-#!/bin/sh
-echo "uv-tool-installed"
-EOF
-  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-    )?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let item = UvToolPlanItem {
-        id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
-        python: None,
-        binary_name: "ruff-lsp".to_string(),
-        binary_name_explicit: false,
-    };
-    let cfg = InstallerRuntimeConfig {
-        package_indexes: PackageIndexPolicy {
-            indexes: vec![index],
-        },
-        ..test_runtime_config()
-    };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-
-    let result = execute_uv_tool_item(
-        &item,
-        "x86_64-unknown-linux-gnu",
-        &managed_dir,
-        &cfg,
-        &client,
-    )
-    .await?;
-
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(destination.to_str().unwrap())
-    );
-    let output = std::process::Command::new(&destination)
-        .arg("--version")
-        .output()?;
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "uv-tool-installed"
-    );
-    assert!(
-        !stale_backup.exists(),
-        "canonical backup should be consumed or removed during recovery"
-    );
-    let quarantined = std::fs::read_dir(&managed_dir)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        quarantined.len(),
-        1,
-        "stale canonical backup should be quarantined once"
-    );
-    handle.join().expect("mock server thread join");
-    Ok(())
-}
-
-#[cfg(all(unix, not(windows)))]
-#[tokio::test]
-async fn execute_uv_tool_item_succeeds_when_backup_cleanup_fails_after_replacement()
--> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let tmp = tempfile::tempdir()?;
-    let managed_dir = tmp.path().join("managed");
-    std::fs::create_dir_all(&managed_dir)?;
-    let destination = managed_dir.join("ruff-lsp");
-    write_executable(&destination, "#!/bin/sh\necho stale-uv-tool\n")?;
-    write_executable(
-        &managed_dir.join("uv"),
-        &format!(
-            r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "uv 0.11.0"
-  exit 0
-fi
-if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
-  mkdir -p "$UV_TOOL_BIN_DIR"
-  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
-#!/bin/sh
-echo "uv-tool-installed"
-EOF
-  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
-  chmod 0555 "{}"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 2
-"#,
-            managed_dir.display()
-        ),
-    )?;
-
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let index = format!("http://{addr}/simple");
-    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert("/simple".to_string(), b"ok".to_vec());
-    let handle = spawn_mock_http_server(listener, routes, 1);
-
-    let item = UvToolPlanItem {
-        id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
-        python: None,
-        binary_name: "ruff-lsp".to_string(),
-        binary_name_explicit: false,
-    };
-    let cfg = InstallerRuntimeConfig {
-        package_indexes: PackageIndexPolicy {
-            indexes: vec![index],
-        },
-        ..test_runtime_config()
-    };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-
-    let result = execute_uv_tool_item(
-        &item,
-        "x86_64-unknown-linux-gnu",
-        &managed_dir,
-        &cfg,
-        &client,
-    )
-    .await?;
-
-    let mut permissions = std::fs::metadata(&managed_dir)?.permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&managed_dir, permissions)?;
-
-    assert_eq!(
-        result.destination.as_deref(),
-        Some(destination.to_str().unwrap())
-    );
-    let output = std::process::Command::new(&destination)
-        .arg("--version")
-        .output()?;
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "uv-tool-installed"
-    );
-    let backup_path = destination.with_file_name("ruff-lsp.toolchain-installer-backup");
-    if result.detail.as_deref().is_some_and(|detail| {
-        detail.contains("warning: cannot remove staged managed binary backup")
-    }) {
-        assert!(
-            backup_path.exists(),
-            "warning should explain a retained backup"
-        );
-    } else {
-        assert!(
-            !backup_path.exists(),
-            "successful backup cleanup should not leave a retained backup"
-        );
-    }
     handle.join().expect("mock server thread join");
     Ok(())
 }

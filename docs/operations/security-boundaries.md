@@ -34,13 +34,9 @@
    - plan 中的 `destination` 禁止包含 `..`。
    - 同时拒绝 Windows drive-relative 路径如 `C:foo`，以及 Windows root-relative 路径如 `\foo`。
    - `id` 与 `binary_name` 都必须是纯叶子名，不允许把路径片段塞进默认目标名。
-   - `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的声明式 `package` 字段不能长得像命令行选项；`--editable`、`--workspace`、`--git`、`--toolchain`、`--index-url` 这类值会在 resolve 阶段直接拒绝。
-   - 会按本地路径解释的 `package` 只接受当前宿主机原生的绝对路径语法；非 Windows 宿主会直接拒绝 `C:\repo\demo` 或 `file:C:\repo\demo` 这类 Windows-local 路径，避免把伪绝对路径落成相对文件操作。
    - 相对路径只会解析到 `managed_dir` 下；当目标是 Windows 时，`bin\\tool.exe` 与 `bin/tool.exe` 会按同一相对层级处理。
    - 解析后若两个 item 指向同一目标路径，或一个目标路径嵌套在另一个目标路径之下，plan 会在执行前直接拒绝。
-   - `npm_global` 允许复用托管目录里已有的 leaf symlink 入口，但这个 symlink 解析后的目标仍必须留在 `managed_dir` 内；不能借复用入口把实际执行路径指到托管根外部。
 10. 托管 bootstrap 健康检查
-   - 托管安装复用只适用于内置受支持工具；未知工具即使在 `managed_dir` 下存在同名且可执行的文件，也不会被误报成 `installed`。
    - Windows managed `git` 的 launcher 只允许指向 `managed_dir` 内的 MinGit payload；带 `..` 的逃逸路径会被直接视为损坏安装。
    - Windows managed `git` 的 launcher 还必须落在 `managed_dir/git-portable/PortableGit/` 这棵 payload 子树内；即使仍在 `git-portable/` 下，只要指向其他旁路目录也会被视为损坏安装。
    - Windows managed `git` 不会只凭 launcher、`git.exe` 和 DLL 文件存在就被视为健康；installer 还会执行 payload 的 `--version` 健康检查。

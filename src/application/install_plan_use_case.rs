@@ -1,5 +1,5 @@
 use crate::contracts::{
-    ExecutionRequest, InstallExecutionResult, InstallPlan, OUTPUT_SCHEMA_VERSION,
+    BootstrapResult, ExecutionRequest, InstallPlan, OUTPUT_SCHEMA_VERSION,
     build_failed_bootstrap_item,
 };
 use crate::error::InstallerResult;
@@ -12,20 +12,25 @@ use crate::install_plan::item_destination_resolution::{
     validate_managed_path_boundary,
 };
 use crate::install_plan::item_method_dispatch::execute_plan_item;
+use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
 
 use super::execution_context::ExecutionContext;
 
 pub async fn apply_install_plan(
     plan: &InstallPlan,
     request: &ExecutionRequest,
-) -> InstallerResult<InstallExecutionResult> {
-    let ctx = ExecutionContext::for_install_plan(request)?;
+) -> InstallerResult<BootstrapResult> {
+    let host_triple = detect_host_target_triple()
+        .map(str::to_string)
+        .ok_or_else(|| crate::error::InstallerError::install("unsupported host platform/arch"))?;
+    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
     let resolved_items = validate_plan_structure(
         plan,
-        &ctx.host_triple,
-        &ctx.target_triple,
+        &host_triple,
+        &target_triple,
         request.plan_base_dir.as_deref(),
     )?;
+    let ctx = ExecutionContext::for_install_plan(request)?;
     validate_destination_conflicts(&resolved_items, &ctx.target_triple, &ctx.managed_dir)?;
 
     let mut items = Vec::new();
@@ -77,7 +82,7 @@ pub async fn apply_install_plan(
         items.push(bootstrap_item);
     }
 
-    Ok(InstallExecutionResult {
+    Ok(BootstrapResult {
         schema_version: OUTPUT_SCHEMA_VERSION,
         host_triple: ctx.host_triple,
         target_triple: ctx.target_triple,

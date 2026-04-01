@@ -28,8 +28,7 @@ impl ExecutionContext {
         let host_triple = detect_host_target_triple()
             .map(str::to_string)
             .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-        let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple)
-            .map_err(|err| InstallerError::usage(err.to_string()))?;
+        let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
         if matches!(constraint, TargetConstraint::HostOnly) && target_triple != host_triple {
             return Err(InstallerError::usage(format!(
                 "bootstrap only supports the current host triple `{host_triple}`; use `--method release` or `--plan-file` for cross-target downloads"
@@ -42,6 +41,8 @@ impl ExecutionContext {
                 })?;
         let cfg = InstallerRuntimeConfig::from_execution_request(request);
         let client = reqwest::Client::builder()
+            // GitHub release asset transfers are more reliable via HTTP/1.1 in our CI/runtime mix.
+            .http1_only()
             .timeout(cfg.download.http_timeout)
             .user_agent("toolchain-installer")
             .build()

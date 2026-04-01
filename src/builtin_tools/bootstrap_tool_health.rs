@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use omne_process_primitives::resolve_command_path_or_standard_location;
 
 use crate::builtin_tools::builtin_tool_selection::is_supported_builtin_tool;
-use crate::managed_toolchain::version_probe::binary_reports_version_with_prefix;
+use crate::managed_toolchain::version_probe::binary_reports_version;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ManagedBootstrapState {
@@ -18,10 +18,6 @@ pub(crate) fn assess_managed_bootstrap_state(
     destination: &Path,
     managed_dir: &Path,
 ) -> ManagedBootstrapState {
-    if !is_supported_builtin_tool(tool) {
-        return ManagedBootstrapState::NeedsInstall;
-    }
-
     if !destination.exists() {
         return ManagedBootstrapState::NeedsInstall;
     }
@@ -30,7 +26,7 @@ pub(crate) fn assess_managed_bootstrap_state(
         return managed_windows_git_state(managed_dir);
     }
 
-    if managed_binary_reports_expected_version(tool, destination) {
+    if managed_binary_reports_version(destination) {
         return ManagedBootstrapState::ManagedHealthy {
             detail: "managed binary passed --version health check".to_string(),
         };
@@ -47,7 +43,7 @@ pub(crate) fn assess_managed_bootstrap_state(
 pub(crate) fn host_command_is_healthy(tool: &str) -> bool {
     is_supported_builtin_tool(tool)
         && resolve_command_path_or_standard_location(tool)
-            .is_some_and(|path| managed_binary_reports_expected_version(tool, &path))
+            .is_some_and(|path| managed_binary_reports_version(&path))
 }
 
 fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
@@ -96,7 +92,7 @@ fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
             };
         }
     }
-    if !managed_binary_reports_expected_version("git", &executable) {
+    if !managed_binary_reports_version(&executable) {
         return ManagedBootstrapState::ManagedBroken {
             detail: format!(
                 "managed git payload {} failed --version health check",
@@ -179,27 +175,9 @@ fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
                     .join("msys-2.0.dll")
             });
     }
-    if normalized.ends_with("PortableGit/mingw64/bin/git.exe")
-        || normalized.ends_with("PortableGit/usr/bin/git.exe")
-        || normalized.ends_with("PortableGit/bin/git.exe")
-    {
-        return relative_target
-            .parent()
-            .map(|parent| parent.join("msys-2.0.dll"));
-    }
     None
 }
 
-fn managed_binary_reports_expected_version(tool: &str, path: &Path) -> bool {
-    expected_version_prefix(tool)
-        .is_some_and(|expected_prefix| binary_reports_version_with_prefix(path, expected_prefix))
-}
-
-fn expected_version_prefix(tool: &str) -> Option<&'static str> {
-    match tool {
-        "git" => Some("git version "),
-        "gh" => Some("gh version "),
-        "uv" => Some("uv "),
-        _ => None,
-    }
+fn managed_binary_reports_version(path: &Path) -> bool {
+    binary_reports_version(path)
 }

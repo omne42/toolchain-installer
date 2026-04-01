@@ -10,14 +10,10 @@
 
 - `--tool <name>`
   - 可重复；`bootstrap` 默认安装 `git` 和 `gh`。
-  - 只属于 bootstrap 模式；与 `--method`、`--plan-file` 明确互斥，混用会直接返回 usage error。
 - `--target-triple <triple>`
   - 覆盖自动探测目标平台。
-  - 当前只接受 shared runtime 已知的 canonical 支持集：`x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu`、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`、`x86_64-apple-darwin`、`aarch64-apple-darwin`、`x86_64-pc-windows-msvc`、`aarch64-pc-windows-msvc`。
-  - 未知值会在参数校验阶段直接返回 usage error，而不是继续把任意字符串带进执行链路。
 - `--managed-dir <path>`
   - 安装输出目录；未指定时默认使用 `~/.omne_data/toolchain/<target>/bin`。
-  - 传给 `npm` / `pnpm` / `bun` / `cargo` / `go` / `uv` 这类宿主命令时，会保留宿主机原生路径字节；Unix 下的非 UTF-8 路径不会在 argv/env 拼装阶段被提前改写。
 - `--mirror-prefix <prefix>`
   - 追加 release 下载候选前缀。
 - `--package-index <url>`
@@ -33,7 +29,7 @@
 - `--plan-file <path>`
   - 执行 plan 文件。
   - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
-  - plan 中声明的本地相对路径按该 plan 文件所在目录解析，不按调用 CLI 时的当前工作目录解析；这同样适用于 `pip` / `npm_global` 的本地 `package` 路径。
+  - plan 中声明的本地相对路径按该 plan 文件所在目录解析，不按调用 CLI 时的当前工作目录解析。
 - `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
@@ -44,11 +40,9 @@
 - `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
   - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
   - `--archive-binary` 传的是 archive 内目标二进制的相对路径；installer 会规范斜杠，并在常见单根目录 archive 上自动补齐根目录后再做精确匹配。
-  - 非 Windows 宿主会拒绝 `C:\tools\demo.exe` 这类 Windows 绝对 `--destination`，即使 `--target-triple` 是 Windows 也不例外；`destination` 必须符合当前宿主机的实际落盘语义。
   - `uv_tool` 额外允许 `--binary-name`，用于声明托管目录下期望出现的可执行文件名。
 - `--package`、`--manager`
   - `system_package`、`apt`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component` 或 `go_install` 模式字段。
-  - `pip` / `npm_global` 的 `--package` 不允许传 `-r`、`--editable`、`--workspace` 这类 option-like 值。
 - `--python`
   - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
 - `--json`
@@ -63,7 +57,6 @@
 - 只有显式提供 `--method` 时，`--id`、`--tool-version`、`--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`、`--package`、`--manager`、`--python` 这些 direct-plan 字段才合法。
 - 若未提供 `--method`，这些字段不会再被静默吞掉后退回 bootstrap；CLI 会直接返回 usage error。
 - 若提供了 `--plan-file`，这些 direct-plan 字段同样会被拒绝，而不是继续以“CLI 覆盖 plan”的模糊语义混用。
-- `--tool` 只能和纯 bootstrap 模式一起出现；不能再与 `--method` 或 `--plan-file` 混用后被静默忽略。
 - `--id` 与 `--binary-name` 都必须是 plain leaf name，不能携带路径分隔符；需要控制目录时应使用允许 `destination` 的方法。
 
 环境变量补充：
@@ -132,7 +125,7 @@
 - `0`
   - 执行成功；若未开启 `--strict`，允许部分工具失败。
 - `2`
-  - 参数错误、不支持的参数组合，不支持的 target triple，plan 中出现未知字段，或 plan / `--method` 中出现未知方法名。
+  - 参数错误、不支持的参数组合，plan 中出现未知字段，或 plan / `--method` 中出现未知方法名。
 - `3`
   - 单项调用中的下载或校验失败。
 - `4`
@@ -144,17 +137,16 @@
 
 - `schema_version` 升级前必须保持向后兼容。
 - 已有输出字段只能追加，不能重命名或删除。
-- `status=present` 只表示受支持的内置工具在宿主机上已经发现，且 `--version` 健康检查既成功又匹配该工具预期的版本输出前缀；PATH 中同名但不可执行、探活失败、输出不匹配，或根本不属于支持集的命令名都不会被当成已安装。
+- `status=present` 只表示受支持的内置工具在宿主机上已经发现且 `--version` 健康检查成功；PATH 中同名但不可执行、探活失败，或根本不属于支持集的命令名都不会被当成已安装。
 - 调用方应依赖 `status`、`detail` 与 `error_code`，不要解析 stderr 文本。
 - stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
 - `source_kind` 是对 `source` 的结构化补充；调用方不应再从 `source` 字符串推断来源类别。
 - `cargo_install`、`go_install`、`npm_global`、`workspace_package`、`rustup_component` 这些宿主机 recipe 方法会各自输出同名 `source_kind`，避免调用方再从 `source` 文本推断安装方式。
 - `uv_python` 命中官方来源时会输出 `source_kind=canonical`；只有命中显式 Python 镜像时才会输出 `python_mirror`。
-- 当 `source_kind=package_index|python_mirror|canonical|mirror|gateway` 且来源 URL 含凭证、query 或 fragment 时，`source` 会输出脱敏后的协议、主机和路径，而不是回显原始敏感 URL。
+- 当 `source_kind=package_index|python_mirror` 且来源 URL 含凭证、query 或 fragment 时，`source` 会输出脱敏后的协议、主机和路径，而不是回显原始敏感 URL。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
 - `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。
-- Windows 上的 `bootstrap --tool git` 会把 MinGit payload 切换和 `git.cmd` launcher 更新作为同一个事务提交；如果 launcher 写入失败，会恢复旧的 `git-portable/` 与旧 launcher，而不是留下半更新状态。
 
 ## 继续阅读
 

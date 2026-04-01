@@ -2,14 +2,13 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use omne_host_info_primitives::executable_suffix_for_target;
 use omne_process_primitives::{
     HostRecipeRequest, command_exists, command_path_exists, run_host_recipe,
 };
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
-use crate::managed_toolchain::managed_environment_layout::validated_binary_suffix;
-use crate::managed_toolchain::{ManagedDestinationBackup, promote_staged_file};
 use crate::plan_items::{GoInstallPlanItem, GoInstallSource};
 
 pub(crate) fn execute_go_install_item(
@@ -17,9 +16,6 @@ pub(crate) fn execute_go_install_item(
     target_triple: &str,
     managed_dir: &Path,
 ) -> OperationResult<BootstrapItem> {
-    if let GoInstallSource::LocalPath(package_path) = &item.source {
-        validate_local_package_path(package_path).map_err(OperationError::install)?;
-    }
     if !command_exists("go") {
         return Err(OperationError::install("go command not found"));
     }
@@ -28,13 +24,30 @@ pub(crate) fn execute_go_install_item(
     let expected_destination = managed_dir.join(format!(
         "{}{}",
         item.binary_name,
-        validated_binary_suffix(target_triple)
+        executable_suffix_for_target(target_triple)
     ));
-    let env = go_install_env(&stage_root);
-    let backup = ManagedDestinationBackup::stash(&expected_destination, "go_install binary")
-        .map_err(OperationError::install)?;
+    let env = vec![("GOBIN".to_string(), stage_root.display().to_string())]
+        .into_iter()
+        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+        .collect::<Vec<_>>();
+    let backup =
+        InstalledBinaryBackup::stash(&expected_destination).map_err(OperationError::install)?;
     let resolved_package = match &item.source {
         GoInstallSource::LocalPath(package_path) => {
+            if !package_path.exists() {
+                cleanup_stage_root(&stage_root).ok();
+                return Err(OperationError::install(format!(
+                    "go_install local path does not exist: {}",
+                    package_path.display()
+                )));
+            }
+            if !package_path.is_dir() {
+                cleanup_stage_root(&stage_root).ok();
+                return Err(OperationError::install(format!(
+                    "go_install local path must be a directory: {}",
+                    package_path.display()
+                )));
+            }
             let args = vec!["install".to_string(), ".".to_string()]
                 .into_iter()
                 .map(OsString::from)
@@ -75,10 +88,12 @@ pub(crate) fn execute_go_install_item(
         }
     };
 
-    if let Err(err) =
-        promote_staged_file(&staged_binary, &expected_destination, "go_install binary")
-    {
+    if let Err(err) = promote_staged_binary(&staged_binary, &expected_destination) {
         cleanup_stage_root(&stage_root).ok();
+        backup.restore().map_err(OperationError::install)?;
+        return Err(OperationError::install(err));
+    }
+    if let Err(err) = cleanup_stage_root(&stage_root) {
         backup.restore().map_err(OperationError::install)?;
         return Err(OperationError::install(err));
     }
@@ -89,13 +104,7 @@ pub(crate) fn execute_go_install_item(
             expected_destination.display()
         )));
     }
-    let detail = build_success_cleanup_detail(
-        "go_install binary",
-        &stage_root,
-        &expected_destination,
-        || cleanup_stage_root(&stage_root),
-    );
-    let detail = merge_cleanup_detail(detail, backup.discard_with_warning());
+    backup.discard().map_err(OperationError::install)?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -104,33 +113,10 @@ pub(crate) fn execute_go_install_item(
         source_kind: Some(BootstrapSourceKind::GoInstall),
         archive_match: None,
         destination: Some(expected_destination.display().to_string()),
-        detail,
+        detail: None,
         error_code: None,
         failure_code: None,
     })
-}
-
-fn go_install_env(stage_root: &Path) -> Vec<(OsString, OsString)> {
-    vec![(
-        OsString::from("GOBIN"),
-        stage_root.as_os_str().to_os_string(),
-    )]
-}
-
-fn validate_local_package_path(package_path: &Path) -> Result<(), String> {
-    if !package_path.exists() {
-        return Err(format!(
-            "go_install local path does not exist: {}",
-            package_path.display()
-        ));
-    }
-    if !package_path.is_dir() {
-        return Err(format!(
-            "go_install local path must be a directory: {}",
-            package_path.display()
-        ));
-    }
-    Ok(())
 }
 
 fn create_stage_root(parent: &Path, prefix: &str) -> Result<PathBuf, String> {
@@ -205,62 +191,101 @@ fn select_staged_binary(
     }
 }
 
-fn build_success_cleanup_detail(
-    label: &str,
-    cleanup_target: &Path,
-    destination: &Path,
-    cleanup: impl FnOnce() -> Result<(), String>,
-) -> Option<String> {
-    cleanup().err().map(|err| {
+fn promote_staged_binary(staged_binary: &Path, destination: &Path) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "cannot create go_install destination parent {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    if destination.exists() {
+        std::fs::remove_file(destination).map_err(|err| {
+            format!(
+                "cannot remove existing go_install binary {}: {err}",
+                destination.display()
+            )
+        })?;
+    }
+    std::fs::rename(staged_binary, destination).map_err(|err| {
         format!(
-            "{label} installed at {} but cleanup warning: {err}; staged path `{}` may require manual cleanup",
-            destination.display(),
-            cleanup_target.display()
+            "cannot promote staged go_install binary {} to {}: {err}",
+            staged_binary.display(),
+            destination.display()
         )
     })
 }
 
-fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option<String> {
-    match (first, second) {
-        (Some(first), Some(second)) => Some(format!("{first}; {second}")),
-        (Some(first), None) => Some(first),
-        (None, Some(second)) => Some(second),
-        (None, None) => None,
-    }
+struct InstalledBinaryBackup {
+    original: PathBuf,
+    backup: Option<PathBuf>,
 }
 
-#[cfg(test)]
-mod tests {
-    use std::ffi::OsString;
-    use std::path::Path;
+impl InstalledBinaryBackup {
+    fn stash(original: &Path) -> Result<Self, String> {
+        if !original.exists() {
+            return Ok(Self {
+                original: original.to_path_buf(),
+                backup: None,
+            });
+        }
 
-    use super::{build_success_cleanup_detail, go_install_env};
-
-    #[test]
-    fn success_cleanup_detail_reports_stage_cleanup_warning() {
-        let detail = build_success_cleanup_detail(
-            "go_install binary",
-            Path::new("/tmp/stage"),
-            Path::new("/tmp/managed/demo"),
-            || Err("cannot clean staged go_install root /tmp/stage: busy".to_string()),
-        )
-        .expect("cleanup warning detail");
-
-        assert!(detail.contains("cleanup warning"));
-        assert!(detail.contains("/tmp/stage"));
-        assert!(detail.contains("/tmp/managed/demo"));
+        let backup = original.with_file_name(format!(
+            "{}.toolchain-installer-backup",
+            original
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("managed-tool")
+        ));
+        if backup.exists() {
+            return Err(format!(
+                "cannot stage existing go_install binary backup {}",
+                backup.display()
+            ));
+        }
+        std::fs::rename(original, &backup).map_err(|err| {
+            format!(
+                "cannot stage existing go_install binary {} before reinstall: {err}",
+                original.display()
+            )
+        })?;
+        Ok(Self {
+            original: original.to_path_buf(),
+            backup: Some(backup),
+        })
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn go_install_env_preserves_non_utf8_gobin_path() {
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-        use std::path::PathBuf;
+    fn restore(&self) -> Result<(), String> {
+        let Some(backup) = self.backup.as_ref() else {
+            return Ok(());
+        };
+        if self.original.exists() {
+            std::fs::remove_file(&self.original).map_err(|err| {
+                format!(
+                    "cannot remove failed go_install binary {} before restore: {err}",
+                    self.original.display()
+                )
+            })?;
+        }
+        std::fs::rename(backup, &self.original).map_err(|err| {
+            format!(
+                "cannot restore previous go_install binary {} from {}: {err}",
+                self.original.display(),
+                backup.display()
+            )
+        })
+    }
 
-        let stage_root = PathBuf::from(OsString::from_vec(b"/tmp/go-stage-\xff".to_vec()));
-        let env = go_install_env(&stage_root);
-
-        assert_eq!(env[0].0, OsString::from("GOBIN"));
-        assert_eq!(env[0].1.as_bytes(), b"/tmp/go-stage-\xff");
+    fn discard(&self) -> Result<(), String> {
+        let Some(backup) = self.backup.as_ref() else {
+            return Ok(());
+        };
+        std::fs::remove_file(backup).map_err(|err| {
+            format!(
+                "cannot remove staged go_install binary backup {}: {err}",
+                backup.display()
+            )
+        })
     }
 }

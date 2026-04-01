@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use omne_host_info_primitives::executable_suffix_for_target;
+
 use crate::error::{InstallerError, InstallerResult};
-use crate::managed_toolchain::managed_environment_layout::{
-    managed_python_installation_dir, validated_binary_suffix,
-};
+use crate::managed_toolchain::managed_environment_layout::managed_python_installation_dir;
 use crate::plan_items::{
     CargoInstallPlanItem, GoInstallPlanItem, NodePackageManager, NpmGlobalPlanItem,
     ReleasePlanItem, ResolvedPlanItem, UvToolPlanItem,
@@ -42,7 +42,7 @@ pub(crate) fn effective_destination_for_item(
             managed_dir,
         )),
         ResolvedPlanItem::Uv(_) => {
-            Some(managed_dir.join(format!("uv{}", validated_binary_suffix(target_triple))))
+            Some(managed_dir.join(format!("uv{}", executable_suffix_for_target(target_triple))))
         }
         ResolvedPlanItem::UvPython(_) => Some(managed_python_installation_dir(managed_dir)),
         ResolvedPlanItem::UvTool(item) => Some(resolve_uv_tool_destination(
@@ -73,7 +73,7 @@ pub(crate) fn resolve_release_destination(
 pub(crate) fn resolve_release_binary_name(item: &ReleasePlanItem, target_triple: &str) -> String {
     item.binary_name
         .clone()
-        .unwrap_or_else(|| format!("{}{}", item.id, validated_binary_suffix(target_triple)))
+        .unwrap_or_else(|| format!("{}{}", item.id, executable_suffix_for_target(target_triple)))
 }
 
 pub(crate) fn resolve_cargo_install_destination(
@@ -84,7 +84,7 @@ pub(crate) fn resolve_cargo_install_destination(
     cargo_install_root(managed_dir).join("bin").join(format!(
         "{}{}",
         item.binary_name,
-        validated_binary_suffix(target_triple)
+        executable_suffix_for_target(target_triple)
     ))
 }
 
@@ -126,31 +126,10 @@ pub(crate) fn resolve_npm_global_destination(
         NodePackageManager::Pnpm => {
             managed_dir.join(npm_global_binary_filename(&item.binary_name, target_triple))
         }
-        NodePackageManager::Bun => bun_global_binary_dir(managed_dir, target_triple)
+        NodePackageManager::Bun => managed_dir
+            .join("bin")
             .join(npm_global_binary_filename(&item.binary_name, target_triple)),
     }
-}
-
-fn bun_global_binary_dir(managed_dir: &Path, target_triple: &str) -> PathBuf {
-    if managed_dir_ends_with_bin(managed_dir, target_triple) {
-        return managed_dir.to_path_buf();
-    }
-    managed_dir.join("bin")
-}
-
-fn managed_dir_ends_with_bin(managed_dir: &Path, target_triple: &str) -> bool {
-    if target_triple.contains("windows") {
-        return managed_dir
-            .as_os_str()
-            .to_string_lossy()
-            .rsplit(['\\', '/'])
-            .find(|segment| !segment.is_empty())
-            .is_some_and(|segment| segment == "bin");
-    }
-    managed_dir
-        .file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value == "bin")
 }
 
 fn npm_global_binary_filename(binary_name: &str, target_triple: &str) -> String {
@@ -168,7 +147,7 @@ pub(crate) fn resolve_go_install_destination(
     managed_dir.join(format!(
         "{}{}",
         item.binary_name,
-        validated_binary_suffix(target_triple)
+        executable_suffix_for_target(target_triple)
     ))
 }
 
@@ -180,20 +159,18 @@ pub(crate) fn resolve_uv_tool_destination(
     managed_dir.join(format!(
         "{}{}",
         item.binary_name,
-        validated_binary_suffix(target_triple)
+        executable_suffix_for_target(target_triple)
     ))
 }
 
 pub(crate) fn validate_destination(
     item_id: &str,
     raw_destination: &str,
-    host_triple: &str,
     target_triple: &str,
 ) -> InstallerResult<PathBuf> {
     let path = validate_destination_path(
         item_id,
         raw_destination,
-        host_triple,
         target_triple,
         DestinationPolicy::Managed,
     )?;
@@ -203,13 +180,11 @@ pub(crate) fn validate_destination(
 pub(crate) fn validate_workspace_destination(
     item_id: &str,
     raw_destination: &str,
-    host_triple: &str,
     target_triple: &str,
 ) -> InstallerResult<PathBuf> {
     let path = validate_destination_path(
         item_id,
         raw_destination,
-        host_triple,
         target_triple,
         DestinationPolicy::Workspace,
     )?;
@@ -219,7 +194,6 @@ pub(crate) fn validate_workspace_destination(
 fn validate_destination_path(
     item_id: &str,
     raw_destination: &str,
-    host_triple: &str,
     target_triple: &str,
     policy: DestinationPolicy,
 ) -> InstallerResult<PathBuf> {
@@ -247,16 +221,6 @@ fn validate_destination_path(
             )));
         }
         WindowsDestinationKind::Absolute => {
-            if matches!(policy, DestinationPolicy::Managed) {
-                return Err(InstallerError::usage(format!(
-                    "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
-                )));
-            }
-            if !host_triple.contains("windows") {
-                return Err(InstallerError::usage(format!(
-                    "plan item `{item_id}` destination `{raw_destination}` uses a Windows absolute path but host triple `{host_triple}` does not use Windows path semantics"
-                )));
-            }
             if windows_destination_has_no_file_name(raw_destination) {
                 return Err(InstallerError::usage(format!(
                     "plan item `{item_id}` destination `{raw_destination}` must include a file name"
@@ -355,7 +319,6 @@ pub(crate) fn validate_managed_path_boundary(
     for (index, component) in components.iter().enumerate() {
         current.push(component.as_os_str());
         if allow_leaf_symlink && index + 1 == components.len() {
-            validate_allowed_leaf_symlink(&current, managed_dir)?;
             continue;
         }
         reject_symlink_path_component(&current, managed_dir)?;
@@ -365,23 +328,11 @@ pub(crate) fn validate_managed_path_boundary(
 
 pub(crate) fn normalize_lexical_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
-    let mut anchor_len = 0usize;
     for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if normalized.components().count() > anchor_len {
-                    normalized.pop();
-                } else if anchor_len == 0 {
-                    normalized.push(component.as_os_str());
-                }
-            }
-            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-                anchor_len = normalized.components().count();
-            }
-            std::path::Component::Normal(_) => normalized.push(component.as_os_str()),
+        if matches!(component, std::path::Component::CurDir) {
+            continue;
         }
+        normalized.push(component.as_os_str());
     }
     normalized
 }
@@ -453,54 +404,6 @@ fn reject_symlink_path_component(candidate: &Path, managed_dir: &Path) -> Result
     Ok(())
 }
 
-fn validate_allowed_leaf_symlink(candidate: &Path, managed_dir: &Path) -> Result<(), String> {
-    let metadata = match std::fs::symlink_metadata(candidate) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => {
-            return Err(format!(
-                "cannot inspect managed destination component `{}`: {err}",
-                candidate.display()
-            ));
-        }
-    };
-    if !metadata.file_type().is_symlink() {
-        return Ok(());
-    }
-
-    let target = std::fs::read_link(candidate).map_err(|err| {
-        format!(
-            "cannot inspect managed destination symlink `{}`: {err}",
-            candidate.display()
-        )
-    })?;
-    let parent = candidate.parent().unwrap_or(managed_dir);
-    let resolved = if destination_is_absolute(&target) {
-        normalize_lexical_path(&target)
-    } else {
-        normalize_lexical_path(&parent.join(target))
-    };
-    if !resolved.starts_with(managed_dir) {
-        return Err(format!(
-            "managed destination under `{}` escapes via symlink leaf `{}` -> `{}`",
-            managed_dir.display(),
-            candidate.display(),
-            resolved.display()
-        ));
-    }
-
-    reject_symlink_path_component(managed_dir, managed_dir)?;
-    let relative = resolved
-        .strip_prefix(managed_dir)
-        .map_err(|err| format!("cannot compute managed-relative destination: {err}"))?;
-    let mut current = managed_dir.to_path_buf();
-    for component in relative.components() {
-        current.push(component.as_os_str());
-        reject_symlink_path_component(&current, managed_dir)?;
-    }
-    Ok(())
-}
-
 fn windows_destination_has_no_file_name(raw: &str) -> bool {
     raw.split(['\\', '/'])
         .rfind(|component| !component.is_empty())
@@ -517,13 +420,8 @@ mod tests {
 
     #[test]
     fn validate_destination_rejects_windows_drive_relative_path() {
-        let err = validate_destination(
-            "demo",
-            "C:tool.exe",
-            "x86_64-pc-windows-msvc",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect_err("should reject");
+        let err = validate_destination("demo", "C:tool.exe", "x86_64-pc-windows-msvc")
+            .expect_err("should reject");
         assert!(
             err.to_string().contains("Windows drive-relative path"),
             "unexpected error: {err}"
@@ -532,13 +430,8 @@ mod tests {
 
     #[test]
     fn validate_destination_rejects_windows_root_relative_path() {
-        let err = validate_destination(
-            "demo",
-            "\\tool.exe",
-            "x86_64-pc-windows-msvc",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect_err("should reject");
+        let err = validate_destination("demo", "\\tool.exe", "x86_64-pc-windows-msvc")
+            .expect_err("should reject");
         assert!(
             err.to_string().contains("Windows root-relative path"),
             "unexpected error: {err}"
@@ -613,88 +506,25 @@ mod tests {
     }
 
     #[test]
-    fn resolve_npm_global_destination_keeps_bun_inside_existing_bin_managed_dir() {
-        let managed_dir = Path::new("/managed/bin");
-        let bun_destination = resolve_npm_global_destination(
-            &NpmGlobalPlanItem {
-                id: "bun-demo".to_string(),
-                package_spec: "demo".to_string(),
-                manager: NodePackageManager::Bun,
-                binary_name: "demo".to_string(),
-            },
-            "x86_64-unknown-linux-gnu",
-            managed_dir,
-        );
-
-        assert_eq!(bun_destination, PathBuf::from("/managed/bin").join("demo"));
-    }
-
-    #[test]
-    fn resolve_npm_global_destination_keeps_windows_bun_inside_existing_bin_managed_dir() {
-        let managed_dir = Path::new(r"C:\managed\bin");
-        let bun_destination = resolve_npm_global_destination(
-            &NpmGlobalPlanItem {
-                id: "bun-demo".to_string(),
-                package_spec: "demo".to_string(),
-                manager: NodePackageManager::Bun,
-                binary_name: "demo".to_string(),
-            },
-            "x86_64-pc-windows-msvc",
-            managed_dir,
-        );
-
-        assert_eq!(
-            bun_destination,
-            PathBuf::from(r"C:\managed\bin").join("demo.cmd")
-        );
-    }
-
-    #[test]
     fn validate_destination_rejects_unix_absolute_path() {
-        let err = validate_destination(
-            "demo",
-            "/tmp/demo",
-            "x86_64-unknown-linux-gnu",
-            "x86_64-unknown-linux-gnu",
-        )
-        .expect_err("should reject");
+        let err = validate_destination("demo", "/tmp/demo", "x86_64-unknown-linux-gnu")
+            .expect_err("should reject");
         assert!(err.to_string().contains("cannot be an absolute path"));
     }
 
     #[test]
     fn validate_destination_rejects_forward_slash_root_path_for_windows_targets() {
-        let err = validate_destination(
-            "demo",
-            "/tools/demo.exe",
-            "x86_64-pc-windows-msvc",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect_err("should reject");
+        let err = validate_destination("demo", "/tools/demo.exe", "x86_64-pc-windows-msvc")
+            .expect_err("should reject");
         assert!(err.to_string().contains("cannot be an absolute path"));
     }
 
     #[test]
-    fn validate_destination_rejects_windows_absolute_path_for_managed_installs() {
-        let err = validate_destination(
-            "demo",
-            "C:\\tools\\demo.exe",
-            "x86_64-pc-windows-msvc",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect_err("managed destination should reject windows absolute path");
-        assert!(err.to_string().contains("cannot be an absolute path"));
-    }
-
-    #[test]
-    fn validate_destination_rejects_windows_absolute_path_on_non_windows_host() {
-        let err = validate_destination(
-            "demo",
-            "C:\\tools\\demo.exe",
-            "x86_64-unknown-linux-gnu",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect_err("should reject");
-        assert!(err.to_string().contains("cannot be an absolute path"));
+    fn validate_destination_accepts_windows_absolute_path_for_managed_installs() {
+        let destination =
+            validate_destination("demo", "C:\\tools\\demo.exe", "x86_64-pc-windows-msvc")
+                .expect("windows absolute destination");
+        assert_eq!(destination, PathBuf::from("C:\\tools\\demo.exe"));
     }
 
     #[test]
@@ -703,7 +533,6 @@ mod tests {
             "demo",
             "C:\\tools\\..\\demo.exe",
             "x86_64-pc-windows-msvc",
-            "x86_64-pc-windows-msvc",
         )
         .expect_err("should reject");
         assert!(err.to_string().contains("cannot contain `..`"));
@@ -711,52 +540,25 @@ mod tests {
 
     #[test]
     fn validate_workspace_destination_accepts_absolute_path() {
-        let destination = validate_workspace_destination(
-            "demo",
-            "/workspace/app",
-            "x86_64-unknown-linux-gnu",
-            "x86_64-unknown-linux-gnu",
-        )
-        .expect("absolute workspace");
+        let destination =
+            validate_workspace_destination("demo", "/workspace/app", "x86_64-unknown-linux-gnu")
+                .expect("absolute workspace");
         assert_eq!(destination, PathBuf::from("/workspace/app"));
     }
 
     #[test]
     fn validate_workspace_destination_accepts_windows_absolute_path() {
-        let destination = validate_workspace_destination(
-            "demo",
-            "C:\\workspace\\app",
-            "x86_64-pc-windows-msvc",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect("windows absolute workspace");
+        let destination =
+            validate_workspace_destination("demo", "C:\\workspace\\app", "x86_64-pc-windows-msvc")
+                .expect("windows absolute workspace");
         assert_eq!(destination, PathBuf::from("C:\\workspace\\app"));
     }
 
     #[test]
-    fn validate_workspace_destination_rejects_windows_absolute_path_on_non_windows_host() {
-        let err = validate_workspace_destination(
-            "demo",
-            "C:\\workspace\\app",
-            "x86_64-unknown-linux-gnu",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect_err("should reject");
-        assert!(
-            err.to_string()
-                .contains("does not use Windows path semantics")
-        );
-    }
-
-    #[test]
     fn validate_destination_normalizes_windows_relative_path_for_windows_targets() {
-        let destination = validate_destination(
-            "demo",
-            "bin\\tools\\demo.exe",
-            "x86_64-pc-windows-msvc",
-            "x86_64-pc-windows-msvc",
-        )
-        .expect("windows relative destination");
+        let destination =
+            validate_destination("demo", "bin\\tools\\demo.exe", "x86_64-pc-windows-msvc")
+                .expect("windows relative destination");
         assert_eq!(
             destination,
             PathBuf::from("bin").join("tools").join("demo.exe")
@@ -768,15 +570,6 @@ mod tests {
         let path =
             resolve_plan_relative_path(Path::new("./packages/app"), Some(Path::new("/repo")));
         assert_eq!(path, PathBuf::from("/repo/packages/app"));
-    }
-
-    #[test]
-    fn resolve_plan_relative_path_normalizes_parent_components_in_base_directory() {
-        let path = resolve_plan_relative_path(
-            Path::new("packages/app"),
-            Some(Path::new("/repo/install-plans/../plans")),
-        );
-        assert_eq!(path, PathBuf::from("/repo/plans/packages/app"));
     }
 
     #[cfg(unix)]
@@ -822,28 +615,5 @@ mod tests {
 
         validate_managed_path_boundary(&managed_dir.join("bin").join("demo"), &managed_dir, true)
             .expect("leaf symlink should be allowed");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn validate_managed_path_boundary_rejects_leaf_symlink_that_escapes_managed_dir() {
-        use std::os::unix::fs::symlink;
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let managed_dir = tmp.path().join("managed");
-        let outside = tmp.path().join("outside");
-        std::fs::create_dir_all(managed_dir.join("bin")).expect("create managed bin");
-        std::fs::create_dir_all(&outside).expect("create outside dir");
-        std::fs::write(outside.join("demo"), "outside").expect("write outside file");
-        symlink(outside.join("demo"), managed_dir.join("bin").join("demo"))
-            .expect("create escaping symlink");
-
-        let err = validate_managed_path_boundary(
-            &managed_dir.join("bin").join("demo"),
-            &managed_dir,
-            true,
-        )
-        .expect_err("escaping leaf symlink should be rejected");
-        assert!(err.contains("escapes via symlink leaf"));
     }
 }

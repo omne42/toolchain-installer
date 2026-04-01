@@ -1,19 +1,16 @@
 use std::path::Path;
 
 use omne_artifact_install_primitives::{
-    ArtifactDownloadCandidate, ArtifactInstallError, ArtifactInstallErrorDetail,
-    BinaryArchiveInstallRequest, DownloadBinaryRequest, InstalledArchiveBinary,
-    download_and_install_binary_from_archive, download_binary_to_destination,
-    is_binary_archive_asset_name,
+    BinaryArchiveInstallRequest, DownloadBinaryRequest, download_and_install_binary_from_archive,
+    download_binary_to_destination, is_binary_archive_asset_name,
 };
-use reqwest::Url;
 
 use crate::contracts::{BootstrapItem, BootstrapStatus};
 use crate::download_sources::{
-    build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
+    build_download_candidates, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
-use crate::external_gateway::gateway_candidate_for_git_release_download_url;
+use crate::external_gateway::infer_gateway_candidate_for_git_release;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::plan_items::ReleasePlanItem;
 
@@ -32,10 +29,8 @@ pub(crate) async fn execute_release_item(
     let binary_name = resolve_release_binary_name(item, target_triple);
     let destination = resolve_release_destination(item, target_triple, managed_dir);
 
-    let gateway = gateway_candidate_for_git_release_download_url(cfg, &url);
+    let gateway = infer_gateway_candidate_for_git_release(cfg, &url);
     let expected_sha = item.sha256.as_ref();
-    let github_client = build_release_download_client(cfg, &url)?;
-    let download_client = github_client.as_ref().unwrap_or(client);
 
     let asset_name = item
         .url
@@ -49,39 +44,30 @@ pub(crate) async fn execute_release_item(
         gateway.as_deref(),
     );
     if is_binary_archive_asset_name(&asset_name) {
-        let archive_binary_hint =
-            release_archive_binary_hint(&asset_name, item.archive_binary.as_deref());
-        let fallback_archive_binary_hint = release_archive_binary_hint_fallback(
-            item.archive_binary.as_deref(),
-            archive_binary_hint.as_deref(),
-        );
-        let downloaded = download_release_archive_binary(
-            download_client,
+        let archive_binary_hint = normalize_archive_binary_hint(item.archive_binary.as_deref());
+        let downloaded = download_and_install_binary_from_archive(
+            client,
             &candidates,
             &BinaryArchiveInstallRequest {
                 canonical_url: &url,
                 destination: &destination,
                 asset_name: &asset_name,
                 binary_name: &binary_name,
+                tool_name: &item.id,
                 archive_binary_hint: archive_binary_hint.as_deref(),
                 expected_sha256: expected_sha,
                 max_download_bytes: cfg.download.max_download_bytes,
             },
-            fallback_archive_binary_hint.as_deref(),
         )
         .await
         .map_err(OperationError::from_artifact_install)?;
-        let InstalledArchiveBinary {
-            source,
-            archive_match,
-        } = downloaded;
+        let source = downloaded.source;
+        let archive_match = downloaded.archive_match;
         return Ok(BootstrapItem {
             tool: item.id.clone(),
             status: BootstrapStatus::Installed,
-            source: Some(redact_source_url(&source.url)),
-            source_kind: Some(result_source_kind_for_download_candidate(
-                &source.source_label,
-            )),
+            source: Some(source.url),
+            source_kind: Some(result_source_kind_for_download_candidate(source.kind)),
             archive_match: Some(archive_match.into()),
             destination: Some(destination.display().to_string()),
             detail: None,
@@ -91,7 +77,7 @@ pub(crate) async fn execute_release_item(
     }
 
     let downloaded_source = download_binary_to_destination(
-        download_client,
+        client,
         &candidates,
         &DownloadBinaryRequest {
             canonical_url: &url,
@@ -107,9 +93,9 @@ pub(crate) async fn execute_release_item(
     Ok(BootstrapItem {
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
-        source: Some(redact_source_url(&downloaded_source.url)),
+        source: Some(downloaded_source.url),
         source_kind: Some(result_source_kind_for_download_candidate(
-            &downloaded_source.source_label,
+            downloaded_source.kind,
         )),
         archive_match: None,
         destination: Some(destination.display().to_string()),
@@ -119,60 +105,6 @@ pub(crate) async fn execute_release_item(
     })
 }
 
-async fn download_release_archive_binary(
-    client: &reqwest::Client,
-    candidates: &[ArtifactDownloadCandidate],
-    request: &BinaryArchiveInstallRequest<'_>,
-    fallback_archive_binary_hint: Option<&str>,
-) -> Result<InstalledArchiveBinary, ArtifactInstallError> {
-    match download_and_install_binary_from_archive(client, candidates, request).await {
-        Ok(downloaded) => Ok(downloaded),
-        Err(err)
-            if should_retry_release_archive_binary_with_fallback(
-                &err,
-                request.archive_binary_hint,
-                fallback_archive_binary_hint,
-            ) =>
-        {
-            let fallback_request = BinaryArchiveInstallRequest {
-                archive_binary_hint: fallback_archive_binary_hint,
-                ..*request
-            };
-            download_and_install_binary_from_archive(client, candidates, &fallback_request).await
-        }
-        Err(err) => Err(err),
-    }
-}
-
-fn should_retry_release_archive_binary_with_fallback(
-    err: &ArtifactInstallError,
-    archive_binary_hint: Option<&str>,
-    fallback_archive_binary_hint: Option<&str>,
-) -> bool {
-    archive_binary_hint != fallback_archive_binary_hint
-        && fallback_archive_binary_hint.is_some()
-        && err.detail() == Some(ArtifactInstallErrorDetail::ArchiveBinaryNotFound)
-}
-
-fn release_archive_binary_hint(asset_name: &str, archive_binary: Option<&str>) -> Option<String> {
-    let normalized = normalize_archive_binary_hint(archive_binary)?;
-    let Some(root) = archive_root_name(asset_name) else {
-        return Some(normalized);
-    };
-    if normalized == root || normalized.starts_with(&format!("{root}/")) {
-        return Some(normalized);
-    }
-    Some(format!("{root}/{normalized}"))
-}
-
-fn release_archive_binary_hint_fallback(
-    archive_binary: Option<&str>,
-    archive_binary_hint: Option<&str>,
-) -> Option<String> {
-    let normalized = normalize_archive_binary_hint(archive_binary)?;
-    (Some(normalized.as_str()) != archive_binary_hint).then_some(normalized)
-}
-
 fn normalize_archive_binary_hint(archive_binary: Option<&str>) -> Option<String> {
     let hint = archive_binary?;
     let hint = hint.trim().replace('\\', "/");
@@ -180,79 +112,9 @@ fn normalize_archive_binary_hint(archive_binary: Option<&str>) -> Option<String>
     (!hint.is_empty()).then_some(hint.to_string())
 }
 
-fn archive_root_name(asset_name: &str) -> Option<&str> {
-    asset_name
-        .strip_suffix(".tar.gz")
-        .or_else(|| asset_name.strip_suffix(".tar.xz"))
-        .or_else(|| asset_name.strip_suffix(".zip"))
-}
-
-fn build_release_download_client(
-    cfg: &InstallerRuntimeConfig,
-    url: &str,
-) -> OperationResult<Option<reqwest::Client>> {
-    if !is_github_release_asset_url(url) {
-        return Ok(None);
-    }
-    reqwest::Client::builder()
-        .http1_only()
-        .timeout(cfg.download.http_timeout)
-        .user_agent("toolchain-installer")
-        .build()
-        .map(Some)
-        .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
-}
-
-fn is_github_release_asset_url(url: &str) -> bool {
-    let Ok(parsed) = Url::parse(url) else {
-        return false;
-    };
-    if parsed.host_str() != Some("github.com") {
-        return false;
-    }
-    let Some(segments) = parsed.path_segments() else {
-        return false;
-    };
-    let segments = segments.collect::<Vec<_>>();
-    segments.len() >= 6 && segments[2] == "releases" && segments[3] == "download"
-}
-
 #[cfg(test)]
 mod tests {
-    use omne_artifact_install_primitives::{ArtifactInstallError, ArtifactInstallErrorDetail};
-
-    use super::{
-        is_github_release_asset_url, normalize_archive_binary_hint, release_archive_binary_hint,
-        release_archive_binary_hint_fallback, should_retry_release_archive_binary_with_fallback,
-    };
-
-    #[test]
-    fn release_archive_binary_hint_prefixes_archive_root_for_relative_hint() {
-        assert_eq!(
-            release_archive_binary_hint("node-v22.14.0-linux-x64.tar.xz", Some("bin/node")),
-            Some("node-v22.14.0-linux-x64/bin/node".to_string())
-        );
-    }
-
-    #[test]
-    fn release_archive_binary_hint_keeps_exact_rooted_hint() {
-        assert_eq!(
-            release_archive_binary_hint(
-                "node-v22.14.0-linux-x64.tar.xz",
-                Some("node-v22.14.0-linux-x64/bin/node")
-            ),
-            Some("node-v22.14.0-linux-x64/bin/node".to_string())
-        );
-    }
-
-    #[test]
-    fn release_archive_binary_hint_fallback_keeps_original_unrooted_hint() {
-        let primary = release_archive_binary_hint("7z2600-linux-x64.tar.xz", Some("7zz"));
-        assert_eq!(
-            release_archive_binary_hint_fallback(Some("7zz"), primary.as_deref()),
-            Some("7zz".to_string())
-        );
-    }
+    use super::normalize_archive_binary_hint;
 
     #[test]
     fn normalize_archive_binary_hint_normalizes_slashes_and_leading_root() {
@@ -260,43 +122,5 @@ mod tests {
             normalize_archive_binary_hint(Some("\\demo\\bin\\demo.exe")),
             Some("demo/bin/demo.exe".to_string())
         );
-    }
-
-    #[test]
-    fn release_archive_binary_fallback_requires_structured_missing_binary_detail() {
-        let err = ArtifactInstallError::install_with_detail(
-            ArtifactInstallErrorDetail::ArchiveBinaryNotFound,
-            "binary missing",
-        );
-
-        assert!(should_retry_release_archive_binary_with_fallback(
-            &err,
-            Some("root/bin/demo"),
-            Some("bin/demo"),
-        ));
-    }
-
-    #[test]
-    fn release_archive_binary_fallback_ignores_plain_install_errors() {
-        let err = ArtifactInstallError::install("binary `demo` not found in zip archive");
-
-        assert!(!should_retry_release_archive_binary_with_fallback(
-            &err,
-            Some("root/bin/demo"),
-            Some("bin/demo"),
-        ));
-    }
-
-    #[test]
-    fn github_release_asset_url_detection_matches_release_download_shape() {
-        assert!(is_github_release_asset_url(
-            "https://github.com/cli/cli/releases/download/v2.0.0/gh_2.0.0_linux_amd64.tar.gz"
-        ));
-        assert!(!is_github_release_asset_url(
-            "https://mirror.example/github.com/cli/cli/releases/download/v2.0.0/gh.tar.gz"
-        ));
-        assert!(!is_github_release_asset_url(
-            "https://github.com/cli/cli/archive/refs/tags/v2.0.0.tar.gz"
-        ));
     }
 }

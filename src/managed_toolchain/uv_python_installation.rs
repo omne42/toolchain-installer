@@ -10,9 +10,7 @@ use crate::managed_toolchain::bootstrap_item_construction::{
 use crate::managed_toolchain::managed_environment_layout::managed_uv_process_env;
 use crate::managed_toolchain::managed_python_executable_discovery::find_managed_python_executable;
 use crate::managed_toolchain::managed_uv_host_execution::run_managed_uv_recipe;
-use crate::managed_toolchain::managed_uv_installation::{
-    ManagedUvBootstrapMode, ensure_managed_uv,
-};
+use crate::managed_toolchain::managed_uv_installation::ensure_managed_uv;
 use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidates;
 use crate::managed_toolchain::uv_installation_source_candidates::python_installation_source_candidates;
 use crate::plan_items::UvPythonPlanItem;
@@ -24,21 +22,14 @@ pub(crate) async fn execute_uv_python_item(
     cfg: &InstallerRuntimeConfig,
     client: &reqwest::Client,
 ) -> OperationResult<BootstrapItem> {
-    let (uv, uv_detail) = ensure_managed_uv(
-        target_triple,
-        managed_dir,
-        cfg,
-        client,
-        ManagedUvBootstrapMode::Reusable {
-            preferred_python: None,
-        },
-    )
-    .await?;
+    let (uv, uv_detail) = ensure_managed_uv(target_triple, managed_dir, cfg, client).await?;
     let base_env = managed_uv_process_env(managed_dir);
     let candidates = python_installation_source_candidates(cfg);
     attempt_source_candidates(candidates, "all uv_python sources failed", |candidate| {
-        let candidate_label = candidate.label.clone();
-        let mut env = base_env.clone();
+        let mut env = base_env
+            .iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+            .collect::<Vec<_>>();
         env.extend(
             candidate
                 .env
@@ -55,18 +46,18 @@ pub(crate) async fn execute_uv_python_item(
         .map(OsString::from)
         .collect::<Vec<_>>();
         run_managed_uv_recipe(uv.program.as_os_str(), &args, &env)
-            .map_err(|err| OperationError::install(format!("{candidate_label} failed: {err}")))?;
+            .map_err(|err| format!("{} failed: {err}", candidate.label.clone()))?;
         let destination = find_managed_python_executable(managed_dir, &item.version, target_triple)
             .ok_or_else(|| {
-                OperationError::install(format!(
+                format!(
                     "{} failed: {}",
-                    candidate_label,
+                    candidate.label,
                     OperationError::install(format!(
                         "uv python install succeeded but no managed Python executable matching `{}` was found",
                         item.version
                     ))
                     .detail()
-                ))
+                )
             })?;
         Ok(build_installed_bootstrap_item(
             &item.id,
