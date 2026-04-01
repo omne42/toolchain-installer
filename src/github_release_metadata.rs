@@ -1,5 +1,6 @@
 use github_kit::{GitHubApiRequestOptions, GitHubRelease, fetch_latest_release};
 use http_kit::{HttpClientOptions, HttpClientProfile, build_http_client_profile};
+#[cfg(test)]
 use reqwest::Url;
 
 use crate::error::{OperationError, OperationResult};
