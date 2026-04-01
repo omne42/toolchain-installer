@@ -18,39 +18,9 @@ pub(crate) fn execute_workspace_package_item(
             workspace_dir.display()
         )));
     }
-    let args = match item.manager.command_name() {
-        "npm" => vec![
-            "install".to_string(),
-            "--prefix".to_string(),
-            workspace_dir.display().to_string(),
-            item.package_spec.clone(),
-        ],
-        "pnpm" => vec![
-            "add".to_string(),
-            "--dir".to_string(),
-            workspace_dir.display().to_string(),
-            item.package_spec.clone(),
-        ],
-        "bun" => vec![
-            "add".to_string(),
-            "--cwd".to_string(),
-            workspace_dir.display().to_string(),
-            item.package_spec.clone(),
-        ],
-        value => {
-            return Err(OperationError::install(format!(
-                "unsupported workspace_package manager `{value}`"
-            )));
-        }
-    }
-    .into_iter()
-    .map(OsString::from)
-    .collect::<Vec<_>>();
+    let (program, args) = build_workspace_package_command(item)?;
     let manager = item.manager.command_name();
-    let program = resolve_command_path(manager)
-        .and_then(|path| path.into_os_string().into_string().ok())
-        .unwrap_or_else(|| manager.to_string());
-    run_host_recipe(&HostRecipeRequest::new(program.as_ref(), &args))
+    run_host_recipe(&HostRecipeRequest::new(program.as_os_str(), &args))
         .map_err(OperationError::from_host_recipe)?;
 
     Ok(BootstrapItem {
@@ -64,4 +34,68 @@ pub(crate) fn execute_workspace_package_item(
         error_code: None,
         failure_code: None,
     })
+}
+
+fn build_workspace_package_command(
+    item: &WorkspacePackagePlanItem,
+) -> OperationResult<(OsString, Vec<OsString>)> {
+    let workspace_dir = &item.destination;
+    let args = match item.manager.command_name() {
+        "npm" => vec![
+            OsString::from("install"),
+            OsString::from("--prefix"),
+            workspace_dir.as_os_str().to_os_string(),
+            OsString::from(&item.package_spec),
+        ],
+        "pnpm" => vec![
+            OsString::from("add"),
+            OsString::from("--dir"),
+            workspace_dir.as_os_str().to_os_string(),
+            OsString::from(&item.package_spec),
+        ],
+        "bun" => vec![
+            OsString::from("add"),
+            OsString::from("--cwd"),
+            workspace_dir.as_os_str().to_os_string(),
+            OsString::from(&item.package_spec),
+        ],
+        value => {
+            return Err(OperationError::install(format!(
+                "unsupported workspace_package manager `{value}`"
+            )));
+        }
+    };
+    let manager = item.manager.command_name();
+    let program = resolve_command_path(manager)
+        .map(|path| path.into_os_string())
+        .unwrap_or_else(|| OsString::from(manager));
+    Ok((program, args))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::build_workspace_package_command;
+    use crate::plan_items::{NodePackageManager, WorkspacePackagePlanItem};
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_package_command_preserves_non_utf8_destination_arg() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let destination = PathBuf::from(OsString::from_vec(b"/tmp/workspace-\xff".to_vec()));
+        let item = WorkspacePackagePlanItem {
+            id: "workspace-demo".to_string(),
+            package_spec: "eslint".to_string(),
+            manager: NodePackageManager::Npm,
+            destination,
+        };
+
+        let (_program, args) =
+            build_workspace_package_command(&item).expect("build workspace command");
+
+        assert_eq!(args[2].as_bytes(), b"/tmp/workspace-\xff");
+    }
 }
