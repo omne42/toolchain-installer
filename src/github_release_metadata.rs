@@ -1,4 +1,5 @@
 use github_kit::{GitHubApiRequestOptions, GitHubRelease, fetch_latest_release};
+use http_kit::{HttpClientOptions, HttpClientProfile, build_http_client_profile};
 use reqwest::Url;
 
 use crate::error::{OperationError, OperationResult};
@@ -24,13 +25,12 @@ pub(crate) async fn fetch_latest_release_metadata(
 
 pub(crate) fn build_github_http_client(
     cfg: &InstallerRuntimeConfig,
-) -> OperationResult<reqwest::Client> {
-    reqwest::Client::builder()
-        .http1_only()
-        .timeout(cfg.download.http_timeout)
-        .user_agent("toolchain-installer")
-        .build()
-        .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
+) -> OperationResult<HttpClientProfile> {
+    build_http_client_profile(&HttpClientOptions {
+        timeout: Some(cfg.download.http_timeout),
+        ..HttpClientOptions::default()
+    })
+    .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
 }
 
 pub(crate) fn is_github_release_asset_url(url: &str) -> bool {
