@@ -16,9 +16,7 @@ use crate::download_sources::{
 };
 use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::gateway_candidate_for_git_release_asset;
-use crate::github_release_metadata::{
-    fetch_latest_release_metadata,
-};
+use crate::github_release_metadata::fetch_latest_release_metadata;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 pub(crate) async fn install_gh_from_public_release(
     target_triple: &str,
