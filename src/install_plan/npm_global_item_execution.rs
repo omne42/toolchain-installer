@@ -1346,6 +1346,93 @@ mod tests {
     }
 
     #[test]
+    fn installation_result_rejects_noop_when_manifest_lacks_requested_binary_entrypoint() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        let package_dir = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        std::fs::create_dir_all(binary_path.parent().expect("binary parent"))
+            .expect("create binary parent");
+        std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+        std::fs::write(&binary_path, "#!/bin/sh\nexit 0\n").expect("write binary");
+        std::fs::write(package_dir.join("bin").join("other"), "#!/bin/sh\nexit 0\n")
+            .expect("write unrelated package bin");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"http-server","version":"14.1.1","bin":{"other":"bin/other"}}"#,
+        )
+        .expect("write manifest");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+            std::fs::set_permissions(
+                package_dir.join("bin").join("other"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .expect("chmod package bin");
+        }
+
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            None,
+            None,
+        );
+        assert!(!installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_pnpm_noop_with_scanned_package_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_root = temp.path().join("global");
+        let package_dir = package_root
+            .join("5")
+            .join("node_modules")
+            .join("http-server");
+        let binary_path = temp.path().join("http-server");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "http-server",
+            "14.1.1",
+            "bin/http-server",
+        );
+
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            Some(&package_root),
+            None,
+        );
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            Some(&package_root),
+            None,
+        ));
+    }
+
+    #[test]
     fn installation_result_rejects_orphan_binary_without_package_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         let binary_path = temp.path().join("bin").join("demo");
