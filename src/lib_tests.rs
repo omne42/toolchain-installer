@@ -594,6 +594,80 @@ chmod +x "$root/bin/alias-tool"
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
+fn cargo_install_recovers_from_stale_backup_before_reinstall() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cargo = tmp.path().join("cargo");
+    write_executable(
+        &cargo,
+        r#"#!/bin/sh
+root=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--root" ]; then
+    root="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+mkdir -p "$root/bin"
+printf 'cargo-installed' > "$root/bin/alias-tool"
+chmod +x "$root/bin/alias-tool"
+"#,
+    )
+    .expect("write cargo");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("bin").join("alias-tool");
+    std::fs::create_dir_all(destination.parent().expect("destination parent"))
+        .expect("create destination parent");
+    write_executable(&destination, "#!/bin/sh\necho current-cargo\n").expect("write current");
+    let stale_backup = destination.with_file_name("alias-tool.toolchain-installer-backup");
+    std::fs::write(&stale_backup, "stale-backup").expect("write stale backup");
+    let item = CargoInstallPlanItem {
+        id: "cargo-demo".to_string(),
+        source: CargoInstallSource::RegistryPackage {
+            package: "demo-tool".to_string(),
+            version: None,
+        },
+        binary_name: "alias-tool".to_string(),
+        binary_name_explicit: true,
+    };
+
+    let result = with_path_prepend(tmp.path(), || {
+        execute_cargo_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
+    })
+    .expect("cargo install should recover from stale backup");
+
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read installed cargo binary"),
+        "cargo-installed"
+    );
+    assert!(
+        !stale_backup.exists(),
+        "canonical backup should be consumed or removed during recovery"
+    );
+    let quarantined = std::fs::read_dir(destination.parent().expect("destination parent"))
+        .expect("read managed bin dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "stale canonical backup should be quarantined once"
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
 fn go_install_promotes_single_staged_binary_to_requested_destination_name() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let go = tmp.path().join("go");
@@ -626,6 +700,66 @@ chmod +x "$GOBIN/actual-tool"
     assert_eq!(
         std::fs::read_to_string(&destination).expect("read installed go binary"),
         "go-installed"
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
+fn go_install_recovers_from_stale_backup_before_reinstall() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let go = tmp.path().join("go");
+    write_executable(
+        &go,
+        r#"#!/bin/sh
+mkdir -p "$GOBIN"
+printf 'go-installed' > "$GOBIN/alias-tool"
+chmod +x "$GOBIN/alias-tool"
+"#,
+    )
+    .expect("write go");
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+    let destination = managed_dir.join("alias-tool");
+    write_executable(&destination, "#!/bin/sh\necho current-go\n").expect("write current");
+    let stale_backup = destination.with_file_name("alias-tool.toolchain-installer-backup");
+    std::fs::write(&stale_backup, "stale-backup").expect("write stale backup");
+    let item = GoInstallPlanItem {
+        id: "go-demo".to_string(),
+        source: GoInstallSource::PackageSpec("example.com/demo/cmd/demo@latest".to_string()),
+        binary_name: "alias-tool".to_string(),
+    };
+
+    let result = with_path_prepend(tmp.path(), || {
+        execute_go_install_item(&item, "x86_64-unknown-linux-gnu", &managed_dir)
+    })
+    .expect("go install should recover from stale backup");
+
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read installed go binary"),
+        "go-installed"
+    );
+    assert!(
+        !stale_backup.exists(),
+        "canonical backup should be consumed or removed during recovery"
+    );
+    let quarantined = std::fs::read_dir(&managed_dir)
+        .expect("read managed dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "stale canonical backup should be quarantined once"
     );
 }
 
@@ -5163,6 +5297,104 @@ exit 2
         !destination
             .with_file_name("ruff-lsp.toolchain-installer-backup")
             .exists()
+    );
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg(all(unix, not(windows)))]
+#[tokio::test]
+async fn execute_uv_tool_item_recovers_from_stale_backup_before_reinstall() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    let destination = managed_dir.join("ruff-lsp");
+    write_executable(&destination, "#!/bin/sh\necho current-uv-tool\n")?;
+    let stale_backup = destination.with_file_name("ruff-lsp.toolchain-installer-backup");
+    std::fs::write(&stale_backup, "stale-backup")?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  mkdir -p "$UV_TOOL_BIN_DIR"
+  cat > "$UV_TOOL_BIN_DIR/ruff-lsp" <<'EOF'
+#!/bin/sh
+echo "uv-tool-installed"
+EOF
+  chmod +x "$UV_TOOL_BIN_DIR/ruff-lsp"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff-installer".to_string(),
+        package: "ruff-lsp".to_string(),
+        python: None,
+        binary_name: "ruff-lsp".to_string(),
+        binary_name_explicit: false,
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await?;
+
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    let output = std::process::Command::new(&destination)
+        .arg("--version")
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "uv-tool-installed"
+    );
+    assert!(
+        !stale_backup.exists(),
+        "canonical backup should be consumed or removed during recovery"
+    );
+    let quarantined = std::fs::read_dir(&managed_dir)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "stale canonical backup should be quarantined once"
     );
     handle.join().expect("mock server thread join");
     Ok(())
