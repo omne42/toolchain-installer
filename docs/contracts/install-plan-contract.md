@@ -153,6 +153,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global` 为了兼容重复安装留下的 managed leaf symlink，会允许目标 leaf 自身是 symlink；但 symlink 解析后的最终路径仍必须落在 `managed_dir` 内，指向托管根外部的 leaf symlink 会在执行前直接拒绝。
 - `cargo_install` 若 `managed_dir` 本身不是 `bin/` 目录，结果二进制会落到 `managed_dir/bin/<binary>`，不会越过调用方给定的托管根。
 - plan 文件中的本地相对路径输入（例如 `cargo_install` 的本地包路径、`go_install` 的 `./cmd/demo` 或 `cmd/demo` 这类裸相对源码路径、`workspace_package` 的相对工作区目录，以及 `pip`/`npm_global` 的本地 `package` 路径）按 plan 文件所在目录解析；解析时会先对 plan 基准目录做词法规范化，不会因为 `plans/../plans` 这类等价写法绕过后续目标冲突校验。
+- `workspace_package` 的工作区目录、`cargo_install` / `go_install` / `npm_global` 的托管 staging 或 prefix 路径，以及 `uv_python` / `uv_tool` 注入的 `UV_*` 目录环境变量，都会按宿主机原生路径字节传给子进程；installer 不会先做 UTF-8 round-trip 再拼 argv 或 env。
 - 当目标是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；`bin\\tool.exe` 和 `bin/tool.exe` 会落到同一个托管相对路径，不再依赖当前宿主机是否把反斜杠当普通字符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - `uv_tool` 若显式提供 `binary_name`，installer 会改用 `uv tool install --from <package> <binary_name>`，把请求的可执行文件名直接纳入上游安装契约，而不是只在安装后被动检查结果路径。
