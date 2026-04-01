@@ -3750,6 +3750,35 @@ fn validate_plan_rejects_pip_destination_field() {
 }
 
 #[test]
+fn validate_plan_accepts_apt_with_apt_get_manager() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "apt".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("demo".to_string()),
+            manager: Some("apt-get".to_string()),
+            python: None,
+        }],
+    };
+    let result = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    );
+    assert!(
+        result.is_ok(),
+        "apt should accept canonical apt-get manager"
+    );
+}
+
+#[test]
 fn validate_plan_rejects_apt_with_non_apt_manager() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
