@@ -30,10 +30,7 @@ pub(crate) fn execute_go_install_item(
         item.binary_name,
         validated_binary_suffix(target_triple)
     ));
-    let env = vec![("GOBIN".to_string(), stage_root.display().to_string())]
-        .into_iter()
-        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
-        .collect::<Vec<_>>();
+    let env = go_install_env(&stage_root);
     let backup = ManagedDestinationBackup::stash(&expected_destination, "go_install binary")
         .map_err(OperationError::install)?;
     let resolved_package = match &item.source {
@@ -111,6 +108,13 @@ pub(crate) fn execute_go_install_item(
         error_code: None,
         failure_code: None,
     })
+}
+
+fn go_install_env(stage_root: &Path) -> Vec<(OsString, OsString)> {
+    vec![(
+        OsString::from("GOBIN"),
+        stage_root.as_os_str().to_os_string(),
+    )]
 }
 
 fn validate_local_package_path(package_path: &Path) -> Result<(), String> {
@@ -227,9 +231,10 @@ fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::path::Path;
 
-    use super::build_success_cleanup_detail;
+    use super::{build_success_cleanup_detail, go_install_env};
 
     #[test]
     fn success_cleanup_detail_reports_stage_cleanup_warning() {
@@ -244,5 +249,18 @@ mod tests {
         assert!(detail.contains("cleanup warning"));
         assert!(detail.contains("/tmp/stage"));
         assert!(detail.contains("/tmp/managed/demo"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn go_install_env_preserves_non_utf8_gobin_path() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        use std::path::PathBuf;
+
+        let stage_root = PathBuf::from(OsString::from_vec(b"/tmp/go-stage-\xff".to_vec()));
+        let env = go_install_env(&stage_root);
+
+        assert_eq!(env[0].0, OsString::from("GOBIN"));
+        assert_eq!(env[0].1.as_bytes(), b"/tmp/go-stage-\xff");
     }
 }

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -12,9 +12,9 @@ use crate::error::{OperationError, OperationResult};
 use crate::plan_items::{NodePackageManager, NpmGlobalPlanItem};
 
 struct NpmGlobalRecipe {
-    program: String,
-    args: Vec<String>,
-    env: Vec<(String, String)>,
+    program: OsString,
+    args: Vec<OsString>,
+    env: Vec<(OsString, OsString)>,
     binary_path: PathBuf,
     fallback_package_dir: Option<PathBuf>,
     package_search_root: Option<PathBuf>,
@@ -48,14 +48,8 @@ pub(crate) fn execute_npm_global_item(
         recipe.package_search_root.as_deref(),
         recipe.fallback_search_root.as_deref(),
     );
-    let recipe_args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
-    let recipe_env = recipe
-        .env
-        .iter()
-        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
-        .collect::<Vec<_>>();
     run_host_recipe(
-        &HostRecipeRequest::new(recipe.program.as_ref(), &recipe_args).with_env(&recipe_env),
+        &HostRecipeRequest::new(recipe.program.as_os_str(), &recipe.args).with_env(&recipe.env),
     )
     .map_err(OperationError::from_host_recipe)?;
 
@@ -70,7 +64,7 @@ pub(crate) fn execute_npm_global_item(
         Some(destination) => destination,
         None => create_windows_bun_global_launcher(
             item.manager,
-            &recipe.program,
+            recipe.program.as_os_str(),
             managed_dir,
             &item.package_spec,
             &item.binary_name,
@@ -136,19 +130,17 @@ fn build_npm_global_recipe(
                 prefix_root.join("bin").join(binary_name)
             };
             Ok(NpmGlobalRecipe {
-                program: resolve_command_path("npm")
-                    .and_then(|path| path.into_os_string().into_string().ok())
-                    .unwrap_or_else(|| "npm".to_string()),
+                program: resolved_package_manager_program("npm"),
                 args: vec![
-                    "install".to_string(),
-                    "--global".to_string(),
-                    "--prefix".to_string(),
-                    prefix_root.display().to_string(),
-                    package,
+                    OsString::from("install"),
+                    OsString::from("--global"),
+                    OsString::from("--prefix"),
+                    prefix_root.as_os_str().to_os_string(),
+                    OsString::from(package),
                 ],
                 env: vec![(
-                    "npm_config_prefix".to_string(),
-                    prefix_root.display().to_string(),
+                    OsString::from("npm_config_prefix"),
+                    prefix_root.as_os_str().to_os_string(),
                 )],
                 binary_path,
                 fallback_package_dir: Some(fallback_package_dir),
@@ -161,13 +153,18 @@ fn build_npm_global_recipe(
             let binary_path =
                 managed_dir.join(global_binary_filename(binary_name, manager, target_triple));
             Ok(NpmGlobalRecipe {
-                program: resolve_command_path("pnpm")
-                    .and_then(|path| path.into_os_string().into_string().ok())
-                    .unwrap_or_else(|| "pnpm".to_string()),
-                args: vec!["add".to_string(), "--global".to_string(), package],
+                program: resolved_package_manager_program("pnpm"),
+                args: vec![
+                    OsString::from("add"),
+                    OsString::from("--global"),
+                    OsString::from(package),
+                ],
                 env: vec![
-                    ("PNPM_HOME".to_string(), managed_dir.display().to_string()),
-                    ("PATH".to_string(), prepend_path_env(managed_dir)?),
+                    (
+                        OsString::from("PNPM_HOME"),
+                        managed_dir.as_os_str().to_os_string(),
+                    ),
+                    (OsString::from("PATH"), prepend_path_env(managed_dir)?),
                 ],
                 binary_path,
                 fallback_package_dir: None,
@@ -185,20 +182,22 @@ fn build_npm_global_recipe(
                 binary_dir.join(global_binary_filename(binary_name, manager, target_triple));
             let fallback_package_dir = package_dir_with_root(&package_root, &package);
             Ok(NpmGlobalRecipe {
-                program: resolve_command_path("bun")
-                    .and_then(|path| path.into_os_string().into_string().ok())
-                    .unwrap_or_else(|| "bun".to_string()),
-                args: vec!["add".to_string(), "--global".to_string(), package],
+                program: resolved_package_manager_program("bun"),
+                args: vec![
+                    OsString::from("add"),
+                    OsString::from("--global"),
+                    OsString::from(package),
+                ],
                 env: vec![
                     (
-                        "BUN_INSTALL_GLOBAL_DIR".to_string(),
-                        global_dir.display().to_string(),
+                        OsString::from("BUN_INSTALL_GLOBAL_DIR"),
+                        global_dir.as_os_str().to_os_string(),
                     ),
                     (
-                        "BUN_INSTALL_BIN".to_string(),
-                        binary_dir.display().to_string(),
+                        OsString::from("BUN_INSTALL_BIN"),
+                        binary_dir.as_os_str().to_os_string(),
                     ),
-                    ("PATH".to_string(), prepend_path_env(&binary_dir)?),
+                    (OsString::from("PATH"), prepend_path_env(&binary_dir)?),
                 ],
                 binary_path,
                 fallback_package_dir: Some(fallback_package_dir),
@@ -208,6 +207,12 @@ fn build_npm_global_recipe(
             })
         }
     }
+}
+
+fn resolved_package_manager_program(command: &str) -> OsString {
+    resolve_command_path(command)
+        .map(|path| path.into_os_string())
+        .unwrap_or_else(|| OsString::from(command))
 }
 
 fn npm_prefix_root_for_target(target_triple: &str, managed_dir: &Path) -> OperationResult<PathBuf> {
@@ -462,7 +467,7 @@ fn package_dir_with_root(root: &Path, package: &str) -> PathBuf {
 #[cfg(windows)]
 fn create_windows_bun_global_launcher(
     manager: NodePackageManager,
-    bun_program: &str,
+    bun_program: &OsStr,
     managed_dir: &Path,
     package: &str,
     binary_name: &str,
@@ -500,7 +505,7 @@ fn create_windows_bun_global_launcher(
     }
     let launcher_body = format!(
         "@echo off\r\n\"{}\" \"{}\" %*\r\n",
-        bun_program,
+        bun_program.to_string_lossy(),
         script_path.display()
     );
     std::fs::write(&launcher_path, launcher_body)
@@ -511,7 +516,7 @@ fn create_windows_bun_global_launcher(
 #[cfg(not(windows))]
 fn create_windows_bun_global_launcher(
     _manager: NodePackageManager,
-    _bun_program: &str,
+    _bun_program: &OsStr,
     _managed_dir: &Path,
     _package: &str,
     _binary_name: &str,
@@ -841,14 +846,14 @@ fn entry_is_plain_directory(entry: &std::fs::DirEntry) -> bool {
         .is_ok_and(|file_type| file_type.is_dir() && !file_type.is_symlink())
 }
 
-fn prepend_path_env(path: &Path) -> OperationResult<String> {
+fn prepend_path_env(path: &Path) -> OperationResult<OsString> {
     let mut entries = vec![path.to_path_buf()];
     if let Some(existing) = std::env::var_os("PATH") {
         entries.extend(std::env::split_paths(&existing));
     }
     let joined = std::env::join_paths(entries)
         .map_err(|err| OperationError::install(format!("cannot compose PATH: {err}")))?;
-    Ok(joined.to_string_lossy().into_owned())
+    Ok(joined)
 }
 
 fn global_binary_filename(
@@ -918,6 +923,7 @@ fn binary_name_matches(candidate: &str, binary_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
 
     use serde_json::json;
@@ -942,16 +948,16 @@ mod tests {
         )
         .expect("build pnpm recipe");
 
-        assert!(recipe.env.iter().any(
-            |(name, value)| name == "PNPM_HOME" && value == &managed_dir.display().to_string()
-        ));
+        assert!(recipe.env.iter().any(|(name, value)| {
+            name == OsStr::new("PNPM_HOME") && value == managed_dir.as_os_str()
+        }));
         let path = recipe
             .env
             .iter()
-            .find(|(name, _)| name == "PATH")
-            .map(|(_, value)| value.as_str())
+            .find(|(name, _)| name == OsStr::new("PATH"))
+            .map(|(_, value)| value.as_os_str())
             .expect("PATH env");
-        let first = std::env::split_paths(std::ffi::OsStr::new(path))
+        let first = std::env::split_paths(path)
             .next()
             .expect("first PATH entry");
         assert_eq!(first, managed_dir);
@@ -971,16 +977,12 @@ mod tests {
 
         let expected_global_dir = managed_dir.join("install").join("global");
         assert!(recipe.env.iter().any(|(name, value)| {
-            name == "BUN_INSTALL_GLOBAL_DIR" && value == &expected_global_dir.display().to_string()
+            name == OsStr::new("BUN_INSTALL_GLOBAL_DIR") && value == expected_global_dir.as_os_str()
         }));
         let expected_binary_dir = managed_dir.join("bin");
-        assert!(
-            recipe
-                .env
-                .iter()
-                .any(|(name, value)| name == "BUN_INSTALL_BIN"
-                    && value == &expected_binary_dir.display().to_string())
-        );
+        assert!(recipe.env.iter().any(|(name, value)| {
+            name == OsStr::new("BUN_INSTALL_BIN") && value == expected_binary_dir.as_os_str()
+        }));
         assert_eq!(
             recipe.binary_path.parent(),
             Some(expected_binary_dir.as_path())
@@ -988,10 +990,10 @@ mod tests {
         let path = recipe
             .env
             .iter()
-            .find(|(name, _)| name == "PATH")
-            .map(|(_, value)| value.as_str())
+            .find(|(name, _)| name == OsStr::new("PATH"))
+            .map(|(_, value)| value.as_os_str())
             .expect("PATH env");
-        let first = std::env::split_paths(std::ffi::OsStr::new(path))
+        let first = std::env::split_paths(path)
             .next()
             .expect("first PATH entry");
         assert_eq!(first, expected_binary_dir);
@@ -1015,16 +1017,49 @@ mod tests {
             .join("install")
             .join("global");
         assert!(recipe.env.iter().any(|(name, value)| {
-            name == "BUN_INSTALL_GLOBAL_DIR" && value == &expected_global_dir.display().to_string()
+            name == OsStr::new("BUN_INSTALL_GLOBAL_DIR") && value == expected_global_dir.as_os_str()
         }));
-        assert!(
-            recipe
-                .env
-                .iter()
-                .any(|(name, value)| name == "BUN_INSTALL_BIN"
-                    && value == &managed_dir.display().to_string())
-        );
+        assert!(recipe.env.iter().any(|(name, value)| {
+            name == OsStr::new("BUN_INSTALL_BIN") && value == managed_dir.as_os_str()
+        }));
         assert_eq!(recipe.binary_path.parent(), Some(managed_dir.as_path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn npm_recipe_preserves_non_utf8_prefix_arg_and_env() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let managed_dir = PathBuf::from(OsString::from_vec(b"/tmp/npm-managed-\xff".to_vec()));
+        let recipe = build_npm_global_recipe(
+            NodePackageManager::Npm,
+            "http-server".to_string(),
+            "http-server",
+            host_target_triple(),
+            &managed_dir,
+        )
+        .expect("build npm recipe");
+
+        let expected_prefix = if managed_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value == "bin")
+        {
+            managed_dir
+                .parent()
+                .expect("managed parent")
+                .as_os_str()
+                .as_bytes()
+                .to_vec()
+        } else {
+            managed_dir.as_os_str().as_bytes().to_vec()
+        };
+
+        assert_eq!(recipe.args[3].as_bytes(), expected_prefix);
+        assert!(recipe.env.iter().any(|(name, value)| {
+            name == OsStr::new("npm_config_prefix")
+                && value.as_bytes() == expected_prefix.as_slice()
+        }));
     }
 
     #[test]

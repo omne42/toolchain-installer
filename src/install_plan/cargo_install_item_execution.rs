@@ -43,21 +43,19 @@ pub(crate) fn execute_cargo_install_item(
                     package_path.display()
                 )));
             }
-            args.push("--path".to_string());
-            args.push(package_path.display().to_string());
+            push_cargo_install_local_path_arg(&mut args, package_path);
             format!("cargo:path:{}", package_path.display())
         }
         CargoInstallSource::RegistryPackage { package, version } => {
-            args.push("--locked".to_string());
-            args.push(package.clone());
+            args.push(OsString::from("--locked"));
+            args.push(OsString::from(package));
             if let Some(version) = version.as_deref() {
-                args.push("--version".to_string());
-                args.push(version.to_string());
+                args.push(OsString::from("--version"));
+                args.push(OsString::from(version));
             }
             format!("cargo:crate:{package}")
         }
     };
-    let args = args.into_iter().map(OsString::from).collect::<Vec<_>>();
 
     let backup = ManagedDestinationBackup::stash(&expected_destination, "cargo_install binary")
         .map_err(OperationError::install)?;
@@ -117,17 +115,22 @@ pub(crate) fn execute_cargo_install_item(
     })
 }
 
-fn build_cargo_install_args(item: &CargoInstallPlanItem, stage_root: &Path) -> Vec<String> {
+fn build_cargo_install_args(item: &CargoInstallPlanItem, stage_root: &Path) -> Vec<OsString> {
     let mut args = vec![
-        "install".to_string(),
-        "--root".to_string(),
-        stage_root.display().to_string(),
+        OsString::from("install"),
+        OsString::from("--root"),
+        stage_root.as_os_str().to_os_string(),
     ];
     if item.binary_name_explicit {
-        args.push("--bin".to_string());
-        args.push(item.binary_name.clone());
+        args.push(OsString::from("--bin"));
+        args.push(OsString::from(&item.binary_name));
     }
     args
+}
+
+fn push_cargo_install_local_path_arg(args: &mut Vec<OsString>, package_path: &Path) {
+    args.push(OsString::from("--path"));
+    args.push(package_path.as_os_str().to_os_string());
 }
 
 fn create_stage_root(parent: &Path, prefix: &str) -> Result<PathBuf, String> {
@@ -252,10 +255,13 @@ fn merge_cleanup_detail(first: Option<String>, second: Option<String>) -> Option
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
+    use std::ffi::{OsStr, OsString};
     use std::path::Path;
 
-    use super::{build_cargo_install_args, build_success_cleanup_detail, select_staged_binary};
+    use super::{
+        build_cargo_install_args, build_success_cleanup_detail, push_cargo_install_local_path_arg,
+        select_staged_binary,
+    };
     use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
     #[test]
@@ -274,11 +280,11 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "install".to_string(),
-                "--root".to_string(),
-                "/tmp/stage".to_string(),
-                "--bin".to_string(),
-                "alias-tool".to_string(),
+                OsString::from("install"),
+                OsString::from("--root"),
+                OsString::from("/tmp/stage"),
+                OsString::from("--bin"),
+                OsString::from("alias-tool"),
             ]
         );
     }
@@ -299,11 +305,36 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "install".to_string(),
-                "--root".to_string(),
-                "/tmp/stage".to_string(),
+                OsString::from("install"),
+                OsString::from("--root"),
+                OsString::from("/tmp/stage"),
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cargo_install_args_preserve_non_utf8_paths() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        use std::path::PathBuf;
+
+        let item = CargoInstallPlanItem {
+            id: "demo".to_string(),
+            source: CargoInstallSource::RegistryPackage {
+                package: "demo".to_string(),
+                version: None,
+            },
+            binary_name: "demo".to_string(),
+            binary_name_explicit: false,
+        };
+        let stage_root = PathBuf::from(OsString::from_vec(b"/tmp/stage-\xff".to_vec()));
+        let package_path = PathBuf::from(OsString::from_vec(b"/tmp/pkg-\xfe".to_vec()));
+
+        let mut args = build_cargo_install_args(&item, &stage_root);
+        push_cargo_install_local_path_arg(&mut args, &package_path);
+
+        assert_eq!(args[2].as_bytes(), b"/tmp/stage-\xff");
+        assert_eq!(args[4].as_bytes(), b"/tmp/pkg-\xfe");
     }
 
     #[test]
