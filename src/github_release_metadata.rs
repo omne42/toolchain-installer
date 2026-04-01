@@ -33,6 +33,7 @@ pub(crate) fn build_github_http_client(
     .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
 }
 
+#[cfg(test)]
 pub(crate) fn is_github_release_asset_url(url: &str) -> bool {
     let Ok(parsed) = Url::parse(url) else {
         return false;
