@@ -271,6 +271,33 @@ fn assess_managed_bootstrap_state_reports_missing_install() {
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
+fn assess_managed_bootstrap_state_ignores_unknown_tool_even_when_binary_is_healthy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let destination = managed_dir.join("custom-tool");
+    write_executable(
+        &destination,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "custom-tool 1.0.0"
+  exit 0
+fi
+exit 0
+"#,
+    )
+    .expect("write custom-tool");
+
+    let state = assess_managed_bootstrap_state(
+        "custom-tool",
+        "x86_64-unknown-linux-gnu",
+        &destination,
+        &managed_dir,
+    );
+    assert_eq!(state, ManagedBootstrapState::NeedsInstall);
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
 fn assess_managed_bootstrap_state_reports_healthy_binary_after_version_check() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
@@ -997,6 +1024,41 @@ exit 0
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
+fn bootstrap_reports_unsupported_tool_even_when_managed_dir_contains_healthy_binary()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("custom-tool"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "custom-tool 1.0.0"
+  exit 0
+fi
+exit 0
+"#,
+    )?;
+
+    let result = tokio::runtime::Runtime::new()
+        .expect("create runtime")
+        .block_on(crate::bootstrap(&BootstrapCommand {
+            execution: ExecutionRequest {
+                managed_dir: Some(managed_dir),
+                ..ExecutionRequest::default()
+            },
+            tools: vec!["custom-tool".to_string()],
+        }))?;
+
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].tool, "custom-tool");
+    assert_eq!(result.items[0].status, BootstrapStatus::Unsupported);
+    assert_ne!(result.items[0].status, BootstrapStatus::Installed);
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
 fn assess_managed_bootstrap_state_reports_broken_windows_git_when_payload_fails_version_check() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
@@ -1173,6 +1235,26 @@ fn gateway_candidate_for_git_release_download_url_parses_exact_git_release_url()
     let candidate = gateway_candidate_for_git_release_download_url(
         &cfg,
         "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip",
+    )
+    .expect("candidate");
+    assert_eq!(
+        candidate,
+        "https://gw.example/toolchain/git/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip"
+    );
+}
+
+#[test]
+fn gateway_candidate_for_git_release_download_url_ignores_query_and_fragment() {
+    let cfg = InstallerRuntimeConfig {
+        gateway: GatewayRoutingPolicy {
+            base: Some("https://gw.example".to_string()),
+            country: Some("CN".to_string()),
+        },
+        ..test_runtime_config()
+    };
+    let candidate = gateway_candidate_for_git_release_download_url(
+        &cfg,
+        "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip?download=1#fragment",
     )
     .expect("candidate");
     assert_eq!(
@@ -2522,14 +2604,14 @@ fn gateway_candidate_for_git_release_download_url_rejects_non_matching_or_embedd
     assert!(
         gateway_candidate_for_git_release_download_url(
             &cfg,
-            "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip?download=1"
+            "http://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip"
         )
         .is_none()
     );
     assert!(
         gateway_candidate_for_git_release_download_url(
             &cfg,
-            "http://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip"
+            "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/nested/MinGit.zip"
         )
         .is_none()
     );

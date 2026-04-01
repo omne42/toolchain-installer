@@ -18,6 +18,10 @@ pub(crate) fn assess_managed_bootstrap_state(
     destination: &Path,
     managed_dir: &Path,
 ) -> ManagedBootstrapState {
+    if !is_supported_builtin_tool(tool) {
+        return ManagedBootstrapState::NeedsInstall;
+    }
+
     if !destination.exists() {
         return ManagedBootstrapState::NeedsInstall;
     }
