@@ -17,11 +17,11 @@ pub(crate) fn execute_go_install_item(
     target_triple: &str,
     managed_dir: &Path,
 ) -> OperationResult<BootstrapItem> {
-    if !command_exists("go") {
-        return Err(OperationError::install("go command not found"));
-    }
     if let GoInstallSource::LocalPath(package_path) = &item.source {
         validate_local_package_path(package_path).map_err(OperationError::install)?;
+    }
+    if !command_exists("go") {
+        return Err(OperationError::install("go command not found"));
     }
     let stage_root =
         create_stage_root(managed_dir, "go-install").map_err(OperationError::install)?;
