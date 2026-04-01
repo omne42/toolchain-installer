@@ -1662,6 +1662,79 @@ chmod +x "$PNPM_HOME/http-server"
 
 #[cfg(unix)]
 #[test]
+fn npm_global_pnpm_accepts_noop_reinstall_when_managed_metadata_matches() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_pnpm = fake_bin_dir.join("pnpm");
+    write_executable(
+        &fake_pnpm,
+        r#"#!/bin/sh
+[ -n "$PNPM_HOME" ] || exit 9
+pkg_dir="$PNPM_HOME/global/5/node_modules/http-server"
+bin_path="$PNPM_HOME/http-server"
+mkdir -p "$pkg_dir/bin"
+if [ ! -f "$pkg_dir/package.json" ]; then
+  cat > "$pkg_dir/package.json" <<'EOF'
+{"name":"http-server","version":"14.1.1","bin":{"http-server":"bin/http-server"}}
+EOF
+  cat > "$pkg_dir/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+  chmod +x "$pkg_dir/bin/http-server"
+  cat > "$bin_path" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+  chmod +x "$bin_path"
+fi
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-pnpm-home");
+    let args = [
+        "--json",
+        "--strict",
+        "--managed-dir",
+        managed_dir.to_str().expect("utf8 path"),
+        "--method",
+        "npm_global",
+        "--id",
+        "http-server-pnpm",
+        "--package",
+        "http-server@14.1.1",
+        "--binary-name",
+        "http-server",
+        "--manager",
+        "pnpm",
+    ];
+
+    let mut first = bootstrap_cmd();
+    first
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args(args)
+        .assert()
+        .success();
+
+    let mut second = bootstrap_cmd();
+    let output = second
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir.join("http-server").display().to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn npm_global_bun_uses_managed_dir_bin_subdirectory() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
