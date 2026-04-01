@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use omne_host_info_primitives::executable_suffix_for_target;
@@ -64,31 +65,29 @@ pub(crate) fn managed_python_shim_paths(
         .collect()
 }
 
-pub(crate) fn managed_uv_process_env(managed_dir: &Path) -> Vec<(String, String)> {
+pub(crate) fn managed_uv_process_env(managed_dir: &Path) -> Vec<(OsString, OsString)> {
     vec![
         (
-            "UV_TOOL_DIR".to_string(),
-            managed_dir.join(".uv-tools").display().to_string(),
+            OsString::from("UV_TOOL_DIR"),
+            managed_dir.join(".uv-tools").into_os_string(),
         ),
         (
-            "UV_TOOL_BIN_DIR".to_string(),
-            managed_dir.display().to_string(),
+            OsString::from("UV_TOOL_BIN_DIR"),
+            managed_dir.as_os_str().to_os_string(),
         ),
         (
-            "UV_PYTHON_INSTALL_DIR".to_string(),
-            managed_python_installation_dir(managed_dir)
-                .display()
-                .to_string(),
+            OsString::from("UV_PYTHON_INSTALL_DIR"),
+            managed_python_installation_dir(managed_dir).into_os_string(),
         ),
         (
-            "UV_PYTHON_BIN_DIR".to_string(),
-            managed_dir.display().to_string(),
+            OsString::from("UV_PYTHON_BIN_DIR"),
+            managed_dir.as_os_str().to_os_string(),
         ),
-        ("UV_PYTHON_INSTALL_BIN".to_string(), "1".to_string()),
-        ("UV_MANAGED_PYTHON".to_string(), "1".to_string()),
+        (OsString::from("UV_PYTHON_INSTALL_BIN"), OsString::from("1")),
+        (OsString::from("UV_MANAGED_PYTHON"), OsString::from("1")),
         (
-            "UV_CACHE_DIR".to_string(),
-            managed_dir.join(".uv-cache").display().to_string(),
+            OsString::from("UV_CACHE_DIR"),
+            managed_dir.join(".uv-cache").into_os_string(),
         ),
     ]
 }
@@ -106,4 +105,37 @@ fn python_major_minor(version: &str) -> Option<String> {
         return None;
     }
     Some(format!("{major}.{minor}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::managed_uv_process_env;
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_uv_process_env_preserves_non_utf8_managed_dir_bytes() {
+        use std::ffi::{OsStr, OsString};
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::Path;
+
+        let managed_dir = Path::new(OsStr::from_bytes(b"/tmp/toolchain-installer-\xFF-managed"));
+        let env = managed_uv_process_env(managed_dir);
+
+        let tool_bin_dir = env
+            .iter()
+            .find(|(name, _)| name == &OsString::from("UV_TOOL_BIN_DIR"))
+            .map(|(_, value)| value)
+            .expect("UV_TOOL_BIN_DIR env");
+        assert_eq!(tool_bin_dir.as_bytes(), managed_dir.as_os_str().as_bytes());
+
+        let cache_dir = env
+            .iter()
+            .find(|(name, _)| name == &OsString::from("UV_CACHE_DIR"))
+            .map(|(_, value)| value)
+            .expect("UV_CACHE_DIR env");
+        assert_eq!(
+            cache_dir.as_bytes(),
+            managed_dir.join(".uv-cache").as_os_str().as_bytes()
+        );
+    }
 }

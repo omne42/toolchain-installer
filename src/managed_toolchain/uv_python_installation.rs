@@ -38,10 +38,7 @@ pub(crate) async fn execute_uv_python_item(
     let candidates = python_installation_source_candidates(cfg);
     attempt_source_candidates(candidates, "all uv_python sources failed", |candidate| {
         let candidate_label = candidate.label.clone();
-        let mut env = base_env
-            .iter()
-            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
-            .collect::<Vec<_>>();
+        let mut env = base_env.clone();
         env.extend(
             candidate
                 .env
