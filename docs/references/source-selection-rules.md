@@ -20,6 +20,11 @@
 - mirror、代理或任意自定义 URL 即使路径里包含 `git-for-windows/git/releases/download` 片段，也不会被误判成网关路由。
 - 对外 JSON 结果里的 `source` 会脱敏最终命中的下载 URL，不回显用户信息、query 或 fragment。
 
+## 宿主机 package 输入
+
+- `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的声明式 `package` 只承载 package/component/path 语义，不承载额外 CLI 选项；看起来像 `--flag` 的值会在 resolve 阶段直接拒绝。
+- 对 `pip`/`npm_global`/`cargo_install`/`go_install` 这类可按本地路径解释 `package` 的方法，只有当前宿主机原生的绝对路径语法会被接受；非 Windows 宿主遇到 `C:\...`、`\...`、`file:C:\...` 会直接返回 usage error，而不是继续按相对路径解析。
+
 ## `uv_tool` 方法
 
 - 当调用方没有显式提供任何索引时，默认只使用官方 PyPI `https://pypi.org/simple`。
