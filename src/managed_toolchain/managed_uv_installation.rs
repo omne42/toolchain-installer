@@ -237,6 +237,17 @@ fn install_uv_into_stage_with_pip(
         ))
     })?;
 
+    let args = build_install_uv_with_pip_args(&site_packages_dir, cfg);
+    run_host_recipe(&HostRecipeRequest::new(python.as_ref(), &args))
+        .map_err(OperationError::from_host_recipe)?;
+    write_bootstrap_uv_launcher(stage_root, python)?;
+    Ok(())
+}
+
+fn build_install_uv_with_pip_args(
+    site_packages_dir: &Path,
+    cfg: &InstallerRuntimeConfig,
+) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("-m"),
         OsString::from("pip"),
@@ -244,7 +255,7 @@ fn install_uv_into_stage_with_pip(
         OsString::from("--disable-pip-version-check"),
         OsString::from("--upgrade"),
         OsString::from("--target"),
-        OsString::from(site_packages_dir.display().to_string()),
+        site_packages_dir.as_os_str().to_os_string(),
     ];
     let mut indexes = cfg
         .package_indexes
@@ -261,10 +272,7 @@ fn install_uv_into_stage_with_pip(
         }
     }
     args.push(OsString::from("uv"));
-    run_host_recipe(&HostRecipeRequest::new(python.as_ref(), &args))
-        .map_err(OperationError::from_host_recipe)?;
-    write_bootstrap_uv_launcher(stage_root, python)?;
-    Ok(())
+    args
 }
 
 fn write_bootstrap_uv_launcher(bootstrap_root: &Path, python: &str) -> OperationResult<()> {
@@ -397,5 +405,64 @@ fn append_bootstrap_context(err: OperationError, bootstrap_errors: &[String]) ->
         ExitCode::Usage | ExitCode::Install | ExitCode::StrictFailure => {
             OperationError::install(detail)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_install_uv_with_pip_args;
+    use crate::installer_runtime_config::{
+        DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
+        GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
+        PythonMirrorPolicy,
+    };
+    use std::time::Duration;
+
+    fn test_runtime_config() -> InstallerRuntimeConfig {
+        InstallerRuntimeConfig {
+            github_releases: GitHubReleasePolicy {
+                api_bases: vec![DEFAULT_GITHUB_API_BASE.to_string()],
+                token: None,
+            },
+            download_sources: DownloadSourcePolicy {
+                mirror_prefixes: Vec::new(),
+            },
+            package_indexes: PackageIndexPolicy {
+                indexes: vec![DEFAULT_PYPI_INDEX.to_string()],
+            },
+            python_mirrors: PythonMirrorPolicy {
+                install_mirrors: Vec::new(),
+            },
+            gateway: GatewayRoutingPolicy {
+                base: None,
+                country: None,
+            },
+            download: DownloadPolicy {
+                http_timeout: Duration::from_secs(5),
+                max_download_bytes: None,
+            },
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_install_uv_with_pip_args_preserves_non_utf8_target_path() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::Path;
+
+        let site_packages_dir = Path::new(OsStr::from_bytes(
+            b"/tmp/toolchain-installer-\xFF-site-packages",
+        ));
+        let args = build_install_uv_with_pip_args(site_packages_dir, &test_runtime_config());
+
+        let target_index = args
+            .iter()
+            .position(|arg| arg == "--target")
+            .expect("`--target` arg");
+        assert_eq!(
+            args[target_index + 1].as_os_str().as_bytes(),
+            site_packages_dir.as_os_str().as_bytes()
+        );
     }
 }
