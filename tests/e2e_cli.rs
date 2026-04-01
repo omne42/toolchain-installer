@@ -2135,6 +2135,67 @@ echo "stale"
 
 #[cfg(unix)]
 #[test]
+fn go_install_local_file_path_preserves_existing_binary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_go = fake_bin_dir.join("go");
+    write_executable(&fake_go, "#!/bin/sh\nexit 99\n");
+
+    let managed_dir = temp.path().join("custom-managed");
+    let stale_binary = managed_dir.join("demo-go");
+    std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+    write_executable(
+        &stale_binary,
+        r#"#!/bin/sh
+echo "stale"
+"#,
+    );
+    let file_source = temp.path().join("package.txt");
+    std::fs::write(&file_source, "not a directory").expect("write file source");
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "go_install",
+            "--id",
+            "demo-go",
+            "--package",
+            file_source.to_str().expect("utf8 path"),
+            "--binary-name",
+            "demo-go",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert!(
+        json["items"][0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("go_install local path must be a directory"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(&stale_binary).expect("read stale"),
+        "#!/bin/sh\necho \"stale\"\n"
+    );
+    assert!(
+        !stale_binary
+            .with_file_name("demo-go.toolchain-installer-backup")
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn rustup_component_reports_source_kind_on_success() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
