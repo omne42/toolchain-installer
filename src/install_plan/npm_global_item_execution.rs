@@ -122,7 +122,7 @@ fn build_npm_global_recipe(
     match manager {
         NodePackageManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
-            let package_root = prefix_root.join("lib").join("node_modules");
+            let package_root = npm_global_package_root(&prefix_root, target_triple);
             let fallback_package_dir = package_dir_with_root(&package_root, &package);
             let binary_path = if target_triple.contains("windows") {
                 prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
@@ -230,6 +230,13 @@ fn npm_prefix_root_for_target(target_triple: &str, managed_dir: &Path) -> Operat
             .ok_or_else(|| OperationError::install("cannot determine npm global prefix root"));
     }
     Ok(managed_dir.to_path_buf())
+}
+
+fn npm_global_package_root(prefix_root: &Path, target_triple: &str) -> PathBuf {
+    if target_triple.contains("windows") {
+        return prefix_root.join("node_modules");
+    }
+    prefix_root.join("lib").join("node_modules")
 }
 
 struct BunInstallLayout {
@@ -452,8 +459,11 @@ fn manifest_satisfies_package_request(
 }
 
 #[cfg(test)]
-fn npm_global_package_dir(prefix_root: &Path, package: &str) -> PathBuf {
-    package_dir_with_root(&prefix_root.join("lib").join("node_modules"), package)
+fn npm_global_package_dir(prefix_root: &Path, package: &str, target_triple: &str) -> PathBuf {
+    package_dir_with_root(
+        &npm_global_package_root(prefix_root, target_triple),
+        package,
+    )
 }
 
 fn package_dir_with_root(root: &Path, package: &str) -> PathBuf {
@@ -1159,11 +1169,53 @@ mod tests {
 
     #[test]
     fn npm_global_package_dir_uses_package_name_without_version() {
-        let package_dir =
-            npm_global_package_dir(Path::new("/tmp/prefix"), "@scope/http-server@14.1.1");
+        let package_dir = npm_global_package_dir(
+            Path::new("/tmp/prefix"),
+            "@scope/http-server@14.1.1",
+            "x86_64-unknown-linux-gnu",
+        );
         assert_eq!(
             package_dir,
             PathBuf::from("/tmp/prefix/lib/node_modules/@scope/http-server")
+        );
+    }
+
+    #[test]
+    fn npm_global_package_dir_uses_windows_node_modules_root() {
+        let package_dir = npm_global_package_dir(
+            Path::new(r"C:\prefix"),
+            "@scope/http-server@14.1.1",
+            "x86_64-pc-windows-msvc",
+        );
+        assert_eq!(
+            package_dir,
+            PathBuf::from(r"C:\prefix/node_modules/@scope/http-server")
+        );
+    }
+
+    #[test]
+    fn npm_recipe_uses_windows_metadata_layout_for_idempotency_checks() {
+        let managed_dir = Path::new(r"C:\managed");
+        let recipe = build_npm_global_recipe(
+            NodePackageManager::Npm,
+            "http-server@14.1.1".to_string(),
+            "http-server",
+            "x86_64-pc-windows-msvc",
+            managed_dir,
+        )
+        .expect("build npm recipe");
+
+        assert_eq!(
+            recipe.binary_path,
+            PathBuf::from(r"C:\managed/http-server.cmd")
+        );
+        assert_eq!(
+            recipe.package_search_root,
+            Some(PathBuf::from(r"C:\managed/node_modules"))
+        );
+        assert_eq!(
+            recipe.fallback_package_dir,
+            Some(PathBuf::from(r"C:\managed/node_modules/http-server"))
         );
     }
 
