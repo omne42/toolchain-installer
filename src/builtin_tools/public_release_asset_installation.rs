@@ -17,7 +17,7 @@ use crate::download_sources::{
 use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::gateway_candidate_for_git_release_asset;
 use crate::github_release_metadata::{
-    build_github_http_client, fetch_latest_release_metadata, is_github_release_asset_url,
+    fetch_latest_release_metadata,
 };
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 pub(crate) async fn install_gh_from_public_release(
@@ -47,15 +47,11 @@ pub(crate) async fn install_gh_from_public_release(
         &cfg.download_sources.mirror_prefixes,
         None,
     );
-    let github_client = is_github_release_asset_url(&asset.browser_download_url)
-        .then(|| build_github_http_client(cfg))
-        .transpose()?;
-    let download_client = github_client.as_ref().unwrap_or(client);
     let archive_binary_hint = target_triple
         .contains("windows")
         .then(|| format!("bin/gh{binary_ext}"));
     let downloaded = download_and_install_binary_from_archive(
-        download_client,
+        client,
         &candidates,
         &BinaryArchiveInstallRequest {
             canonical_url: &asset.browser_download_url,
@@ -98,13 +94,9 @@ pub(crate) async fn install_git_from_public_release(
         OperationError::download("missing sha256 digest in git-for-windows release metadata")
     })?;
     let gateway = gateway_candidate_for_git_release_asset(cfg, &release.tag_name, &asset.name);
-    let github_client = is_github_release_asset_url(&asset.browser_download_url)
-        .then(|| build_github_http_client(cfg))
-        .transpose()?;
-    let download_client = github_client.as_ref().unwrap_or(client);
     if target_triple.contains("windows") {
         return download_and_install_mingit_bundle(MingitBundleInstallRequest {
-            client: download_client,
+            client,
             canonical_url: &asset.browser_download_url,
             asset_name: &asset.name,
             mirror_prefixes: &cfg.download_sources.mirror_prefixes,
@@ -122,7 +114,7 @@ pub(crate) async fn install_git_from_public_release(
         gateway.as_deref(),
     );
     let downloaded = download_and_install_binary_from_archive(
-        download_client,
+        client,
         &candidates,
         &BinaryArchiveInstallRequest {
             canonical_url: &asset.browser_download_url,
