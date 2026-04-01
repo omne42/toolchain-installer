@@ -168,9 +168,10 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv`、`uv_python`、`uv_tool` 只有在已有托管 `uv` 通过 `--version` 健康检查后才会直接复用；若托管 `uv` 文件存在但健康检查失败，会先自愈重装再继续执行。
 - `uv` 方法始终保证结果落到 `managed_dir/uv[.exe]`；即使宿主机已装了健康的 `uv`，它也不会把宿主二进制直接当成 `uv` item 的安装结果。
 - `uv_python`、`uv_tool` 在缺少健康托管 `uv` 时，会先按顺序尝试复用健康 host `uv`、再尝试用宿主 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举一个可复用 `uv`；只有这些本地可复用路径都失败后，才会回退到 GitHub public release 下载独立 `uv` 二进制。
-- `uv_python` 只有在 `managed_dir` 下实际发现匹配版本的 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0` 不构成成功条件。
+- `uv_python` 只有在 `managed_dir` 下实际发现“本次新建或更新”的匹配版本 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0`，或目录里本来就残留着匹配版本旧解释器，都不构成成功条件。
 - `uv_python` 的版本匹配按版本段比较：请求 `3` 可以接受托管目录里的任意 `3.x.y`，请求 `3.13` 可以接受 `3.13.x`，但请求 `3.13.1` 不会误接受 `3.13.12`。
 - `uv_python` 当请求 `3` 或 `3.13` 这类 family selector 时，会在所有匹配的托管解释器里选择版本最高的那个，不会因为目录字典序或旧安装残留而回退到更老的 patch 版本。
+- `uv`、`uv_python`、`uv_tool` 的托管 `uv` 子进程执行都会带固定超时，并对 stdout/stderr 做有界捕获；installer 不会因为挂起进程或无限输出把自身卡死或无限占用内存。
 - `uv_tool` 若目标路径上已有同名旧二进制，installer 会先把旧文件挪到临时备份；只有本次 `uv tool install` 真正产出新的目标二进制，且该入口还能通过一次带超时上限的 `--version` 健康探测后才算成功，失败时会恢复旧文件。
 
 ## 来源探测与回退
