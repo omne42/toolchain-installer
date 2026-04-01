@@ -4307,6 +4307,67 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
+async fn execute_uv_python_item_accepts_updated_existing_interpreter() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.1"
+"#,
+    )?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  cat > "$UV_PYTHON_BIN_DIR/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$UV_PYTHON_BIN_DIR/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13".to_string(),
+        version: "3.13".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await?;
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(
+            managed_dir
+                .join("python3.13")
+                .display()
+                .to_string()
+                .as_str()
+        )
+    );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
 async fn execute_uv_python_item_requires_exact_patch_match() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
@@ -4372,6 +4433,59 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
+async fn execute_uv_python_item_rejects_stale_matching_interpreter_when_install_creates_nothing()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+    )?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  mkdir -p "$UV_PYTHON_INSTALL_DIR"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13.12".to_string(),
+        version: "3.13.12".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await
+    .expect_err("stale interpreter should not satisfy install");
+    assert_eq!(err.exit_code(), ExitCode::Install);
+    assert!(err.detail().contains(
+        "no newly created or updated managed Python executable matching `3.13.12` was found"
+    ));
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
 async fn execute_uv_python_item_fails_when_no_matching_interpreter_is_created() -> anyhow::Result<()>
 {
     let tmp = tempfile::tempdir()?;
@@ -4411,10 +4525,9 @@ exit 2
     .await
     .expect_err("missing interpreter should fail");
     assert_eq!(err.exit_code(), ExitCode::Install);
-    assert!(
-        err.detail()
-            .contains("no managed Python executable matching `3.13.12` was found")
-    );
+    assert!(err.detail().contains(
+        "no newly created or updated managed Python executable matching `3.13.12` was found"
+    ));
     Ok(())
 }
 
