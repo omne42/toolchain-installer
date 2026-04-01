@@ -264,6 +264,106 @@ fn npm_global_option_like_package_returns_usage_error() {
 }
 
 #[test]
+fn workspace_package_option_like_package_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "workspace_package",
+            "--id",
+            "workspace-demo",
+            "--package=--workspace",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("does not allow `package` to look like a command-line option"));
+}
+
+#[test]
+fn cargo_install_option_like_package_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "cargo_install",
+            "--id",
+            "cargo-demo",
+            "--package=--git",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("does not allow `package` to look like a command-line option"));
+}
+
+#[test]
+fn go_install_option_like_package_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "go_install",
+            "--id",
+            "go-demo",
+            "--package=--mod",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("does not allow `package` to look like a command-line option"));
+}
+
+#[test]
+fn rustup_component_option_like_package_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "rustup_component",
+            "--id",
+            "rustfmt-demo",
+            "--package=--toolchain",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("does not allow `package` to look like a command-line option"));
+}
+
+#[test]
+fn uv_tool_option_like_package_returns_usage_error() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "uv_tool",
+            "--id",
+            "uv-demo",
+            "--package=--index-url",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("does not allow `package` to look like a command-line option"));
+}
+
+#[test]
 fn strict_mode_unknown_method_still_returns_usage_exit_code() {
     let mut cmd = bootstrap_cmd();
     cmd.args([

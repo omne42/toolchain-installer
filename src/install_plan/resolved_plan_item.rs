@@ -55,17 +55,17 @@ pub(crate) fn resolve_plan_item(
         }
         PlanMethod::SystemPackage => resolve_system_package_plan_item(item, id),
         PlanMethod::Apt => resolve_apt_plan_item(item, id),
-        PlanMethod::Pip => resolve_pip_plan_item(item, id, plan_base_dir),
-        PlanMethod::NpmGlobal => resolve_npm_global_plan_item(item, id, plan_base_dir),
+        PlanMethod::Pip => resolve_pip_plan_item(item, id, host_triple, plan_base_dir),
+        PlanMethod::NpmGlobal => resolve_npm_global_plan_item(item, id, host_triple, plan_base_dir),
         PlanMethod::WorkspacePackage => {
             resolve_workspace_package_plan_item(item, id, host_triple, target_triple, plan_base_dir)
         }
         PlanMethod::CargoInstall => {
-            resolve_cargo_install_plan_item(item, id, target_triple, plan_base_dir)
+            resolve_cargo_install_plan_item(item, id, host_triple, target_triple, plan_base_dir)
         }
         PlanMethod::RustupComponent => resolve_rustup_component_plan_item(item, id),
         PlanMethod::GoInstall => {
-            resolve_go_install_plan_item(item, id, target_triple, plan_base_dir)
+            resolve_go_install_plan_item(item, id, host_triple, target_triple, plan_base_dir)
         }
         PlanMethod::ManagedToolchain(method) => {
             resolve_managed_toolchain_plan_item(item, id, target_triple, method)
@@ -209,6 +209,7 @@ fn resolve_apt_plan_item(item: &InstallPlanItem, id: String) -> InstallerResult<
 fn resolve_pip_plan_item(
     item: &InstallPlanItem,
     id: String,
+    host_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
@@ -229,6 +230,7 @@ fn resolve_pip_plan_item(
             item.package.as_deref().unwrap_or_default(),
             "pip",
             item.id.as_str(),
+            Some(host_triple),
             plan_base_dir,
         )?,
         python: optional_trimmed_owned(item.python.as_deref()),
@@ -238,6 +240,7 @@ fn resolve_pip_plan_item(
 fn resolve_npm_global_plan_item(
     item: &InstallPlanItem,
     id: String,
+    host_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
     reject_disallowed_fields(
@@ -254,6 +257,7 @@ fn resolve_npm_global_plan_item(
         item.package.as_deref().unwrap_or_default(),
         "npm_global",
         item.id.as_str(),
+        Some(host_triple),
         plan_base_dir,
     )?;
     let version = optional_trimmed(item.version.as_deref());
@@ -286,9 +290,9 @@ fn resolve_workspace_package_plan_item(
             ("python", item.python.as_deref()),
         ],
     )?;
-    let package = require_non_empty(
+    let package = require_host_package_input(
         item.package.as_deref().unwrap_or_default(),
-        "package",
+        "workspace_package",
         item.id.as_str(),
     )?;
     Ok(ResolvedPlanItem::WorkspacePackage(
@@ -310,6 +314,7 @@ fn resolve_workspace_package_plan_item(
 fn resolve_cargo_install_plan_item(
     item: &InstallPlanItem,
     id: String,
+    host_triple: &str,
     target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
@@ -324,13 +329,13 @@ fn resolve_cargo_install_plan_item(
             ("python", item.python.as_deref()),
         ],
     )?;
-    let package = require_non_empty(
+    let package = require_host_package_input(
         item.package.as_deref().unwrap_or_default(),
-        "package",
+        "cargo_install",
         item.id.as_str(),
     )?;
     let version = optional_trimmed(item.version.as_deref());
-    let source = resolve_cargo_install_source(&package, version, plan_base_dir);
+    let source = resolve_cargo_install_source(&package, version, plan_base_dir, host_triple, &id)?;
     let binary_name_explicit = optional_trimmed(item.binary_name.as_deref()).is_some();
     Ok(ResolvedPlanItem::CargoInstall(CargoInstallPlanItem {
         binary_name: parse_optional_binary_name(&id, item.binary_name.as_deref())?
@@ -361,9 +366,9 @@ fn resolve_rustup_component_plan_item(
     let binary_name = parse_optional_binary_name(&id, item.binary_name.as_deref())?;
     Ok(ResolvedPlanItem::RustupComponent(RustupComponentPlanItem {
         id,
-        component: require_non_empty(
+        component: require_host_package_input(
             item.package.as_deref().unwrap_or_default(),
-            "package",
+            "rustup_component",
             item.id.as_str(),
         )?,
         binary_name,
@@ -373,6 +378,7 @@ fn resolve_rustup_component_plan_item(
 fn resolve_go_install_plan_item(
     item: &InstallPlanItem,
     id: String,
+    host_triple: &str,
     target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<ResolvedPlanItem> {
@@ -387,12 +393,13 @@ fn resolve_go_install_plan_item(
             ("python", item.python.as_deref()),
         ],
     )?;
-    let package = require_non_empty(
+    let package = require_host_package_input(
         item.package.as_deref().unwrap_or_default(),
-        "package",
+        "go_install",
         item.id.as_str(),
     )?;
     let source = if looks_like_explicit_go_local_path(&package) {
+        reject_non_native_windows_local_path(&package, host_triple, &id, "go_install")?;
         GoInstallSource::LocalPath(resolve_plan_relative_path(
             Path::new(&package),
             plan_base_dir,
@@ -470,9 +477,9 @@ fn resolve_managed_toolchain_plan_item(
             )?;
             let binary_name_explicit = optional_trimmed(item.binary_name.as_deref()).is_some();
             Ok(ResolvedPlanItem::UvTool(UvToolPlanItem {
-                package: require_non_empty(
+                package: require_host_package_input(
                     item.package.as_deref().unwrap_or_default(),
-                    "package",
+                    "uv_tool",
                     item.id.as_str(),
                 )?,
                 python: optional_trimmed_owned(item.python.as_deref()),
@@ -522,17 +529,20 @@ fn resolve_cargo_install_source(
     package: &str,
     version: Option<&str>,
     plan_base_dir: Option<&Path>,
-) -> CargoInstallSource {
+    host_triple: &str,
+    item_id: &str,
+) -> InstallerResult<CargoInstallSource> {
     if looks_like_explicit_cargo_local_path(package) {
-        return CargoInstallSource::LocalPath(resolve_plan_relative_path(
+        reject_non_native_windows_local_path(package, host_triple, item_id, "cargo_install")?;
+        return Ok(CargoInstallSource::LocalPath(resolve_plan_relative_path(
             Path::new(package),
             plan_base_dir,
-        ));
+        )));
     }
-    CargoInstallSource::RegistryPackage {
+    Ok(CargoInstallSource::RegistryPackage {
         package: package.to_string(),
         version: version.map(ToString::to_string),
-    }
+    })
 }
 
 fn looks_like_explicit_cargo_local_path(package: &str) -> bool {
@@ -799,13 +809,25 @@ fn resolve_host_package_input(
     raw_package: &str,
     method: &str,
     item_id: &str,
+    host_triple: Option<&str>,
     plan_base_dir: Option<&Path>,
+) -> InstallerResult<String> {
+    let package = require_host_package_input(raw_package, method, item_id)?;
+    Ok(
+        resolve_host_package_local_path(&package, plan_base_dir, host_triple, item_id, method)?
+            .unwrap_or(package)
+            .to_string(),
+    )
+}
+
+fn require_host_package_input(
+    raw_package: &str,
+    method: &str,
+    item_id: &str,
 ) -> InstallerResult<String> {
     let package = require_non_empty(raw_package, "package", item_id)?;
     reject_option_like_host_package(item_id, method, &package)?;
-    Ok(resolve_host_package_local_path(&package, plan_base_dir)
-        .unwrap_or(package)
-        .to_string())
+    Ok(package)
 }
 
 fn reject_option_like_host_package(
@@ -821,19 +843,31 @@ fn reject_option_like_host_package(
     Ok(())
 }
 
-fn resolve_host_package_local_path(package: &str, plan_base_dir: Option<&Path>) -> Option<String> {
+fn resolve_host_package_local_path(
+    package: &str,
+    plan_base_dir: Option<&Path>,
+    host_triple: Option<&str>,
+    item_id: &str,
+    method: &str,
+) -> InstallerResult<Option<String>> {
     if let Some(local_path) = package
         .strip_prefix("file:")
         .filter(|value| !value.trim().is_empty() && !value.starts_with("//"))
     {
+        if let Some(host_triple) = host_triple {
+            reject_non_native_windows_local_path(local_path, host_triple, item_id, method)?;
+        }
         let resolved = resolve_plan_relative_path(Path::new(local_path), plan_base_dir);
-        return Some(resolved.display().to_string());
+        return Ok(Some(resolved.display().to_string()));
     }
     if looks_like_explicit_host_local_path(package) {
+        if let Some(host_triple) = host_triple {
+            reject_non_native_windows_local_path(package, host_triple, item_id, method)?;
+        }
         let resolved = resolve_plan_relative_path(Path::new(package), plan_base_dir);
-        return Some(resolved.display().to_string());
+        return Ok(Some(resolved.display().to_string()));
     }
-    None
+    Ok(None)
 }
 
 fn looks_like_explicit_host_local_path(package: &str) -> bool {
@@ -858,6 +892,23 @@ fn looks_like_explicit_host_local_path(package: &str) -> bool {
         || package.starts_with('\\')
         || looks_like_windows_drive_path(package)
         || (package.contains(['/', '\\']) && !package.starts_with('@'))
+}
+
+fn reject_non_native_windows_local_path(
+    raw_path: &str,
+    host_triple: &str,
+    item_id: &str,
+    method: &str,
+) -> InstallerResult<()> {
+    if host_triple.contains("windows") {
+        return Ok(());
+    }
+    if looks_like_windows_drive_path(raw_path) || raw_path.starts_with('\\') {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `{method}` uses Windows-local path syntax `{raw_path}` but host triple `{host_triple}` does not use Windows path semantics"
+        )));
+    }
+    Ok(())
 }
 
 fn source_spec_leaf_name(package: &str) -> Option<String> {
@@ -1178,6 +1229,32 @@ mod tests {
     }
 
     #[test]
+    fn resolve_workspace_package_rejects_option_like_package_input() {
+        let item = InstallPlanItem {
+            id: "workspace-demo".to_string(),
+            method: "workspace_package".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("apps/demo".to_string()),
+            package: Some("--workspace".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect_err("option-like workspace package should be rejected");
+        assert!(err.to_string().contains("look like a command-line option"));
+    }
+
+    #[test]
     fn resolve_npm_global_uses_plan_base_dir_for_relative_local_path() {
         let plan_base = Path::new("/repo/plans");
         let item = InstallPlanItem {
@@ -1250,6 +1327,58 @@ mod tests {
     }
 
     #[test]
+    fn resolve_cargo_install_rejects_option_like_package_input() {
+        let item = InstallPlanItem {
+            id: "cargo-demo".to_string(),
+            method: "cargo_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("--git".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("option-like cargo package should be rejected");
+        assert!(err.to_string().contains("look like a command-line option"));
+    }
+
+    #[test]
+    fn resolve_cargo_install_rejects_windows_absolute_local_path_on_non_windows_host() {
+        let item = InstallPlanItem {
+            id: "cargo-demo".to_string(),
+            method: "cargo_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("C:\\repo\\demo".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect_err("non-windows host should reject windows-local cargo path");
+        assert!(err.to_string().contains("Windows-local path syntax"));
+    }
+
+    #[test]
     fn resolve_go_install_treats_plain_package_name_as_remote_package() {
         let item = InstallPlanItem {
             id: "go-cli".to_string(),
@@ -1281,6 +1410,58 @@ mod tests {
             GoInstallSource::PackageSpec("ripgrep@latest".to_string())
         );
         assert_eq!(item.binary_name, "ripgrep");
+    }
+
+    #[test]
+    fn resolve_go_install_rejects_option_like_package_input() {
+        let item = InstallPlanItem {
+            id: "go-demo".to_string(),
+            method: "go_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("--mod".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("option-like go package should be rejected");
+        assert!(err.to_string().contains("look like a command-line option"));
+    }
+
+    #[test]
+    fn resolve_go_install_rejects_windows_root_relative_local_path_on_non_windows_host() {
+        let item = InstallPlanItem {
+            id: "go-demo".to_string(),
+            method: "go_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("\\repo\\demo".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect_err("non-windows host should reject windows-local go path");
+        assert!(err.to_string().contains("Windows-local path syntax"));
     }
 
     #[test]
@@ -1561,6 +1742,84 @@ mod tests {
             panic!("expected uv_tool plan item");
         };
         assert_eq!(item.binary_name, "ruff");
+    }
+
+    #[test]
+    fn resolve_uv_tool_rejects_option_like_package_input() {
+        let item = InstallPlanItem {
+            id: "lint".to_string(),
+            method: "uv_tool".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("--index-url".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("option-like uv_tool package should be rejected");
+        assert!(err.to_string().contains("look like a command-line option"));
+    }
+
+    #[test]
+    fn resolve_pip_rejects_windows_absolute_file_source_on_non_windows_host() {
+        let item = InstallPlanItem {
+            id: "pip-demo".to_string(),
+            method: "pip".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("file:C:\\repo\\demo".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(Path::new("/repo/plans")),
+        )
+        .expect_err("non-windows host should reject windows-local pip file path");
+        assert!(err.to_string().contains("Windows-local path syntax"));
+    }
+
+    #[test]
+    fn resolve_rustup_component_rejects_option_like_package_input() {
+        let item = InstallPlanItem {
+            id: "rustfmt-demo".to_string(),
+            method: "rustup_component".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("--toolchain".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("option-like rustup component should be rejected");
+        assert!(err.to_string().contains("look like a command-line option"));
     }
 
     #[test]
