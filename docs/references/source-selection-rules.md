@@ -14,7 +14,7 @@
 - `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 可以追加候选前缀。
 - 显式提供的 mirror 前缀会按传入顺序去重，不会按字典序重排。
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES` 可覆盖 release metadata API base；未设置时默认只使用官方 `https://api.github.com`。
-- `country=CN` 且 canonical URL 精确匹配无 query/fragment 的 `https://github.com/git-for-windows/git/releases/download/<tag>/<asset>` 时，可通过 `gateway-base` 走固定网关。
+- `country=CN` 且 canonical URL 的 path 精确匹配 `https://github.com/git-for-windows/git/releases/download/<tag>/<asset>` 时，可通过 `gateway-base` 走固定网关；query/fragment 不参与 gateway 资产推断。
 - `--gateway-base` / `TOOLCHAIN_INSTALLER_GATEWAY_BASE` 与 `--country` / `TOOLCHAIN_INSTALLER_COUNTRY` 共同决定是否生成网关候选。
 - `gateway-base` 指向的是外部网关部署实例，而不是 installer 仓库内建服务。
 - mirror、代理或任意自定义 URL 即使路径里包含 `git-for-windows/git/releases/download` 片段，也不会被误判成网关路由。

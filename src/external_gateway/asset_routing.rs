@@ -13,7 +13,7 @@ pub(crate) fn gateway_candidate_for_git_release_download_url(
 
 fn git_release_asset_from_url(url: &str) -> Option<(String, String)> {
     let parsed = Url::parse(url).ok()?;
-    if parsed.scheme() != "https" || parsed.query().is_some() || parsed.fragment().is_some() {
+    if parsed.scheme() != "https" {
         return None;
     }
     if parsed.host_str()? != "github.com" {
@@ -118,13 +118,13 @@ mod tests {
             git_release_asset_from_url(
                 "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip?download=1"
             ),
-            None
+            Some(("v2.48.1.windows.1".to_string(), "MinGit.zip".to_string()))
         );
         assert_eq!(
             git_release_asset_from_url(
                 "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip#fragment"
             ),
-            None
+            Some(("v2.48.1.windows.1".to_string(), "MinGit.zip".to_string()))
         );
     }
 
