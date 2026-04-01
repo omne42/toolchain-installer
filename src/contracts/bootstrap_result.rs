@@ -1,4 +1,4 @@
-use omne_archive_primitives::{ArchiveBinaryMatch, BinaryArchiveFormat};
+use omne_artifact_install_primitives::{BinaryArchiveFormat, BinaryArchiveMatch};
 use serde::Serialize;
 
 use crate::error::ExitCode;
@@ -56,8 +56,8 @@ pub struct BootstrapArchiveMatch {
     pub path: String,
 }
 
-impl From<ArchiveBinaryMatch> for BootstrapArchiveMatch {
-    fn from(value: ArchiveBinaryMatch) -> Self {
+impl From<BinaryArchiveMatch> for BootstrapArchiveMatch {
+    fn from(value: BinaryArchiveMatch) -> Self {
         Self {
             format: value.archive_format.into(),
             path: value.archive_path,
@@ -116,5 +116,27 @@ pub(crate) fn build_failed_bootstrap_item(
         detail: Some(detail.into()),
         error_code: Some(error_code.into()),
         failure_code: Some(failure_code),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BootstrapArchiveFormat, BootstrapArchiveMatch};
+    use omne_artifact_install_primitives::{BinaryArchiveFormat, BinaryArchiveMatch};
+
+    #[test]
+    fn bootstrap_archive_match_maps_binary_archive_match() {
+        let matched = BootstrapArchiveMatch::from(BinaryArchiveMatch {
+            archive_format: BinaryArchiveFormat::TarGz,
+            archive_path: "dist/bin/tool".to_string(),
+        });
+
+        assert_eq!(
+            matched,
+            BootstrapArchiveMatch {
+                format: BootstrapArchiveFormat::TarGz,
+                path: "dist/bin/tool".to_string(),
+            }
+        );
     }
 }
