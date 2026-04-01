@@ -17,6 +17,7 @@
   - 未知值会在参数校验阶段直接返回 usage error，而不是继续把任意字符串带进执行链路。
 - `--managed-dir <path>`
   - 安装输出目录；未指定时默认使用 `~/.omne_data/toolchain/<target>/bin`。
+  - 传给 `npm` / `pnpm` / `bun` / `cargo` / `go` / `uv` 这类宿主命令时，会保留宿主机原生路径字节；Unix 下的非 UTF-8 路径不会在 argv/env 拼装阶段被提前改写。
 - `--mirror-prefix <prefix>`
   - 追加 release 下载候选前缀。
 - `--package-index <url>`
