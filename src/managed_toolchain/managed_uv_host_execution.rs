@@ -1,11 +1,13 @@
 use std::ffi::{OsStr, OsString};
-use std::io::Read;
-use std::process::{Command, Output, Stdio};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::process::Output;
+use std::time::Duration;
+
+use omne_process_primitives::{
+    HostCommandError, HostCommandRunOptions, HostCommandSudoMode, HostRecipeError,
+    HostRecipeRequest, run_host_recipe_with_options,
+};
 
 const MANAGED_UV_RECIPE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-const MANAGED_UV_RECIPE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MANAGED_UV_RECIPE_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) fn run_managed_uv_recipe(
@@ -32,110 +34,55 @@ fn run_managed_uv_recipe_with_limits(
     timeout: Duration,
     output_limit: usize,
 ) -> Result<Output, String> {
-    let mut command = Command::new(program);
-    command.args(args);
-    for name in inherited_uv_environment_names() {
-        command.env_remove(name);
-    }
-    for (name, value) in env {
-        command.env(name, value);
-    }
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let removed_env = inherited_uv_environment_names();
+    let request = HostRecipeRequest::new(program, args)
+        .with_env(env)
+        .with_sudo_mode(HostCommandSudoMode::Never);
+    let options = HostCommandRunOptions::new()
+        .with_env_remove(&removed_env)
+        .with_timeout(timeout);
 
-    let program = command.get_program().to_string_lossy().into_owned();
-    let mut child = command
-        .spawn()
-        .map_err(|err| format!("run {program} failed: {err}"))?;
-    let stdout = spawn_stream_capture(child.stdout.take(), output_limit);
-    let stderr = spawn_stream_capture(child.stderr.take(), output_limit);
-    let deadline = Instant::now() + timeout;
-
-    let (status, stdout, stderr) = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let stdout = finish_stream_capture(stdout)?;
-                let stderr = finish_stream_capture(stderr)?;
-                break (status, stdout, stderr);
-            }
-            Ok(None) if Instant::now() < deadline => thread::sleep(MANAGED_UV_RECIPE_POLL_INTERVAL),
-            Ok(None) => {
-                let _ = child.kill();
-                let status = child
-                    .wait()
-                    .map_err(|err| format!("run {program} timed out and wait failed: {err}"))?;
-                let stdout = finish_stream_capture(stdout)?;
-                let stderr = finish_stream_capture(stderr)?;
-                return Err(format!(
-                    "run {program} timed out after {}s: status={} stderr={} stdout={}",
-                    timeout.as_secs(),
-                    status,
-                    render_captured_stream(&stderr),
-                    render_captured_stream(&stdout),
-                ));
-            }
-            Err(err) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = finish_stream_capture(stdout);
-                let _ = finish_stream_capture(stderr);
-                return Err(format!("run {program} failed while waiting: {err}"));
-            }
+    match run_host_recipe_with_options(&request, options) {
+        Ok(output) => Ok(output.output),
+        Err(HostRecipeError::NonZeroExit {
+            program, output, ..
+        }) => Err(format!(
+            "run {} failed: status={} stderr={} stdout={}",
+            program.to_string_lossy(),
+            output.status,
+            render_captured_bytes(&output.stderr, output_limit),
+            render_captured_bytes(&output.stdout, output_limit),
+        )),
+        Err(HostRecipeError::Command(err)) => {
+            Err(render_managed_uv_command_error(err, output_limit))
         }
-    };
-    if status.success() {
-        return Ok(Output {
-            status,
-            stdout: stdout.bytes,
-            stderr: stderr.bytes,
-        });
-    }
-
-    Err(format!(
-        "run {program} failed: status={} stderr={} stdout={}",
-        status,
-        render_captured_stream(&stderr),
-        render_captured_stream(&stdout),
-    ))
-}
-
-fn spawn_stream_capture(
-    handle: Option<impl Read + Send + 'static>,
-    output_limit: usize,
-) -> Option<JoinHandle<CapturedStream>> {
-    handle.map(|mut handle| {
-        thread::spawn(move || {
-            let mut capture = CapturedStream::new(output_limit);
-            let mut chunk = [0u8; 8192];
-            loop {
-                match handle.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(read) => capture.push(&chunk[..read]),
-                    Err(_) => break,
-                }
-            }
-            capture
-        })
-    })
-}
-
-fn finish_stream_capture(
-    handle: Option<JoinHandle<CapturedStream>>,
-) -> Result<CapturedStream, String> {
-    match handle {
-        Some(handle) => handle
-            .join()
-            .map_err(|_| "managed uv output capture thread panicked".to_string()),
-        None => Ok(CapturedStream::new(0)),
     }
 }
 
-fn render_captured_stream(stream: &CapturedStream) -> String {
-    let mut rendered = String::from_utf8_lossy(&stream.bytes).into_owned();
-    if stream.truncated {
-        rendered.push_str(&format!(" [truncated after {} bytes]", stream.output_limit));
+fn render_managed_uv_command_error(err: HostCommandError, output_limit: usize) -> String {
+    match err {
+        HostCommandError::TimedOut {
+            program,
+            timeout,
+            output,
+            ..
+        } => format!(
+            "run {} timed out after {}s: status={} stderr={} stdout={}",
+            program.to_string_lossy(),
+            timeout.as_secs(),
+            output.status,
+            render_captured_bytes(&output.stderr, output_limit),
+            render_captured_bytes(&output.stdout, output_limit),
+        ),
+        other => other.to_string(),
+    }
+}
+
+fn render_captured_bytes(bytes: &[u8], output_limit: usize) -> String {
+    let retained = bytes.len().min(output_limit);
+    let mut rendered = String::from_utf8_lossy(&bytes[..retained]).into_owned();
+    if bytes.len() > output_limit {
+        rendered.push_str(&format!(" [truncated after {} bytes]", output_limit));
     }
     rendered
 }
@@ -148,37 +95,6 @@ fn inherited_uv_environment_names() -> Vec<OsString> {
                 .then_some(name)
         })
         .collect()
-}
-
-struct CapturedStream {
-    bytes: Vec<u8>,
-    output_limit: usize,
-    truncated: bool,
-}
-
-impl CapturedStream {
-    fn new(output_limit: usize) -> Self {
-        Self {
-            bytes: Vec::new(),
-            output_limit,
-            truncated: false,
-        }
-    }
-
-    fn push(&mut self, bytes: &[u8]) {
-        let retained = self.bytes.len();
-        if retained < self.output_limit {
-            let remaining = self.output_limit - retained;
-            let to_copy = remaining.min(bytes.len());
-            self.bytes.extend_from_slice(&bytes[..to_copy]);
-        }
-        if bytes.len() > self.output_limit.saturating_sub(retained) {
-            self.truncated = true;
-        }
-        if self.bytes.len() > self.output_limit {
-            self.bytes.truncate(self.output_limit);
-        }
-    }
 }
 
 #[cfg(test)]
