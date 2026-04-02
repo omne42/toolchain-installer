@@ -22,7 +22,8 @@ CI 另外会在 GitHub-hosted Linux、macOS、Windows runner 上调用 `scripts/
 - Windows 上的 `bootstrap --tool git`
 - `plan.method=release`
 - `plan.method=system_package`
-- Ubuntu 上的 `plan.method=system_package`（必要时显式 `manager=apt-get`）
+- Ubuntu 上的 `plan.method=system_package|apt`
+  - 需要验证自动 manager 选择时用 `system_package`；需要固定 canonical `apt-get` 时用 `apt` 或 `system_package + manager=apt-get`。
 - `plan.method=pip`
 - `plan.method=uv`
 - `plan.method=uv_python`

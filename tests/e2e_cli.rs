@@ -2336,7 +2336,7 @@ fn conflicting_nested_plan_destinations_return_usage_exit_code() {
 }
 
 #[test]
-fn apt_method_is_rejected_as_unsupported_method() {
+fn apt_method_rejects_non_apt_manager() {
     let mut cmd = bootstrap_cmd();
     cmd.args([
         "--method",
