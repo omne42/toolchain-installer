@@ -205,7 +205,10 @@ mod tests {
     #[test]
     fn release_archive_binary_hint_prefixes_archive_root_for_leaf_hint() {
         assert_eq!(
-            release_archive_binary_hint("ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz", Some("rg")),
+            release_archive_binary_hint(
+                "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz",
+                Some("rg")
+            ),
             Some("ripgrep-15.1.0-x86_64-unknown-linux-musl/rg".to_string())
         );
     }
