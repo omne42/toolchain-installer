@@ -274,33 +274,13 @@ fn bun_install_layout(managed_dir: &Path) -> OperationResult<BunInstallLayout> {
 
 fn resolve_npm_global_destination(
     binary_path: &Path,
-    package: &str,
+    _package: &str,
     binary_name: &str,
-    fallback_package_dir: Option<&Path>,
-    package_search_root: Option<&Path>,
-    fallback_search_root: Option<&Path>,
+    _fallback_package_dir: Option<&Path>,
+    _package_search_root: Option<&Path>,
+    _fallback_search_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    if let Some(destination) = find_binary_at_path(binary_path, binary_name) {
-        return Some(destination);
-    }
-
-    for package_dir in
-        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
-    {
-        if let Some(destination) = resolve_package_bin_script(&package_dir, package, binary_name)
-            .filter(|path| command_path_exists(path))
-        {
-            return Some(destination);
-        }
-    }
-
-    if let Some(destination) =
-        fallback_search_root.and_then(|root| find_named_binary_under_dir(root, binary_name))
-    {
-        return Some(destination);
-    }
-
-    None
+    find_binary_at_path(binary_path, binary_name)
 }
 
 fn capture_installation_state(
@@ -399,10 +379,8 @@ fn managed_package_matches_request(
             return true;
         }
     }
-
-    fallback_search_root
-        .and_then(|root| find_named_binary_under_dir(root, binary_name))
-        .is_some()
+    let _ = fallback_search_root;
+    false
 }
 
 fn resolve_installed_package_dirs(
@@ -778,12 +756,6 @@ fn node_package_spec_is_local_path(package: &str) -> bool {
 fn looks_like_windows_drive_path(package: &str) -> bool {
     let bytes = package.as_bytes();
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
-}
-
-fn find_named_binary_under_dir(root: &Path, binary_name: &str) -> Option<PathBuf> {
-    find_matching_binary_paths_under_dir(root, binary_name)
-        .into_iter()
-        .find(|path| command_path_exists(path))
 }
 
 fn find_package_dirs_under_root(root: &Path, package_name: Option<&str>) -> Vec<PathBuf> {

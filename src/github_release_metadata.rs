@@ -18,7 +18,8 @@ pub(crate) async fn fetch_latest_release_metadata(
         repo,
         GitHubApiRequestOptions::new()
             .with_user_agent("toolchain-installer")
-            .with_bearer_token(cfg.github_releases.token.as_deref()),
+            .with_bearer_token(cfg.github_releases.token.as_deref())
+            .with_allow_custom_bearer_api_base(true),
     )
     .await
     .map_err(|err| OperationError::download(err.to_string()))

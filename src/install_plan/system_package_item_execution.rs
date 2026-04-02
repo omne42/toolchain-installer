@@ -27,12 +27,7 @@ pub(crate) fn execute_system_package_item(
                 platform.operating_system().as_str(),
                 &package,
             )
-            .map_err(|err| {
-                OperationError::install(format!(
-                    "no available package manager recipe for `{}`: {err}",
-                    item.package
-                ))
-            })?,
+            .map_err(|err| OperationError::install(err.to_string()))?,
             None => Vec::new(),
         },
     };

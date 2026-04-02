@@ -897,12 +897,11 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
     let payload = managed_dir
         .join("git-portable")
         .join("PortableGit")
-        .join("mingw64")
-        .join("bin");
+        .join("cmd");
     std::fs::create_dir_all(&payload).expect("create payload dir");
     std::fs::write(
         &destination,
-        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\mingw64\\bin\\git.exe\" %*\r\n",
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
     )
     .expect("write launcher");
     std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
@@ -1976,7 +1975,7 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow::Result<()> {
+async fn install_uv_from_mock_windows_zip_accepts_rootless_archive_binary() -> anyhow::Result<()> {
     let archive_name = "uv-x86_64-pc-windows-msvc.zip";
     let archive_bytes = make_zip_archive(&[("uv.exe", b"mock-windows-uv".as_slice(), 0o755)])?;
     let digest = sha256_hex(&archive_bytes);
@@ -2020,20 +2019,16 @@ async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow:
     let tmp = tempfile::tempdir()?;
     let destination = tmp.path().join("uv.exe");
 
-    let source =
+    let installed =
         install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
             .await?;
-    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
-    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
-    assert_eq!(
-        source
+    assert_eq!(std::fs::read(&destination)?, b"mock-windows-uv");
+    assert!(
+        installed
             .archive_match
             .as_ref()
-            .map(|matched| (matched.format, matched.path.as_str())),
-        Some((BootstrapArchiveFormat::Zip, "uv.exe"))
+            .is_some_and(|matched| matched.path == "uv.exe")
     );
-    let installed = std::fs::read(&destination)?;
-    assert_eq!(installed, b"mock-windows-uv");
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2413,7 +2408,7 @@ async fn apply_install_plan_installs_archive_release_with_relative_archive_binar
             version: None,
             url: Some(format!("{base}/asset/{archive_name}")),
             sha256: None,
-            archive_binary: Some("bin/node".to_string()),
+            archive_binary: Some("node-v22.14.0-linux-x64/bin/node".to_string()),
             binary_name: Some("node".to_string()),
             destination: Some("node".to_string()),
             package: None,
@@ -2498,18 +2493,21 @@ async fn apply_install_plan_redacts_archive_tree_release_source_url_in_result() 
 }
 
 #[tokio::test]
-async fn apply_install_plan_installs_archive_release_with_unrooted_archive_binary_fallback()
+async fn apply_install_plan_installs_archive_release_with_leaf_archive_binary_hint()
 -> anyhow::Result<()> {
     let archive_name = "7z2600-linux-x64.tar.xz";
-    let archive_bytes =
-        make_tar_xz_archive(&[("7zz", b"#!/bin/sh\necho root-7zz\n".as_slice(), 0o755)])?;
+    let archive_bytes = make_tar_xz_archive(&[(
+        "7z2600-linux-x64/7zz",
+        b"#!/bin/sh\necho 7zip-leaf-hint\n".as_slice(),
+        0o755,
+    )])?;
 
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let addr = listener.local_addr()?;
     let base = format!("http://{addr}");
     let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-    routes.insert(format!("/asset/{archive_name}"), archive_bytes.clone());
-    let handle = spawn_mock_http_server(listener, routes, 2);
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
 
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
@@ -2541,10 +2539,63 @@ async fn apply_install_plan_installs_archive_release_with_unrooted_archive_binar
             .archive_match
             .as_ref()
             .map(|matched| (matched.format, matched.path.as_str())),
-        Some((BootstrapArchiveFormat::TarXz, "7zz"))
+        Some((BootstrapArchiveFormat::TarXz, "7z2600-linux-x64/7zz"))
     );
     let installed = std::fs::read_to_string(managed_dir.join("7zz"))?;
-    assert!(installed.contains("root-7zz"));
+    assert!(installed.contains("7zip-leaf-hint"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_install_plan_installs_archive_release_with_leaf_archive_binary_hint_in_rootless_archive()
+-> anyhow::Result<()> {
+    let archive_name = "just-1.0.0-x86_64-unknown-linux-musl.tar.gz";
+    let archive_bytes =
+        make_tar_gz_archive(&[("just", b"#!/bin/sh\necho just-rootless\n".as_slice(), 0o755)])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "just-release".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some(format!("{base}/asset/{archive_name}")),
+            sha256: None,
+            archive_binary: Some("just".to_string()),
+            binary_name: Some("just".to_string()),
+            destination: Some("just".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir.clone()),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.items[0]
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::TarGz, "just"))
+    );
+    let installed = std::fs::read_to_string(managed_dir.join("just"))?;
+    assert!(installed.contains("just-rootless"));
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -4307,6 +4358,67 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
+async fn execute_uv_python_item_accepts_updated_existing_interpreter() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.1"
+"#,
+    )?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  cat > "$UV_PYTHON_BIN_DIR/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$UV_PYTHON_BIN_DIR/python3.13"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13".to_string(),
+        version: "3.13".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let result = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await?;
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(
+            managed_dir
+                .join("python3.13")
+                .display()
+                .to_string()
+                .as_str()
+        )
+    );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
 async fn execute_uv_python_item_requires_exact_patch_match() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
@@ -4372,6 +4484,59 @@ exit 2
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
 #[tokio::test]
+async fn execute_uv_python_item_rejects_stale_matching_interpreter_when_install_creates_nothing()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("python3.13"),
+        r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+    )?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  mkdir -p "$UV_PYTHON_INSTALL_DIR"
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13.12".to_string(),
+        version: "3.13.12".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await
+    .expect_err("stale interpreter should not satisfy install");
+    assert_eq!(err.exit_code(), ExitCode::Install);
+    assert!(err.detail().contains(
+        "no newly created or updated managed Python executable matching `3.13.12` was found"
+    ));
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
 async fn execute_uv_python_item_fails_when_no_matching_interpreter_is_created() -> anyhow::Result<()>
 {
     let tmp = tempfile::tempdir()?;
@@ -4411,10 +4576,9 @@ exit 2
     .await
     .expect_err("missing interpreter should fail");
     assert_eq!(err.exit_code(), ExitCode::Install);
-    assert!(
-        err.detail()
-            .contains("no managed Python executable matching `3.13.12` was found")
-    );
+    assert!(err.detail().contains(
+        "no newly created or updated managed Python executable matching `3.13.12` was found"
+    ));
     Ok(())
 }
 
