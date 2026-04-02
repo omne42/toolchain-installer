@@ -2546,6 +2546,59 @@ async fn apply_install_plan_installs_archive_release_with_leaf_archive_binary_hi
 }
 
 #[tokio::test]
+async fn apply_install_plan_installs_archive_release_with_leaf_archive_binary_hint_in_rootless_archive()
+-> anyhow::Result<()> {
+    let archive_name = "just-1.0.0-x86_64-unknown-linux-musl.tar.gz";
+    let archive_bytes =
+        make_tar_gz_archive(&[("just", b"#!/bin/sh\necho just-rootless\n".as_slice(), 0o755)])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "just-release".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some(format!("{base}/asset/{archive_name}")),
+            sha256: None,
+            archive_binary: Some("just".to_string()),
+            binary_name: Some("just".to_string()),
+            destination: Some("just".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        managed_dir: Some(managed_dir.clone()),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.items[0]
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::TarGz, "just"))
+    );
+    let installed = std::fs::read_to_string(managed_dir.join("just"))?;
+    assert!(installed.contains("just-rootless"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
 async fn apply_install_plan_installs_archive_tree_release_when_url_has_query() -> anyhow::Result<()>
 {
     let archive_name = "demo-tree.tar.gz";
