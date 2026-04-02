@@ -342,14 +342,11 @@ pub(crate) fn validate_managed_path_boundary(
     managed_dir: &Path,
     allow_leaf_symlink: bool,
 ) -> Result<(), String> {
-    if !destination.starts_with(managed_dir) {
+    let Some(relative) = managed_relative_path(destination, managed_dir) else {
         return Ok(());
-    }
+    };
 
     reject_symlink_path_component(managed_dir, managed_dir)?;
-    let relative = destination
-        .strip_prefix(managed_dir)
-        .map_err(|err| format!("cannot compute managed-relative destination: {err}"))?;
     let components: Vec<_> = relative.components().collect();
     let mut current = managed_dir.to_path_buf();
     for (index, component) in components.iter().enumerate() {
@@ -361,6 +358,59 @@ pub(crate) fn validate_managed_path_boundary(
         reject_symlink_path_component(&current, managed_dir)?;
     }
     Ok(())
+}
+
+fn managed_relative_path(destination: &Path, managed_dir: &Path) -> Option<PathBuf> {
+    if let Ok(relative) = destination.strip_prefix(managed_dir) {
+        return Some(relative.to_path_buf());
+    }
+    windows_case_folded_relative_path(destination, managed_dir)
+}
+
+fn windows_case_folded_relative_path(destination: &Path, managed_dir: &Path) -> Option<PathBuf> {
+    let destination_raw = destination.as_os_str().to_string_lossy();
+    let managed_raw = managed_dir.as_os_str().to_string_lossy();
+    if !uses_windows_path_semantics(&destination_raw) || !uses_windows_path_semantics(&managed_raw)
+    {
+        return None;
+    }
+
+    let destination_components = split_windows_components(&destination_raw);
+    let managed_components = split_windows_components(&managed_raw);
+    if managed_components.len() > destination_components.len() {
+        return None;
+    }
+    if !destination_components
+        .iter()
+        .zip(managed_components.iter())
+        .all(|(destination_component, managed_component)| {
+            destination_component.eq_ignore_ascii_case(managed_component)
+        })
+    {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for component in destination_components
+        .into_iter()
+        .skip(managed_components.len())
+    {
+        relative.push(component);
+    }
+    Some(relative)
+}
+
+fn uses_windows_path_semantics(raw: &str) -> bool {
+    !matches!(
+        classify_windows_destination(raw),
+        WindowsDestinationKind::NotWindows
+    ) || raw.contains('\\')
+}
+
+fn split_windows_components(raw: &str) -> Vec<&str> {
+    raw.split(['\\', '/'])
+        .filter(|component| !component.is_empty())
+        .collect()
 }
 
 pub(crate) fn normalize_lexical_path(path: &Path) -> PathBuf {
@@ -480,19 +530,16 @@ fn validate_allowed_leaf_symlink(candidate: &Path, managed_dir: &Path) -> Result
     } else {
         normalize_lexical_path(&parent.join(target))
     };
-    if !resolved.starts_with(managed_dir) {
+    let Some(relative) = managed_relative_path(&resolved, managed_dir) else {
         return Err(format!(
             "managed destination under `{}` escapes via symlink leaf `{}` -> `{}`",
             managed_dir.display(),
             candidate.display(),
             resolved.display()
         ));
-    }
+    };
 
     reject_symlink_path_component(managed_dir, managed_dir)?;
-    let relative = resolved
-        .strip_prefix(managed_dir)
-        .map_err(|err| format!("cannot compute managed-relative destination: {err}"))?;
     let mut current = managed_dir.to_path_buf();
     for component in relative.components() {
         current.push(component.as_os_str());
@@ -845,5 +892,55 @@ mod tests {
         )
         .expect_err("escaping leaf symlink should be rejected");
         assert!(err.contains("escapes via symlink leaf"));
+    }
+
+    #[test]
+    fn managed_relative_path_accepts_windows_case_folded_prefix() {
+        let relative = managed_relative_path(
+            Path::new(r"C:\Managed\Bin\Demo.exe"),
+            Path::new(r"c:\managed"),
+        )
+        .expect("case-folded windows prefix should resolve");
+
+        assert_eq!(relative, PathBuf::from("Bin").join("Demo.exe"));
+    }
+
+    #[test]
+    fn managed_relative_path_rejects_non_matching_windows_prefix() {
+        assert_eq!(
+            managed_relative_path(
+                Path::new(r"C:\ManagedTools\Demo.exe"),
+                Path::new(r"c:\managed"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn validate_managed_path_boundary_accepts_windows_case_folded_prefix() {
+        validate_managed_path_boundary(
+            Path::new(r"C:\Managed\Bin\Demo.exe"),
+            Path::new(r"c:\managed"),
+            false,
+        )
+        .expect("case-folded windows managed prefix should stay inside boundary");
+    }
+
+    #[test]
+    fn validate_allowed_leaf_symlink_accepts_windows_case_folded_managed_target() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = tmp.path().join("managed");
+        let candidate = managed_dir.join("bin").join("demo");
+        std::fs::create_dir_all(candidate.parent().expect("parent")).expect("create candidate dir");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(Path::new(r"C:\Managed\Pkgs\Demo.exe"), &candidate)
+            .expect("create symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(Path::new(r"C:\Managed\Pkgs\Demo.exe"), &candidate)
+            .expect("create symlink");
+
+        validate_allowed_leaf_symlink(&candidate, Path::new(r"c:\managed"))
+            .expect("case-folded windows symlink target should stay inside managed dir");
     }
 }
