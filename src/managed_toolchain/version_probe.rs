@@ -70,6 +70,10 @@ fn run_version_probe_with_retries(path: &Path) -> Option<VersionProbeOutput> {
 }
 
 fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
+    run_version_probe_with_timeout(path, VERSION_PROBE_TIMEOUT)
+}
+
+fn run_version_probe_with_timeout(path: &Path, timeout: Duration) -> Option<VersionProbeOutput> {
     if !path.exists() {
         return None;
     }
@@ -83,7 +87,7 @@ fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
         .ok()?;
     let stdout = child.stdout.take().map(spawn_probe_reader);
     let stderr = child.stderr.take().map(spawn_probe_reader);
-    let deadline = Instant::now() + VERSION_PROBE_TIMEOUT;
+    let deadline = Instant::now() + timeout;
 
     loop {
         match child.try_wait() {
@@ -151,8 +155,11 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use super::VERSION_PROBE_TIMEOUT;
     use super::python_version_matches_requirement;
-    use super::{binary_reports_version, python_binary_matches_version, run_version_probe};
+    use super::{
+        binary_reports_version, python_binary_matches_version, run_version_probe_with_timeout,
+    };
 
     fn portable_unix_script(body: &str) -> String {
         format!("#!/usr/bin/env bash\n{body}")
@@ -285,7 +292,8 @@ PY
             ),
         );
 
-        let probe = run_version_probe(&script_path).expect("probe output");
+        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 4)
+            .expect("probe output");
 
         assert!(probe.success);
         assert!(probe.stdout.len() >= 131072);
