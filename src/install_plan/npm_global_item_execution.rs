@@ -389,10 +389,17 @@ fn resolve_installed_package_dirs(
     package_search_root: Option<&Path>,
 ) -> Vec<PathBuf> {
     let mut package_dirs = Vec::new();
-    if let Some(path) = direct_package_dir.filter(|path| path.join("package.json").is_file()) {
-        package_dirs.push(path.to_path_buf());
+    if let Some(path) =
+        direct_package_dir.filter(|path| path_has_no_symlink_components(path, PathKind::Directory))
+    {
+        let manifest_path = path.join("package.json");
+        if path_has_no_symlink_components(&manifest_path, PathKind::File) {
+            package_dirs.push(path.to_path_buf());
+        }
     }
-    if let Some(root) = package_search_root {
+    if let Some(root) =
+        package_search_root.filter(|path| path_has_no_symlink_components(path, PathKind::Directory))
+    {
         package_dirs.extend(find_package_dirs_under_root(
             root,
             package_request_name_constraint(package),
@@ -401,6 +408,108 @@ fn resolve_installed_package_dirs(
     package_dirs.sort();
     package_dirs.dedup();
     package_dirs
+}
+
+#[derive(Clone, Copy)]
+enum PathKind {
+    Directory,
+    File,
+}
+
+fn path_has_no_symlink_components(path: &Path, kind: PathKind) -> bool {
+    let mut current = PathBuf::new();
+    let mut saw_component = false;
+    for component in path.components() {
+        current.push(component.as_os_str());
+        let Ok(metadata) = std::fs::symlink_metadata(&current) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() {
+            return false;
+        }
+        saw_component = true;
+    }
+    if !saw_component {
+        return false;
+    }
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| match kind {
+        PathKind::Directory => metadata.is_dir(),
+        PathKind::File => metadata.is_file(),
+    })
+}
+
+fn manifest_path_is_searchable(path: &Path) -> bool {
+    path_has_no_symlink_components(path, PathKind::File)
+}
+
+fn find_package_dirs_under_root(root: &Path, package_name: Option<&str>) -> Vec<PathBuf> {
+    if !path_has_no_symlink_components(root, PathKind::Directory) {
+        return Vec::new();
+    }
+    let mut stack = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let manifest_path = dir.join("package.json");
+        if manifest_path_is_searchable(&manifest_path) {
+            let matches_name = std::fs::read_to_string(&manifest_path)
+                .ok()
+                .and_then(|manifest| package_name_from_manifest(&manifest))
+                .is_some_and(|name| package_name.is_none_or(|expected| name == expected));
+            if matches_name {
+                matches.push(dir.clone());
+            }
+        }
+
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            if entry_is_plain_directory(&entry) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    matches.sort();
+    matches
+}
+
+fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<PathBuf> {
+    if !path_has_no_symlink_components(root, PathKind::Directory) {
+        return Vec::new();
+    }
+    let mut stack = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let path = entry.path();
+            if entry_is_plain_directory(&entry) {
+                stack.push(path);
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if (file_type.is_file() || (file_type.is_symlink() && path.is_file()))
+                && path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| binary_name_matches(value, binary_name))
+            {
+                matches.push(path);
+            }
+        }
+    }
+    matches.sort();
+    matches
 }
 
 fn manifest_satisfies_package_request(
@@ -758,70 +867,6 @@ fn looks_like_windows_drive_path(package: &str) -> bool {
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
-fn find_package_dirs_under_root(root: &Path, package_name: Option<&str>) -> Vec<PathBuf> {
-    let mut stack = vec![root.to_path_buf()];
-    let mut matches = Vec::new();
-    while let Some(dir) = stack.pop() {
-        let manifest_path = dir.join("package.json");
-        if manifest_path.is_file() {
-            let matches_name = std::fs::read_to_string(&manifest_path)
-                .ok()
-                .and_then(|manifest| package_name_from_manifest(&manifest))
-                .is_some_and(|name| package_name.is_none_or(|expected| name == expected));
-            if matches_name {
-                matches.push(dir.clone());
-            }
-        }
-
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if entry_is_plain_directory(&entry) {
-                stack.push(entry.path());
-            }
-        }
-    }
-    matches.sort();
-    matches
-}
-
-fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<PathBuf> {
-    let mut stack = vec![root.to_path_buf()];
-    let mut matches = Vec::new();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            let path = entry.path();
-            if entry_is_plain_directory(&entry) {
-                stack.push(path);
-                continue;
-            }
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if (file_type.is_file() || (file_type.is_symlink() && path.is_file()))
-                && path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|value| binary_name_matches(value, binary_name))
-            {
-                matches.push(path);
-            }
-        }
-    }
-    matches.sort();
-    matches
-}
-
 fn entry_is_plain_directory(entry: &std::fs::DirEntry) -> bool {
     entry
         .file_type()
@@ -914,7 +959,8 @@ mod tests {
         NpmPackageRequest, build_npm_global_recipe, capture_installation_state, file_fingerprint,
         find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
         installation_result_is_acceptable, npm_global_package_dir, npm_package_request,
-        package_bin_relative_path, resolve_npm_global_destination, resolve_package_bin_script,
+        package_bin_relative_path, path_has_no_symlink_components, resolve_npm_global_destination,
+        resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
 
@@ -1318,6 +1364,39 @@ mod tests {
     }
 
     #[test]
+    fn installation_result_accepts_noop_for_pnpm_global_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_root = temp.path().join("global").join("5").join("node_modules");
+        let package_dir = package_root.join("http-server");
+        let binary_path = temp.path().join("http-server");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "http-server",
+            "14.1.1",
+            "bin/http-server",
+        );
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            Some(temp.path().join("global").as_path()),
+            None,
+        );
+
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            Some(temp.path().join("global").as_path()),
+            None,
+        ));
+    }
+
+    #[test]
     fn installation_result_rejects_orphan_binary_without_package_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         let binary_path = temp.path().join("bin").join("demo");
@@ -1397,6 +1476,38 @@ mod tests {
             find_package_dirs_under_root(root, Some("http-server")),
             vec![good]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_installed_package_dirs_rejects_symlinked_direct_package_dir() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside_dir = temp.path().join("outside");
+        std::fs::create_dir_all(&outside_dir).expect("create outside dir");
+        std::fs::write(
+            outside_dir.join("package.json"),
+            r#"{"name":"http-server","version":"14.1.1","bin":"bin/http-server"}"#,
+        )
+        .expect("write outside manifest");
+
+        let package_dir = temp
+            .path()
+            .join("lib")
+            .join("node_modules")
+            .join("http-server");
+        std::fs::create_dir_all(package_dir.parent().expect("package parent"))
+            .expect("create package parent");
+        symlink(&outside_dir, &package_dir).expect("create symlink");
+
+        let package_dirs =
+            super::resolve_installed_package_dirs("http-server@14.1.1", Some(&package_dir), None);
+        assert!(package_dirs.is_empty());
+        assert!(!path_has_no_symlink_components(
+            &package_dir.join("package.json"),
+            super::PathKind::File
+        ));
     }
 
     fn write_package_with_binary(
