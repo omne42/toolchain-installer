@@ -42,34 +42,15 @@ pub(crate) async fn bootstrap_builtin_tool(
     client: &reqwest::Client,
 ) -> BootstrapItem {
     let supported_tool = is_supported_builtin_tool(tool);
-    if supported_tool && host_command_is_healthy(tool) {
-        return BootstrapItem {
-            tool: tool.to_string(),
-            status: BootstrapStatus::Present,
-            source: None,
-            source_kind: None,
-            archive_match: None,
-            destination: None,
-            detail: None,
-            error_code: None,
-            failure_code: None,
-        };
-    }
-
     let managed_state =
         assess_managed_bootstrap_state(tool, target_triple, destination, managed_dir);
-    if let ManagedBootstrapState::ManagedHealthy { detail } = &managed_state {
-        return BootstrapItem {
-            tool: tool.to_string(),
-            status: BootstrapStatus::Installed,
-            source: Some("managed".to_string()),
-            source_kind: Some(BootstrapSourceKind::Managed),
-            archive_match: None,
-            destination: Some(destination.display().to_string()),
-            detail: Some(detail.clone()),
-            error_code: None,
-            failure_code: None,
-        };
+    if let Some(item) = reusable_bootstrap_item(
+        tool,
+        destination,
+        &managed_state,
+        supported_tool && host_command_is_healthy(tool),
+    ) {
+        return item;
     }
 
     match install_builtin_tool(tool, target_triple, binary_ext, destination, cfg, client).await {
@@ -129,6 +110,39 @@ pub(crate) async fn bootstrap_builtin_tool(
                 failure_code: (status == BootstrapStatus::Failed).then_some(exit_code),
             }
         }
+    }
+}
+
+fn reusable_bootstrap_item(
+    tool: &str,
+    destination: &Path,
+    managed_state: &ManagedBootstrapState,
+    host_is_healthy: bool,
+) -> Option<BootstrapItem> {
+    match managed_state {
+        ManagedBootstrapState::ManagedHealthy { detail } => Some(BootstrapItem {
+            tool: tool.to_string(),
+            status: BootstrapStatus::Installed,
+            source: Some("managed".to_string()),
+            source_kind: Some(BootstrapSourceKind::Managed),
+            archive_match: None,
+            destination: Some(destination.display().to_string()),
+            detail: Some(detail.clone()),
+            error_code: None,
+            failure_code: None,
+        }),
+        ManagedBootstrapState::NeedsInstall if host_is_healthy => Some(BootstrapItem {
+            tool: tool.to_string(),
+            status: BootstrapStatus::Present,
+            source: None,
+            source_kind: None,
+            archive_match: None,
+            destination: None,
+            detail: None,
+            error_code: None,
+            failure_code: None,
+        }),
+        ManagedBootstrapState::NeedsInstall | ManagedBootstrapState::ManagedBroken { .. } => None,
     }
 }
 
@@ -220,4 +234,99 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
         "all system package manager recipes failed: {}",
         errors.join(" | ")
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::reusable_bootstrap_item;
+    use crate::builtin_tools::bootstrap_tool_health::ManagedBootstrapState;
+    use crate::contracts::{BootstrapSourceKind, BootstrapStatus};
+
+    #[test]
+    fn broken_managed_install_blocks_host_present_shortcut() {
+        let item = reusable_bootstrap_item(
+            "uv",
+            Path::new("/tmp/managed/uv"),
+            &ManagedBootstrapState::ManagedBroken {
+                detail: "managed binary failed --version health check".to_string(),
+            },
+            true,
+        );
+
+        assert!(item.is_none());
+    }
+
+    #[test]
+    fn healthy_managed_install_wins_over_host_present() {
+        let item = reusable_bootstrap_item(
+            "uv",
+            Path::new("/tmp/managed/uv"),
+            &ManagedBootstrapState::ManagedHealthy {
+                detail: "managed binary passed --version health check".to_string(),
+            },
+            true,
+        )
+        .expect("managed install should be reused");
+
+        assert_eq!(item.status, BootstrapStatus::Installed);
+        assert_eq!(item.source_kind, Some(BootstrapSourceKind::Managed));
+        assert_eq!(item.destination.as_deref(), Some("/tmp/managed/uv"));
+    }
+
+    #[test]
+    fn healthy_host_returns_present_when_managed_install_is_missing() {
+        let item = reusable_bootstrap_item(
+            "uv",
+            Path::new("/tmp/managed/uv"),
+            &ManagedBootstrapState::NeedsInstall,
+            true,
+        )
+        .expect("healthy host should satisfy bootstrap");
+
+        assert_eq!(item.status, BootstrapStatus::Present);
+        assert_eq!(item.destination, None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::reusable_bootstrap_item;
+    use crate::builtin_tools::bootstrap_tool_health::ManagedBootstrapState;
+    use crate::contracts::{BootstrapSourceKind, BootstrapStatus};
+
+    #[test]
+    fn broken_managed_install_prevents_host_present_short_circuit() {
+        let item = reusable_bootstrap_item(
+            "uv",
+            Path::new("/tmp/managed/uv"),
+            &ManagedBootstrapState::ManagedBroken {
+                detail: "managed binary exists but failed --version health check".to_string(),
+            },
+            true,
+        );
+
+        assert!(item.is_none());
+    }
+
+    #[test]
+    fn healthy_managed_install_wins_over_host_present() {
+        let item = reusable_bootstrap_item(
+            "uv",
+            Path::new("/tmp/managed/uv"),
+            &ManagedBootstrapState::ManagedHealthy {
+                detail: "managed binary passed --version health check".to_string(),
+            },
+            true,
+        )
+        .expect("managed install should be reused");
+
+        assert_eq!(item.status, BootstrapStatus::Installed);
+        assert_eq!(item.source.as_deref(), Some("managed"));
+        assert_eq!(item.source_kind, Some(BootstrapSourceKind::Managed));
+        assert_eq!(item.destination.as_deref(), Some("/tmp/managed/uv"));
+    }
 }
