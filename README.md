@@ -16,6 +16,7 @@
 - 如果 `managed_dir` 里已有同名内置工具但健康检查失败，`bootstrap` 会优先修复托管副本，而不会因为宿主 PATH 上碰巧存在健康同名命令就把结果降级成 `present`。
 - 只有 `release` 与 `archive_tree_release` 支持显式跨目标平台下载。
 - `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
+- `pip` 表达的是“把包安装进选定 Python 环境”这类宿主环境变更，不承诺 installer 自己拥有的托管 `destination` 或可重放 artifact 坐标。
 - `pip` 只有在默认首选解释器命令不存在时才会回退到后续候选；若首选解释器已经执行 `-m pip install` 并失败，installer 会直接报错，不会静默装到另一个 Python 环境。
 - 未显式传 `--managed-dir` 时，默认托管目录是 `~/.omne_data/toolchain/<target>/bin`。
 - `release` 的相对 `destination` 解析到 `managed_dir` 下，并拒绝 `..` 路径逃逸。

@@ -137,10 +137,30 @@ mod tests {
         .expect("python fallback should run when python3 is missing");
 
         assert_eq!(result.source.as_deref(), Some("pip:python"));
+        assert_eq!(result.destination, None);
         assert_eq!(
             attempts.into_inner(),
             vec![("python".to_string(), pip_install_args(&item))]
         );
+    }
+
+    #[test]
+    fn explicit_python_success_keeps_destination_unowned() {
+        let item = PipPlanItem {
+            id: "pip-demo".to_string(),
+            package: "ruff".to_string(),
+            python: Some("python3.13".to_string()),
+        };
+
+        let result = execute_pip_item_with(
+            &item,
+            |command| command == "python3.13",
+            |_python, _args| Ok(()),
+        )
+        .expect("pip install should succeed");
+
+        assert_eq!(result.source.as_deref(), Some("pip:python3.13"));
+        assert_eq!(result.destination, None);
     }
 
     #[test]
