@@ -7,24 +7,30 @@ use crate::error::{OperationError, OperationResult};
 use crate::plan_items::PipPlanItem;
 
 pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapItem> {
-    let candidates = pip_python_candidates(item);
+    execute_pip_item_with(item, command_exists, |python, args| {
+        run_host_recipe(&HostRecipeRequest::new(python, args)).map_err(|err| err.to_string())
+    })
+}
 
-    let mut errors = Vec::new();
+fn execute_pip_item_with<CommandExists, RunRecipe>(
+    item: &PipPlanItem,
+    command_exists_fn: CommandExists,
+    run_recipe: RunRecipe,
+) -> OperationResult<BootstrapItem>
+where
+    CommandExists: Fn(&str) -> bool,
+    RunRecipe: Fn(&str, &[OsString]) -> Result<(), String>,
+{
+    let candidates = pip_python_candidates(item);
+    let args = pip_install_args(item);
+
+    let mut probe_failures = Vec::new();
     for python in candidates {
-        if !command_exists(&python) {
-            errors.push(format!("{python} not found"));
+        if !command_exists_fn(&python) {
+            probe_failures.push(format!("{python} not found"));
             continue;
         }
-        let args = vec![
-            "-m".to_string(),
-            "pip".to_string(),
-            "install".to_string(),
-            item.package.clone(),
-        ]
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
-        match run_host_recipe(&HostRecipeRequest::new(python.as_ref(), &args)) {
+        match run_recipe(python.as_ref(), &args) {
             Ok(_) => {
                 return Ok(BootstrapItem {
                     tool: item.id.clone(),
@@ -38,12 +44,21 @@ pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapI
                     failure_code: None,
                 });
             }
-            Err(err) => errors.push(format!("{python} failed: {err}")),
+            Err(err) => {
+                let prefix = if probe_failures.is_empty() {
+                    String::new()
+                } else {
+                    format!("{} | ", probe_failures.join(" | "))
+                };
+                return Err(OperationError::install(format!(
+                    "{prefix}{python} failed: {err}"
+                )));
+            }
         }
     }
     Err(OperationError::install(format!(
         "all pip recipes failed: {}",
-        errors.join(" | ")
+        probe_failures.join(" | ")
     )))
 }
 
@@ -54,9 +69,23 @@ fn pip_python_candidates(item: &PipPlanItem) -> Vec<String> {
     vec!["python3".to_string(), "python".to_string()]
 }
 
+fn pip_install_args(item: &PipPlanItem) -> Vec<OsString> {
+    vec![
+        "-m".to_string(),
+        "pip".to_string(),
+        "install".to_string(),
+        item.package.clone(),
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::pip_python_candidates;
+    use std::cell::RefCell;
+
+    use super::{execute_pip_item_with, pip_install_args, pip_python_candidates};
     use crate::plan_items::PipPlanItem;
 
     #[test]
@@ -82,5 +111,56 @@ mod tests {
             pip_python_candidates(&item),
             vec!["python3".to_string(), "python".to_string()]
         );
+    }
+
+    #[test]
+    fn default_python_fallback_only_runs_when_python3_is_missing() {
+        let item = PipPlanItem {
+            id: "pip-demo".to_string(),
+            package: "ruff".to_string(),
+            python: None,
+        };
+        let attempts = RefCell::new(Vec::new());
+
+        let result = execute_pip_item_with(
+            &item,
+            |command| command == "python",
+            |python, args| {
+                attempts
+                    .borrow_mut()
+                    .push((python.to_string(), args.to_vec()));
+                Ok(())
+            },
+        )
+        .expect("python fallback should run when python3 is missing");
+
+        assert_eq!(result.source.as_deref(), Some("pip:python"));
+        assert_eq!(
+            attempts.into_inner(),
+            vec![("python".to_string(), pip_install_args(&item))]
+        );
+    }
+
+    #[test]
+    fn default_python_fallback_stops_after_python3_install_failure() {
+        let item = PipPlanItem {
+            id: "pip-demo".to_string(),
+            package: "ruff".to_string(),
+            python: None,
+        };
+        let attempts = RefCell::new(Vec::new());
+
+        let err = execute_pip_item_with(
+            &item,
+            |_command| true,
+            |python, _args| {
+                attempts.borrow_mut().push(python.to_string());
+                Err("boom".to_string())
+            },
+        )
+        .expect_err("python3 failure should stop fallback");
+
+        assert_eq!(attempts.into_inner(), vec!["python3".to_string()]);
+        assert!(err.to_string().contains("python3 failed: boom"));
     }
 }

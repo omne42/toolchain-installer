@@ -51,6 +51,7 @@
   - `pip` / `npm_global` 的 `--package` 不允许传 `-r`、`--editable`、`--workspace` 这类 option-like 值。
 - `--python`
   - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
+  - 对 `pip` 而言，显式提供后只会调用该解释器；未提供时默认先探测 `python3`，只有 `python3` 命令不存在时才回退到 `python`，不会在 `python3 -m pip install` 已经失败后静默切到另一个 Python 环境。
 - `--json`
   - 输出机器可读 JSON。
 - `--strict`
