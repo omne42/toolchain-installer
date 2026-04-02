@@ -56,7 +56,8 @@ use crate::managed_toolchain::{
 };
 use crate::plan_items::{
     CargoInstallPlanItem, CargoInstallSource, GoInstallPlanItem, GoInstallSource,
-    ManagedUvPlanItem, ResolvedPlanItem, UvPythonPlanItem, UvToolPlanItem,
+    ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem, ResolvedPlanItem, UvPythonPlanItem,
+    UvToolPlanItem,
 };
 
 fn test_runtime_config() -> InstallerRuntimeConfig {
@@ -3717,6 +3718,109 @@ fn validate_plan_resolves_go_install_local_paths_against_plan_base_dir() {
         }
         other => panic!("unexpected resolved item: {other:?}"),
     }
+}
+
+#[test]
+fn validate_plan_resolves_go_install_bare_local_paths_against_plan_base_dir() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "go-demo".to_string(),
+            method: "go_install".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("cmd/demo".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+    let plan_base_dir = Path::new("/tmp/install-plans/demo");
+
+    let resolved = validate_plan_with_base_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        plan_base_dir,
+    )
+    .expect("bare go local path should resolve");
+
+    match &resolved[0] {
+        crate::plan_items::ResolvedPlanItem::GoInstall(item) => {
+            assert_eq!(
+                item.source,
+                crate::plan_items::GoInstallSource::LocalPath(plan_base_dir.join("cmd/demo"))
+            );
+        }
+        other => panic!("unexpected resolved item: {other:?}"),
+    }
+}
+
+#[test]
+fn explicit_windows_binary_names_do_not_duplicate_target_suffixes() {
+    let managed_dir = Path::new("C:/toolchain/bin");
+    let target = "x86_64-pc-windows-msvc";
+
+    let cargo_destination =
+        crate::install_plan::item_destination_resolution::resolve_cargo_install_destination(
+            &CargoInstallPlanItem {
+                id: "cargo-demo".to_string(),
+                source: CargoInstallSource::RegistryPackage {
+                    package: "demo".to_string(),
+                    version: None,
+                },
+                binary_name: "demo.exe".to_string(),
+                binary_name_explicit: true,
+            },
+            target,
+            managed_dir,
+        );
+    assert_eq!(
+        cargo_destination,
+        PathBuf::from("C:/toolchain").join("bin").join("demo.exe")
+    );
+
+    let go_destination =
+        crate::install_plan::item_destination_resolution::resolve_go_install_destination(
+            &GoInstallPlanItem {
+                id: "go-demo".to_string(),
+                source: GoInstallSource::PackageSpec("example.com/demo@latest".to_string()),
+                binary_name: "demo.exe".to_string(),
+            },
+            target,
+            managed_dir,
+        );
+    assert_eq!(go_destination, managed_dir.join("demo.exe"));
+
+    let npm_destination =
+        crate::install_plan::item_destination_resolution::resolve_npm_global_destination(
+            &NpmGlobalPlanItem {
+                id: "npm-demo".to_string(),
+                package_spec: "http-server@14.1.1".to_string(),
+                manager: NodePackageManager::Pnpm,
+                binary_name: "http-server.cmd".to_string(),
+            },
+            target,
+            managed_dir,
+        );
+    assert_eq!(npm_destination, managed_dir.join("http-server.cmd"));
+
+    let uv_tool_destination =
+        crate::install_plan::item_destination_resolution::resolve_uv_tool_destination(
+            &UvToolPlanItem {
+                id: "ruff".to_string(),
+                package: "ruff".to_string(),
+                python: None,
+                binary_name: "ruff.exe".to_string(),
+                binary_name_explicit: true,
+            },
+            target,
+            managed_dir,
+        );
+    assert_eq!(uv_tool_destination, managed_dir.join("ruff.exe"));
 }
 
 #[test]

@@ -30,7 +30,7 @@
    - `uv_tool` / `uv_python` 对外结果里的 `source` 不回显显式索引或镜像 URL 中的用户信息、query 或 fragment。
 9. 路径约束
    - Unix 风格绝对路径如 `/tmp/demo` 会直接拒绝，不能借此绕过托管目录。
-   - Windows 绝对路径如 `C:\tools\demo.exe` 也会直接拒绝；不能借“跨目标平台”名义把托管写入绕出 `managed_dir`。
+   - Windows 绝对路径如 `C:\tools\demo.exe` 只在 Windows 宿主上按原样保留；非 Windows 宿主会直接拒绝，避免把 Windows-local 语法误当成相对路径落盘。
    - plan 中的 `destination` 禁止包含 `..`。
    - 同时拒绝 Windows drive-relative 路径如 `C:foo`，以及 Windows root-relative 路径如 `\foo`。
    - `id` 与 `binary_name` 都必须是纯叶子名，不允许把路径片段塞进默认目标名。
