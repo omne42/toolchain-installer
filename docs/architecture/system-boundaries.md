@@ -147,7 +147,7 @@
   - 只解决当前宿主机缺失工具链，因此要求 `target_triple == host_triple`。
 - `plan.method=release`
   - 支持显式跨目标平台下载与落盘。
-- `plan.method=system_package|apt|pip|uv|uv_python|uv_tool`
+- `plan.method=system_package|pip|uv|uv_python|uv_tool`
   - 只作用于当前宿主机；若 `target_triple != host_triple`，执行前直接报参数错误。
 
 ## 调用方边界

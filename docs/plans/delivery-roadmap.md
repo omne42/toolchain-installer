@@ -4,7 +4,7 @@
 
 - Rust CLI 与库入口已经分离，`main.rs` 只做进程入口。
 - 安装能力已按当前领域拆分为 `bootstrap`、`plan`、`managed_toolchain`、`download_sources`、`external_gateway`、`artifact`；共享 HTTP / GitHub client foundation 与 runtime 原语直接回归 `../omne_foundation/` 与 `../omne-runtime/`，而下载来源策略与资产选择仍保留在 installer 自身。CI 通过 `.github/actions/checkout-shared-deps/` 复用 sibling checkout 链路后，仍可完整构建并执行安装验证。
-- `release`、`system_package|apt`、`pip`、`uv`、`uv_python`、`uv_tool` 六类安装基建已纳入统一 plan 执行面。
+- `release`、`system_package`、`pip`、`uv`、`uv_python`、`uv_tool` 六类安装基建已纳入统一 plan 执行面。
 - `examples/python-plan.json` 已覆盖 `uv + Python 3.13.12 + ruff + mypy` 的组合安装。
 - 外部边缘网关已拆分到 `../toolchain-edge-gateway/`，installer 仓库只保留集成边界与来源规则。
 

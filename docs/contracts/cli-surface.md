@@ -34,7 +34,7 @@
   - 执行 plan 文件。
   - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
   - plan 中声明的本地相对路径按该 plan 文件所在目录解析，不按调用 CLI 时的当前工作目录解析；这同样适用于 `pip` / `npm_global` 的本地 `package` 路径。
-- `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
+- `--method <release|archive_tree_release|system_package|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
   - 单个安装项标识。
@@ -47,7 +47,7 @@
   - 非 Windows 宿主会拒绝 `C:\tools\demo.exe` 这类 Windows 绝对 `--destination`，即使 `--target-triple` 是 Windows 也不例外；`destination` 必须符合当前宿主机的实际落盘语义。
   - `uv_tool` 额外允许 `--binary-name`，用于声明托管目录下期望出现的可执行文件名。
 - `--package`、`--manager`
-  - `system_package`、`apt`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component` 或 `go_install` 模式字段。
+  - `system_package`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component` 或 `go_install` 模式字段。
   - `pip` / `npm_global` 的 `--package` 不允许传 `-r`、`--editable`、`--workspace` 这类 option-like 值。
 - `--python`
   - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
@@ -55,7 +55,7 @@
 - `--json`
   - 输出机器可读 JSON。
 - `--strict`
-  - 任一安装项失败时返回整体非 0。
+  - 任一安装项失败，或显式请求的 bootstrap 工具返回 `unsupported` 时返回整体非 0。
 
 ## 直接参数模式
 
@@ -139,7 +139,7 @@
 - `4`
   - 单项调用中的安装、解压、落盘或宿主安装失败。
 - `5`
-  - `--strict` 模式下存在失败项。
+  - `--strict` 模式下存在失败项，或显式请求的 bootstrap 工具返回 `unsupported`。
 
 ## 稳定性规则
 
