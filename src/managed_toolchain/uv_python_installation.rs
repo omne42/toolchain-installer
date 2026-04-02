@@ -16,7 +16,9 @@ use crate::managed_toolchain::managed_uv_installation::{
     ManagedUvBootstrapMode, ensure_managed_uv,
 };
 use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidates;
-use crate::managed_toolchain::uv_installation_source_candidates::python_installation_source_candidates;
+use crate::managed_toolchain::uv_installation_source_candidates::{
+    prioritize_reachable_installation_sources, python_installation_source_candidates,
+};
 use crate::plan_items::UvPythonPlanItem;
 
 pub(crate) async fn execute_uv_python_item(
@@ -37,7 +39,11 @@ pub(crate) async fn execute_uv_python_item(
     )
     .await?;
     let base_env = managed_uv_process_env(managed_dir);
-    let candidates = python_installation_source_candidates(cfg);
+    let candidates = prioritize_reachable_installation_sources(
+        client,
+        python_installation_source_candidates(cfg),
+    )
+    .await;
     attempt_source_candidates(candidates, "all uv_python sources failed", |candidate| {
         let candidate_label = candidate.label.clone();
         let mut env = base_env.clone();
