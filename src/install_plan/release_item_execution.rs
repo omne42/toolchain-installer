@@ -48,15 +48,6 @@ pub(crate) async fn execute_release_item(
         gateway.as_deref(),
     );
     if is_binary_archive_asset_name(&asset_name) {
-        if item
-            .archive_binary
-            .as_deref()
-            .is_some_and(archive_binary_hint_is_unrooted_leaf)
-        {
-            return Err(OperationError::install(
-                "release archive_binary must include a relative path under the archive root",
-            ));
-        }
         let archive_binary_hint =
             release_archive_binary_hint(&asset_name, item.archive_binary.as_deref());
         let downloaded = download_and_install_binary_from_archive(
@@ -122,11 +113,6 @@ pub(crate) async fn execute_release_item(
     })
 }
 
-fn archive_binary_hint_is_unrooted_leaf(hint: &str) -> bool {
-    let trimmed = hint.trim();
-    !trimmed.is_empty() && !trimmed.contains('/') && !trimmed.contains('\\')
-}
-
 fn release_archive_binary_hint(asset_name: &str, archive_binary: Option<&str>) -> Option<String> {
     let normalized = normalize_archive_binary_hint(archive_binary)?;
     let Some(root) = archive_root_name(asset_name) else {
@@ -185,8 +171,7 @@ fn is_github_release_asset_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        archive_binary_hint_is_unrooted_leaf, is_github_release_asset_url,
-        normalize_archive_binary_hint, release_archive_binary_hint,
+        is_github_release_asset_url, normalize_archive_binary_hint, release_archive_binary_hint,
     };
 
     #[test]
@@ -218,12 +203,11 @@ mod tests {
     }
 
     #[test]
-    fn archive_binary_hint_is_unrooted_leaf_only_for_bare_binary_names() {
-        assert!(archive_binary_hint_is_unrooted_leaf("7zz"));
-        assert!(!archive_binary_hint_is_unrooted_leaf("bin/7zz"));
-        assert!(!archive_binary_hint_is_unrooted_leaf(
-            "7z2600-linux-x64/7zz"
-        ));
+    fn release_archive_binary_hint_prefixes_archive_root_for_leaf_hint() {
+        assert_eq!(
+            release_archive_binary_hint("ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz", Some("rg")),
+            Some("ripgrep-15.1.0-x86_64-unknown-linux-musl/rg".to_string())
+        );
     }
 
     #[test]

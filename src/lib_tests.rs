@@ -2490,8 +2490,22 @@ async fn apply_install_plan_redacts_archive_tree_release_source_url_in_result() 
 }
 
 #[tokio::test]
-async fn apply_install_plan_rejects_archive_release_with_unrooted_archive_binary_hint()
+async fn apply_install_plan_installs_archive_release_with_leaf_archive_binary_hint()
 -> anyhow::Result<()> {
+    let archive_name = "7z2600-linux-x64.tar.xz";
+    let archive_bytes = make_tar_xz_archive(&[(
+        "7z2600-linux-x64/7zz",
+        b"#!/bin/sh\necho 7zip-leaf-hint\n".as_slice(),
+        0o755,
+    )])?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(format!("/asset/{archive_name}"), archive_bytes);
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
@@ -2500,7 +2514,7 @@ async fn apply_install_plan_rejects_archive_release_with_unrooted_archive_binary
             id: "7zip-release".to_string(),
             method: "release".to_string(),
             version: None,
-            url: Some("https://example.invalid/7z2600-linux-x64.tar.xz".to_string()),
+            url: Some(format!("{base}/asset/{archive_name}")),
             sha256: None,
             archive_binary: Some("7zz".to_string()),
             binary_name: Some("7zz".to_string()),
@@ -2516,8 +2530,18 @@ async fn apply_install_plan_rejects_archive_release_with_unrooted_archive_binary
     };
 
     let result = crate::apply_install_plan(&plan, &request).await?;
-    assert_eq!(result.items[0].status, BootstrapStatus::Failed);
-    assert_eq!(result.items[0].failure_code, Some(ExitCode::Install));
+    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
+    assert_eq!(
+        result.items[0]
+            .archive_match
+            .as_ref()
+            .map(|matched| (matched.format, matched.path.as_str())),
+        Some((BootstrapArchiveFormat::TarXz, "7z2600-linux-x64/7zz"))
+    );
+    let installed = std::fs::read_to_string(managed_dir.join("7zz"))?;
+    assert!(installed.contains("7zip-leaf-hint"));
+
+    handle.join().expect("mock server thread join");
     Ok(())
 }
 
