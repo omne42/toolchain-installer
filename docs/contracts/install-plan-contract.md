@@ -185,7 +185,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式索引配置，避免外部 shell 状态静默污染来源选择。
   - `uv tool install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；超时会直接返回 install error，而不是无限期挂住整个 installer。
 - `uv_python`
-  - 会先尝试官方 Python 下载来源，失败后再按顺序回退到 `--python-mirror` 或 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供的备用站。
+  - 安装前会先对官方 Python 下载来源与显式 `--python-mirror` / `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 做可达性探测；可达来源会被优先尝试，而官方来源在同等可达性下仍保持默认首位。
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
   - 官方来源成功时，结果里的 `source_kind` 会是 `canonical`；只有显式镜像命中时才会是 `python_mirror`。
   - 结果里的 `source` 会对显式镜像做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
