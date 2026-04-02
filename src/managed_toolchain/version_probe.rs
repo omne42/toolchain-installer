@@ -271,10 +271,16 @@ PY
                 r#"if [ "$1" != "--version" ]; then
   exit 2
 fi
-yes x | tr -d '\n' | head -c 131072
-echo
-yes y | tr -d '\n' | head -c 131072 >&2
-echo >&2
+python3 - <<'PY'
+import sys
+
+sys.stdout.write("x" * 131072)
+sys.stdout.write("\n")
+sys.stdout.flush()
+sys.stderr.write("y" * 131072)
+sys.stderr.write("\n")
+sys.stderr.flush()
+PY
 "#,
             ),
         );
