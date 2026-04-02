@@ -13,7 +13,7 @@ pub(crate) async fn fetch_latest_release_metadata(
 ) -> OperationResult<GitHubRelease> {
     let github_client = build_github_http_client(cfg)?;
     fetch_latest_release(
-        &github_client,
+        github_client.client(),
         &cfg.github_releases.api_bases,
         repo,
         GitHubApiRequestOptions::new()
