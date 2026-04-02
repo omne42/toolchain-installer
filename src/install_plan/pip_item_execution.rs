@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use omne_process_primitives::{HostRecipeRequest, command_exists, run_host_recipe};
 
@@ -8,7 +8,9 @@ use crate::plan_items::PipPlanItem;
 
 pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapItem> {
     execute_pip_item_with(item, command_exists, |python, args| {
-        run_host_recipe(&HostRecipeRequest::new(python, args)).map_err(|err| err.to_string())
+        run_host_recipe(&HostRecipeRequest::new(OsStr::new(python), args))
+            .map(|_| ())
+            .map_err(|err| err.to_string())
     })
 }
 
