@@ -76,16 +76,30 @@ pub(crate) fn resolve_release_binary_name(item: &ReleasePlanItem, target_triple:
         .unwrap_or_else(|| format!("{}{}", item.id, validated_binary_suffix(target_triple)))
 }
 
+fn append_binary_suffix_if_missing(binary_name: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        return binary_name.to_string();
+    }
+    if binary_name
+        .to_ascii_lowercase()
+        .ends_with(&suffix.to_ascii_lowercase())
+    {
+        return binary_name.to_string();
+    }
+    format!("{binary_name}{suffix}")
+}
+
 pub(crate) fn resolve_cargo_install_destination(
     item: &CargoInstallPlanItem,
     target_triple: &str,
     managed_dir: &Path,
 ) -> PathBuf {
-    cargo_install_root(managed_dir).join("bin").join(format!(
-        "{}{}",
-        item.binary_name,
-        validated_binary_suffix(target_triple)
-    ))
+    cargo_install_root(managed_dir)
+        .join("bin")
+        .join(append_binary_suffix_if_missing(
+            &item.binary_name,
+            validated_binary_suffix(target_triple),
+        ))
 }
 
 pub(crate) fn cargo_install_root(managed_dir: &Path) -> PathBuf {
@@ -155,7 +169,7 @@ fn managed_dir_ends_with_bin(managed_dir: &Path, target_triple: &str) -> bool {
 
 fn npm_global_binary_filename(binary_name: &str, target_triple: &str) -> String {
     if target_triple.contains("windows") {
-        return format!("{binary_name}.cmd");
+        return append_binary_suffix_if_missing(binary_name, ".cmd");
     }
     binary_name.to_string()
 }
@@ -165,10 +179,9 @@ pub(crate) fn resolve_go_install_destination(
     target_triple: &str,
     managed_dir: &Path,
 ) -> PathBuf {
-    managed_dir.join(format!(
-        "{}{}",
-        item.binary_name,
-        validated_binary_suffix(target_triple)
+    managed_dir.join(append_binary_suffix_if_missing(
+        &item.binary_name,
+        validated_binary_suffix(target_triple),
     ))
 }
 
@@ -177,10 +190,9 @@ pub(crate) fn resolve_uv_tool_destination(
     target_triple: &str,
     managed_dir: &Path,
 ) -> PathBuf {
-    managed_dir.join(format!(
-        "{}{}",
-        item.binary_name,
-        validated_binary_suffix(target_triple)
+    managed_dir.join(append_binary_suffix_if_missing(
+        &item.binary_name,
+        validated_binary_suffix(target_triple),
     ))
 }
 
