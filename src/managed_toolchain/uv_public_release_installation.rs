@@ -2,7 +2,8 @@ use std::path::Path;
 
 use github_kit::GitHubReleaseAsset;
 use omne_artifact_install_primitives::{
-    BinaryArchiveInstallRequest, InstalledArchiveBinary, download_and_install_binary_from_archive,
+    ArtifactInstallErrorDetail, BinaryArchiveInstallRequest, InstalledArchiveBinary,
+    download_and_install_binary_from_archive,
 };
 use omne_integrity_primitives::parse_sha256_digest;
 
@@ -33,21 +34,33 @@ pub(crate) async fn install_uv_from_public_release(
     );
     let binary_name = format!("uv{}", validated_binary_suffix(target_triple));
     let archive_binary_hint = uv_archive_binary_hint(&asset.name, &binary_name);
-    let downloaded = download_and_install_binary_from_archive(
-        client,
-        &candidates,
-        &BinaryArchiveInstallRequest {
-            canonical_url: &asset.browser_download_url,
-            destination,
-            asset_name: &asset.name,
-            binary_name: &binary_name,
-            archive_binary_hint: archive_binary_hint.as_deref(),
-            expected_sha256: Some(&expected_sha),
-            max_download_bytes: cfg.download.max_download_bytes,
-        },
-    )
-    .await
-    .map_err(OperationError::from_artifact_install)?;
+    let primary_request = BinaryArchiveInstallRequest {
+        canonical_url: &asset.browser_download_url,
+        destination,
+        asset_name: &asset.name,
+        binary_name: &binary_name,
+        archive_binary_hint: archive_binary_hint.as_deref(),
+        expected_sha256: Some(&expected_sha),
+        max_download_bytes: cfg.download.max_download_bytes,
+    };
+    let downloaded =
+        match download_and_install_binary_from_archive(client, &candidates, &primary_request).await
+        {
+            Ok(downloaded) => downloaded,
+            Err(err)
+                if err.detail() == Some(ArtifactInstallErrorDetail::ArchiveBinaryNotFound)
+                    && archive_binary_hint.as_deref() != Some(binary_name.as_str()) =>
+            {
+                let fallback_request = BinaryArchiveInstallRequest {
+                    archive_binary_hint: Some(binary_name.as_str()),
+                    ..primary_request
+                };
+                download_and_install_binary_from_archive(client, &candidates, &fallback_request)
+                    .await
+                    .map_err(OperationError::from_artifact_install)?
+            }
+            Err(err) => return Err(OperationError::from_artifact_install(err)),
+        };
     let InstalledArchiveBinary {
         source,
         archive_match,

@@ -1975,7 +1975,7 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn install_uv_from_mock_windows_zip_requires_archive_root_binary() -> anyhow::Result<()> {
+async fn install_uv_from_mock_windows_zip_accepts_rootless_archive_binary() -> anyhow::Result<()> {
     let archive_name = "uv-x86_64-pc-windows-msvc.zip";
     let archive_bytes = make_zip_archive(&[("uv.exe", b"mock-windows-uv".as_slice(), 0o755)])?;
     let digest = sha256_hex(&archive_bytes);
@@ -2001,7 +2001,7 @@ async fn install_uv_from_mock_windows_zip_requires_archive_root_binary() -> anyh
         release_body,
     );
     routes.insert(format!("/asset/{archive_name}"), archive_bytes);
-    let handle = spawn_mock_http_server(listener, routes, 2);
+    let handle = spawn_mock_http_server(listener, routes, 3);
 
     let cfg = InstallerRuntimeConfig {
         github_releases: GitHubReleasePolicy {
@@ -2019,12 +2019,15 @@ async fn install_uv_from_mock_windows_zip_requires_archive_root_binary() -> anyh
     let tmp = tempfile::tempdir()?;
     let destination = tmp.path().join("uv.exe");
 
-    let err = install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
-        .await
-        .expect_err("root-level Windows uv binary should be rejected");
+    let installed =
+        install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+            .await?;
+    assert_eq!(std::fs::read(&destination)?, b"mock-windows-uv");
     assert!(
-        err.detail().contains("binary `uv.exe` not found"),
-        "unexpected error: {err:?}"
+        installed
+            .archive_match
+            .as_ref()
+            .is_some_and(|matched| matched.path == "uv.exe")
     );
 
     handle.join().expect("mock server thread join");
