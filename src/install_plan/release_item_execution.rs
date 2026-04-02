@@ -48,8 +48,16 @@ pub(crate) async fn execute_release_item(
         gateway.as_deref(),
     );
     if is_binary_archive_asset_name(&asset_name) {
-        let archive_binary_hint =
-            release_archive_binary_hint(&asset_name, item.archive_binary.as_deref());
+        if item
+            .archive_binary
+            .as_deref()
+            .is_some_and(archive_binary_hint_is_unrooted_leaf)
+        {
+            return Err(OperationError::install(
+                "release archive_binary must include a relative path under the archive root",
+            ));
+        }
+        let archive_binary_hint = normalize_archive_binary_hint(item.archive_binary.as_deref());
         let downloaded = download_and_install_binary_from_archive(
             download_client,
             &candidates,
@@ -112,15 +120,9 @@ pub(crate) async fn execute_release_item(
     })
 }
 
-fn release_archive_binary_hint(asset_name: &str, archive_binary: Option<&str>) -> Option<String> {
-    let normalized = normalize_archive_binary_hint(archive_binary)?;
-    let Some(root) = archive_root_name(asset_name) else {
-        return Some(normalized);
-    };
-    if normalized == root || normalized.starts_with(&format!("{root}/")) {
-        return Some(normalized);
-    }
-    Some(format!("{root}/{normalized}"))
+fn archive_binary_hint_is_unrooted_leaf(hint: &str) -> bool {
+    let trimmed = hint.trim();
+    !trimmed.is_empty() && !trimmed.contains('/') && !trimmed.contains('\\')
 }
 
 fn normalize_archive_binary_hint(archive_binary: Option<&str>) -> Option<String> {
@@ -128,13 +130,6 @@ fn normalize_archive_binary_hint(archive_binary: Option<&str>) -> Option<String>
     let hint = hint.trim().replace('\\', "/");
     let hint = hint.trim_start_matches('/');
     (!hint.is_empty()).then_some(hint.to_string())
-}
-
-fn archive_root_name(asset_name: &str) -> Option<&str> {
-    asset_name
-        .strip_suffix(".tar.gz")
-        .or_else(|| asset_name.strip_suffix(".tar.xz"))
-        .or_else(|| asset_name.strip_suffix(".zip"))
 }
 
 fn build_release_download_client(
@@ -170,7 +165,8 @@ fn is_github_release_asset_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_github_release_asset_url, normalize_archive_binary_hint, release_archive_binary_hint,
+        archive_binary_hint_is_unrooted_leaf, is_github_release_asset_url,
+        normalize_archive_binary_hint,
     };
 
     #[test]
@@ -194,22 +190,12 @@ mod tests {
     }
 
     #[test]
-    fn release_archive_binary_hint_prefixes_archive_root_for_relative_hint() {
-        assert_eq!(
-            release_archive_binary_hint("node-v22.14.0-linux-x64.tar.xz", Some("bin/node")),
-            Some("node-v22.14.0-linux-x64/bin/node".to_string())
-        );
-    }
-
-    #[test]
-    fn release_archive_binary_hint_keeps_exact_rooted_hint() {
-        assert_eq!(
-            release_archive_binary_hint(
-                "node-v22.14.0-linux-x64.tar.xz",
-                Some("node-v22.14.0-linux-x64/bin/node")
-            ),
-            Some("node-v22.14.0-linux-x64/bin/node".to_string())
-        );
+    fn archive_binary_hint_is_unrooted_leaf_only_for_bare_binary_names() {
+        assert!(archive_binary_hint_is_unrooted_leaf("7zz"));
+        assert!(!archive_binary_hint_is_unrooted_leaf("bin/7zz"));
+        assert!(!archive_binary_hint_is_unrooted_leaf(
+            "7z2600-linux-x64/7zz"
+        ));
     }
 
     #[test]

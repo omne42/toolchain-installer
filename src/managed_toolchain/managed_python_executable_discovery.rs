@@ -12,6 +12,7 @@ pub(crate) struct FileFingerprint {
     len: u64,
 }
 
+#[cfg(test)]
 pub(crate) fn find_managed_python_executable(
     managed_dir: &Path,
     version: &str,
