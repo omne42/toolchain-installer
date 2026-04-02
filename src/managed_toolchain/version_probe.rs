@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -81,28 +81,14 @@ fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
         .stderr(Stdio::piped())
         .spawn()
         .ok()?;
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
+    let stdout = child.stdout.take().map(spawn_probe_reader);
+    let stderr = child.stderr.take().map(spawn_probe_reader);
     let deadline = Instant::now() + VERSION_PROBE_TIMEOUT;
 
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut stdout_bytes = Vec::new();
-                if let Some(mut handle) = stdout.take() {
-                    let _ = handle.read_to_end(&mut stdout_bytes);
-                }
-
-                let mut stderr_bytes = Vec::new();
-                if let Some(mut handle) = stderr.take() {
-                    let _ = handle.read_to_end(&mut stderr_bytes);
-                }
-
-                return Some(VersionProbeOutput {
-                    success: status.success(),
-                    stdout: stdout_bytes,
-                    stderr: stderr_bytes,
-                });
+                return Some(finish_version_probe(status.success(), stdout, stderr));
             }
             Ok(None) if Instant::now() < deadline => thread::sleep(VERSION_PROBE_POLL_INTERVAL),
             Ok(None) | Err(_) => {
@@ -112,6 +98,35 @@ fn run_version_probe(path: &Path) -> Option<VersionProbeOutput> {
             }
         }
     }
+}
+
+fn spawn_probe_reader<R>(mut reader: R) -> JoinHandle<Vec<u8>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = reader.read_to_end(&mut bytes);
+        bytes
+    })
+}
+
+fn finish_version_probe(
+    success: bool,
+    stdout: Option<JoinHandle<Vec<u8>>>,
+    stderr: Option<JoinHandle<Vec<u8>>>,
+) -> VersionProbeOutput {
+    VersionProbeOutput {
+        success,
+        stdout: join_probe_reader(stdout),
+        stderr: join_probe_reader(stderr),
+    }
+}
+
+fn join_probe_reader(reader: Option<JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default()
 }
 
 fn python_version_from_output(output: &[u8]) -> Option<String> {
@@ -137,7 +152,7 @@ mod tests {
     use std::path::Path;
 
     use super::python_version_matches_requirement;
-    use super::{binary_reports_version, python_binary_matches_version};
+    use super::{binary_reports_version, python_binary_matches_version, run_version_probe};
 
     fn portable_unix_script(body: &str) -> String {
         format!("#!/usr/bin/env bash\n{body}")
@@ -206,6 +221,32 @@ echo "Python 3.13.12"
         assert!(python_binary_matches_version(&script_path, "3.13.12"));
     }
 
+    #[cfg_attr(windows, ignore = "probe script is unix-specific")]
+    #[test]
+    fn binary_reports_version_handles_large_pipe_output_without_deadlock() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script_path = tmp.path().join("uv");
+
+        write_unix_probe_script(
+            &script_path,
+            &portable_unix_script(
+                r#"if [ "$1" != "--version" ]; then
+  exit 2
+fi
+python3 - <<'PY'
+import sys
+
+sys.stderr.write("uv 0.11.0\n")
+sys.stderr.flush()
+sys.stdout.write("x" * 200000)
+PY
+"#,
+            ),
+        );
+
+        assert!(binary_reports_version(&script_path));
+    }
+
     fn write_unix_probe_script(path: &Path, body: &str) {
         fs::write(path, body).expect("write probe script");
         #[cfg(unix)]
@@ -216,5 +257,32 @@ echo "Python 3.13.12"
             perms.set_mode(0o755);
             fs::set_permissions(path, perms).expect("chmod probe script");
         }
+    }
+
+    #[cfg_attr(windows, ignore = "probe script is unix-specific")]
+    #[test]
+    fn version_probe_drains_large_stdout_and_stderr_without_deadlock() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script_path = tmp.path().join("uv");
+
+        write_unix_probe_script(
+            &script_path,
+            &portable_unix_script(
+                r#"if [ "$1" != "--version" ]; then
+  exit 2
+fi
+yes x | tr -d '\n' | head -c 131072
+echo
+yes y | tr -d '\n' | head -c 131072 >&2
+echo >&2
+"#,
+            ),
+        );
+
+        let probe = run_version_probe(&script_path).expect("probe output");
+
+        assert!(probe.success);
+        assert!(probe.stdout.len() >= 131072);
+        assert!(probe.stderr.len() >= 131072);
     }
 }
