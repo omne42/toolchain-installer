@@ -69,6 +69,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 归属于宿主系统包安装域。
 - `pip`
   - 归属于 Python 包安装域。
+  - 它表达的是“把包交给选定解释器所在环境执行 `python -m pip install`”这一宿主环境变更，不承诺把产物收口到 installer 自己可拥有的托管目标路径。
   - 若调用方显式提供 `python`，installer 只会使用该解释器，不会再静默回退到别名命令。
   - 若未提供 `python`，installer 默认先尝试 `python3`；只有 `python3` 命令不存在时，才会回退到 `python`，不会在前一个解释器已经执行失败后继续静默切换环境。
 - `npm_global`
@@ -142,6 +143,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `system_package`、`apt` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
 - `method=apt` 会固定收敛到 canonical `apt-get` recipe；若显式传 `manager`，当前只接受 `apt-get`，不会静默退回其他系统包管理器。
 - `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的 `package` 不允许是 `-r`、`--editable`、`--workspace`、`--git`、`--toolchain`、`--index-url` 这类看起来像命令行选项的值；installer 会在 resolve 阶段直接返回 usage error，而不是把额外语义透传给底层包管理器。
+- `pip` 成功结果里的 `source` 只会记录实际使用的解释器标识（例如 `pip:python3` 或 `pip:/abs/path/python3.13`），不会把它包装成 artifact 坐标；同时 `destination` 会保持为空，因为底层 site-packages / script 落点由被选中的 Python 环境决定，而不是 installer 自己拥有的托管输出。
 - 多个 `workspace_package` item 可以指向同一个 workspace；这表示对同一工作区重复执行依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `npm_global` 使用 `bun` 时，若 `managed_dir` 本身已经是 `.../bin`，installer 会直接把它当作 bun 的全局 binary 目录，而不是再额外套一层 `bin/` 形成 `.../bin/bin/<tool>`。

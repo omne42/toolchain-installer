@@ -53,6 +53,7 @@
 - `--python`
   - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
   - 对 `pip` 而言，显式提供后只会调用该解释器；未提供时默认先探测 `python3`，只有 `python3` 命令不存在时才回退到 `python`，不会在 `python3 -m pip install` 已经失败后静默切到另一个 Python 环境。
+  - `pip` 仍然属于宿主环境变更方法：成功后脚本入口和 site-packages 的实际落点由该解释器自己的环境决定，而不是 `managed_dir`。
 - `--json`
   - 输出机器可读 JSON。
 - `--strict`
@@ -155,6 +156,7 @@
 - `uv_python` 命中官方来源时会输出 `source_kind=canonical`；只有命中显式 Python 镜像时才会输出 `python_mirror`。
 - 当 `source_kind=package_index|python_mirror|canonical|mirror|gateway` 且来源 URL 含凭证、query 或 fragment 时，`source` 会输出脱敏后的协议、主机和路径，而不是回显原始敏感 URL。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
+- `pip` 成功结果里的 `source` 只表示“这次调用用了哪个 Python 解释器”，不表示可重放的 artifact 来源；对应项的 `destination` 会保持为空，调用方不能把它当作 installer 拥有的托管落点。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
 - `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。
 - Windows 上的 `bootstrap --tool git` 会把 MinGit payload 切换和 `git.cmd` launcher 更新作为同一个事务提交；如果 launcher 写入失败，会恢复旧的 `git-portable/` 与旧 launcher，而不是留下半更新状态。

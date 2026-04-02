@@ -25,6 +25,7 @@
 - `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的声明式 `package` 只承载 package/component/path 语义，不承载额外 CLI 选项；看起来像 `--flag` 的值会在 resolve 阶段直接拒绝。
 - 对 `pip`/`npm_global`/`cargo_install`/`go_install` 这类可按本地路径解释 `package` 的方法，只有当前宿主机原生的绝对路径语法会被接受；非 Windows 宿主遇到 `C:\...`、`\...`、`file:C:\...` 会直接返回 usage error，而不是继续按相对路径解析。
 - `pip` 未显式指定解释器时，只会把“命令不存在”当作回退条件；如果 `python3 -m pip install` 已经执行并失败，installer 会直接返回该失败，不会继续尝试 `python`。
+- `pip` 的结果 `source` 只记录本次调用实际使用的解释器；它不会像 `release`、`uv_tool`、`npm_global` 那样产生 installer 自己可拥有的托管 `destination`，因此更适合表达宿主环境变更，而不是可复放 artifact 安装。
 
 ## `uv_tool` 方法
 
