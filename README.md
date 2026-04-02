@@ -13,6 +13,7 @@
 ## 关键约束
 
 - `bootstrap` 只解决当前宿主机的工具链补齐，不支持跨目标平台安装。
+- 如果 `managed_dir` 里已有同名内置工具但健康检查失败，`bootstrap` 会优先修复托管副本，而不会因为宿主 PATH 上碰巧存在健康同名命令就把结果降级成 `present`。
 - 只有 `release` 与 `archive_tree_release` 支持显式跨目标平台下载。
 - `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
 - `pip` 只有在默认首选解释器命令不存在时才会回退到后续候选；若首选解释器已经执行 `-m pip install` 并失败，installer 会直接报错，不会静默装到另一个 Python 环境。
