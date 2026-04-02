@@ -56,8 +56,8 @@ use crate::managed_toolchain::{
 };
 use crate::plan_items::{
     CargoInstallPlanItem, CargoInstallSource, GoInstallPlanItem, GoInstallSource,
-    ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem, ResolvedPlanItem,
-    SystemPackageMode, UvPythonPlanItem, UvToolPlanItem,
+    ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem, ResolvedPlanItem, SystemPackageMode,
+    UvPythonPlanItem, UvToolPlanItem,
 };
 
 fn test_runtime_config() -> InstallerRuntimeConfig {
