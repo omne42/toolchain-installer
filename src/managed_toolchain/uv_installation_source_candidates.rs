@@ -4,6 +4,9 @@ use crate::contracts::BootstrapSourceKind;
 use crate::download_sources::redact_source_url;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 
+const UV_PYTHON_OFFICIAL_PROBE_URL: &str =
+    "https://github.com/astral-sh/python-build-standalone/releases/latest";
+
 #[derive(Debug, Clone)]
 pub(super) struct InstallationSourceCandidate {
     pub(super) label: String,
@@ -18,7 +21,7 @@ pub(super) fn python_installation_source_candidates(
     let mut candidates = vec![InstallationSourceCandidate {
         label: "python:official".to_string(),
         env: Vec::new(),
-        probe_url: None,
+        probe_url: Some(UV_PYTHON_OFFICIAL_PROBE_URL.to_string()),
         source_kind: BootstrapSourceKind::Canonical,
     }];
     for mirror in &cfg.python_mirrors.install_mirrors {
@@ -26,7 +29,7 @@ pub(super) fn python_installation_source_candidates(
         candidates.push(InstallationSourceCandidate {
             label: format!("python-mirror:{}", redact_source_url(mirror)),
             env: vec![("UV_PYTHON_INSTALL_MIRROR".to_string(), mirror.to_string())],
-            probe_url: None,
+            probe_url: http_probe_url(mirror),
             source_kind: BootstrapSourceKind::PythonMirror,
         });
     }
@@ -74,6 +77,11 @@ pub(super) async fn prioritize_reachable_installation_sources(
     reachable
 }
 
+fn http_probe_url(raw: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(raw).ok()?;
+    matches!(parsed.scheme(), "http" | "https").then(|| raw.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +89,9 @@ mod tests {
         DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy,
         InstallerRuntimeConfig, PackageIndexPolicy, PythonMirrorPolicy,
     };
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
     use std::time::Duration;
 
     fn test_runtime_config() -> InstallerRuntimeConfig {
@@ -115,9 +126,71 @@ mod tests {
         assert_eq!(candidates[0].label, "python:official");
         assert_eq!(candidates[0].source_kind, BootstrapSourceKind::Canonical);
         assert_eq!(
+            candidates[0].probe_url.as_deref(),
+            Some(UV_PYTHON_OFFICIAL_PROBE_URL)
+        );
+        assert_eq!(
             candidates[1].label,
             "python-mirror:https://mirror.example/python"
         );
         assert_eq!(candidates[1].source_kind, BootstrapSourceKind::PythonMirror);
+        assert_eq!(
+            candidates[1].probe_url.as_deref(),
+            Some("https://mirror.example/python")
+        );
+    }
+
+    #[test]
+    fn python_installation_sources_skip_http_probe_for_non_http_mirror() {
+        let mut cfg = test_runtime_config();
+        cfg.python_mirrors.install_mirrors = vec!["file:///tmp/python-mirror".to_string()];
+
+        let candidates = python_installation_source_candidates(&cfg);
+
+        assert_eq!(candidates[1].probe_url, None);
+    }
+
+    #[tokio::test]
+    async fn prioritize_reachable_installation_sources_moves_reachable_http_candidates_first() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind reachable server");
+        let addr = listener.local_addr().expect("listener addr");
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 512];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+            }
+        });
+        let reachable = format!("http://{addr}/mirror");
+        let unreachable = "http://127.0.0.1:9/unreachable".to_string();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("build client");
+
+        let ordered = prioritize_reachable_installation_sources(
+            &client,
+            vec![
+                InstallationSourceCandidate {
+                    label: "python:official".to_string(),
+                    env: Vec::new(),
+                    probe_url: Some(unreachable),
+                    source_kind: BootstrapSourceKind::Canonical,
+                },
+                InstallationSourceCandidate {
+                    label: "python-mirror:reachable".to_string(),
+                    env: Vec::new(),
+                    probe_url: Some(reachable),
+                    source_kind: BootstrapSourceKind::PythonMirror,
+                },
+            ],
+        )
+        .await;
+
+        handle.join().expect("join reachable server");
+        assert_eq!(ordered[0].label, "python-mirror:reachable");
+        assert_eq!(ordered[1].label, "python:official");
     }
 }
