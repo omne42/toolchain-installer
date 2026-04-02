@@ -23,9 +23,10 @@ pub(crate) fn execute_system_package_item(
         SystemPackageMode::AptGet => vec![SystemPackageManager::AptGet.install_recipe(&package)],
         SystemPackageMode::Explicit(manager) => vec![manager.install_recipe(&package)],
         SystemPackageMode::Auto => match detect_host_platform() {
-            Some(platform) => {
-                default_system_package_install_recipes_for_os(platform.operating_system().as_str(), &package)
-            }
+            Some(platform) => default_system_package_install_recipes_for_os(
+                platform.operating_system().as_str(),
+                &package,
+            ),
             None => Vec::new(),
         },
     };

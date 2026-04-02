@@ -101,7 +101,9 @@ pub(crate) async fn execute_release_item(
         tool: item.id.clone(),
         status: BootstrapStatus::Installed,
         source: Some(redact_source_url(&downloaded_source.url)),
-        source_kind: Some(result_source_kind_for_download_candidate(downloaded_source.kind)),
+        source_kind: Some(result_source_kind_for_download_candidate(
+            downloaded_source.kind,
+        )),
         archive_match: None,
         destination: Some(destination.display().to_string()),
         detail: None,
@@ -172,6 +174,26 @@ mod tests {
     };
 
     #[test]
+    fn normalize_archive_binary_hint_normalizes_slashes_and_leading_root() {
+        assert_eq!(
+            normalize_archive_binary_hint(Some("\\demo\\bin\\demo.exe")),
+            Some("demo/bin/demo.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_archive_binary_hint_keeps_relative_and_rooted_values_verbatim() {
+        assert_eq!(
+            normalize_archive_binary_hint(Some("bin/node")),
+            Some("bin/node".to_string())
+        );
+        assert_eq!(
+            normalize_archive_binary_hint(Some("node-v22.14.0-linux-x64/bin/node")),
+            Some("node-v22.14.0-linux-x64/bin/node".to_string())
+        );
+    }
+
+    #[test]
     fn release_archive_binary_hint_prefixes_archive_root_for_relative_hint() {
         assert_eq!(
             release_archive_binary_hint("node-v22.14.0-linux-x64.tar.xz", Some("bin/node")),
@@ -187,14 +209,6 @@ mod tests {
                 Some("node-v22.14.0-linux-x64/bin/node")
             ),
             Some("node-v22.14.0-linux-x64/bin/node".to_string())
-        );
-    }
-
-    #[test]
-    fn normalize_archive_binary_hint_normalizes_slashes_and_leading_root() {
-        assert_eq!(
-            normalize_archive_binary_hint(Some("\\demo\\bin\\demo.exe")),
-            Some("demo/bin/demo.exe".to_string())
         );
     }
 

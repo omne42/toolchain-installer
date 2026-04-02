@@ -897,12 +897,11 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
     let payload = managed_dir
         .join("git-portable")
         .join("PortableGit")
-        .join("mingw64")
-        .join("bin");
+        .join("cmd");
     std::fs::create_dir_all(&payload).expect("create payload dir");
     std::fs::write(
         &destination,
-        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\mingw64\\bin\\git.exe\" %*\r\n",
+        "@echo off\r\n\"%~dp0git-portable\\PortableGit\\cmd\\git.exe\" %*\r\n",
     )
     .expect("write launcher");
     std::fs::write(payload.join("git.exe"), b"MZ").expect("write git.exe");
@@ -1975,7 +1974,7 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow::Result<()> {
+async fn install_uv_from_mock_windows_zip_requires_archive_root_binary() -> anyhow::Result<()> {
     let archive_name = "uv-x86_64-pc-windows-msvc.zip";
     let archive_bytes = make_zip_archive(&[("uv.exe", b"mock-windows-uv".as_slice(), 0o755)])?;
     let digest = sha256_hex(&archive_bytes);
@@ -2001,7 +2000,7 @@ async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow:
         release_body,
     );
     routes.insert(format!("/asset/{archive_name}"), archive_bytes);
-    let handle = spawn_mock_http_server(listener, routes, 3);
+    let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
         github_releases: GitHubReleasePolicy {
@@ -2019,20 +2018,13 @@ async fn install_uv_from_mock_windows_zip_falls_back_to_root_binary() -> anyhow:
     let tmp = tempfile::tempdir()?;
     let destination = tmp.path().join("uv.exe");
 
-    let source =
-        install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
-            .await?;
-    assert_eq!(source.locator, format!("{base}/asset/{archive_name}"));
-    assert_eq!(source.source_kind, BootstrapSourceKind::Canonical);
-    assert_eq!(
-        source
-            .archive_match
-            .as_ref()
-            .map(|matched| (matched.format, matched.path.as_str())),
-        Some((BootstrapArchiveFormat::Zip, "uv.exe"))
+    let err = install_uv_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+        .await
+        .expect_err("root-level Windows uv binary should be rejected");
+    assert!(
+        err.detail().contains("binary `uv.exe` not found"),
+        "unexpected error: {err:?}"
     );
-    let installed = std::fs::read(&destination)?;
-    assert_eq!(installed, b"mock-windows-uv");
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2412,7 +2404,7 @@ async fn apply_install_plan_installs_archive_release_with_relative_archive_binar
             version: None,
             url: Some(format!("{base}/asset/{archive_name}")),
             sha256: None,
-            archive_binary: Some("bin/node".to_string()),
+            archive_binary: Some("node-v22.14.0-linux-x64/bin/node".to_string()),
             binary_name: Some("node".to_string()),
             destination: Some("node".to_string()),
             package: None,
@@ -2497,18 +2489,21 @@ async fn apply_install_plan_redacts_archive_tree_release_source_url_in_result() 
 }
 
 #[tokio::test]
-async fn apply_install_plan_installs_archive_release_with_unrooted_archive_binary_fallback()
+async fn apply_install_plan_rejects_archive_release_with_unrooted_archive_binary_hint()
 -> anyhow::Result<()> {
     let archive_name = "7z2600-linux-x64.tar.xz";
-    let archive_bytes =
-        make_tar_xz_archive(&[("7zz", b"#!/bin/sh\necho root-7zz\n".as_slice(), 0o755)])?;
+    let archive_bytes = make_tar_xz_archive(&[(
+        "7z2600-linux-x64/7zz",
+        b"#!/bin/sh\necho root-7zz\n".as_slice(),
+        0o755,
+    )])?;
 
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let addr = listener.local_addr()?;
     let base = format!("http://{addr}");
     let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
     routes.insert(format!("/asset/{archive_name}"), archive_bytes.clone());
-    let handle = spawn_mock_http_server(listener, routes, 2);
+    let handle = spawn_mock_http_server(listener, routes, 1);
 
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
@@ -2534,16 +2529,8 @@ async fn apply_install_plan_installs_archive_release_with_unrooted_archive_binar
     };
 
     let result = crate::apply_install_plan(&plan, &request).await?;
-    assert_eq!(result.items[0].status, BootstrapStatus::Installed);
-    assert_eq!(
-        result.items[0]
-            .archive_match
-            .as_ref()
-            .map(|matched| (matched.format, matched.path.as_str())),
-        Some((BootstrapArchiveFormat::TarXz, "7zz"))
-    );
-    let installed = std::fs::read_to_string(managed_dir.join("7zz"))?;
-    assert!(installed.contains("root-7zz"));
+    assert_eq!(result.items[0].status, BootstrapStatus::Failed);
+    assert_eq!(result.items[0].failure_code, Some(ExitCode::Install));
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -2761,7 +2748,10 @@ fn system_recipes_cover_macos() {
 
 #[test]
 fn target_binary_ext_matches_windows_and_unix() {
-    assert_eq!(executable_suffix_for_target("x86_64-pc-windows-msvc"), ".exe");
+    assert_eq!(
+        executable_suffix_for_target("x86_64-pc-windows-msvc"),
+        ".exe"
+    );
     assert_eq!(executable_suffix_for_target("x86_64-unknown-linux-gnu"), "");
 }
 

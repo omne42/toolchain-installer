@@ -179,6 +179,14 @@ fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
                     .join("msys-2.0.dll")
             });
     }
+    if normalized.ends_with("PortableGit/mingw64/bin/git.exe")
+        || normalized.ends_with("PortableGit/usr/bin/git.exe")
+        || normalized.ends_with("PortableGit/bin/git.exe")
+    {
+        return relative_target
+            .parent()
+            .map(|parent| parent.join("msys-2.0.dll"));
+    }
     None
 }
 

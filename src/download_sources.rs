@@ -78,7 +78,9 @@ pub(crate) fn make_download_candidates(
 mod tests {
     use omne_artifact_install_primitives::ArtifactDownloadCandidateKind;
 
-    use super::{build_download_candidates, redact_source_url, result_source_kind_for_download_candidate};
+    use super::{
+        build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
+    };
     use crate::contracts::BootstrapSourceKind;
 
     #[test]
