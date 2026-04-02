@@ -364,6 +364,14 @@ fn uv_tool_option_like_package_returns_usage_error() {
 }
 
 #[test]
+fn strict_mode_fails_when_tool_is_unsupported() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--json", "--strict", "--tool", "custom-tool"])
+        .assert()
+        .code(5);
+}
+
+#[test]
 fn strict_mode_unknown_method_still_returns_usage_exit_code() {
     let mut cmd = bootstrap_cmd();
     cmd.args([
@@ -2328,7 +2336,7 @@ fn conflicting_nested_plan_destinations_return_usage_exit_code() {
 }
 
 #[test]
-fn apt_rejects_non_apt_manager() {
+fn apt_method_is_rejected_as_unsupported_method() {
     let mut cmd = bootstrap_cmd();
     cmd.args([
         "--method",

@@ -3801,7 +3801,7 @@ fn validate_plan_rejects_pip_destination_field() {
 }
 
 #[test]
-fn validate_plan_rejects_apt_with_non_apt_manager() {
+fn validate_plan_rejects_apt_alias_method() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -3823,7 +3823,7 @@ fn validate_plan_rejects_apt_with_non_apt_manager() {
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt should reject non-apt manager");
+    .expect_err("apt alias method should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
 }
 

@@ -116,9 +116,12 @@ pub struct BootstrapResult {
 pub type InstallExecutionResult = BootstrapResult;
 
 pub fn has_failure(items: &[BootstrapItem]) -> bool {
-    items
-        .iter()
-        .any(|item| item.status == BootstrapStatus::Failed)
+    items.iter().any(|item| {
+        matches!(
+            item.status,
+            BootstrapStatus::Failed | BootstrapStatus::Unsupported
+        )
+    })
 }
 
 pub(crate) fn build_failed_bootstrap_item(
@@ -143,7 +146,9 @@ pub(crate) fn build_failed_bootstrap_item(
 
 #[cfg(test)]
 mod tests {
-    use super::{BootstrapArchiveFormat, BootstrapArchiveMatch};
+    use super::{
+        BootstrapArchiveFormat, BootstrapArchiveMatch, BootstrapItem, BootstrapStatus, has_failure,
+    };
     use omne_archive_primitives::{ArchiveBinaryMatch, BinaryArchiveFormat};
 
     #[test]
@@ -160,5 +165,22 @@ mod tests {
                 path: "dist/bin/tool".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn has_failure_treats_unsupported_as_strict_failure() {
+        let items = vec![BootstrapItem {
+            tool: "custom-tool".to_string(),
+            status: BootstrapStatus::Unsupported,
+            source: None,
+            source_kind: None,
+            archive_match: None,
+            destination: None,
+            detail: None,
+            error_code: None,
+            failure_code: None,
+        }];
+
+        assert!(has_failure(&items));
     }
 }
