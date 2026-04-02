@@ -36,6 +36,7 @@
    - `id` 与 `binary_name` 都必须是纯叶子名，不允许把路径片段塞进默认目标名。
    - `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的声明式 `package` 字段不能长得像命令行选项；`--editable`、`--workspace`、`--git`、`--toolchain`、`--index-url` 这类值会在 resolve 阶段直接拒绝。
    - 会按本地路径解释的 `package` 只接受当前宿主机原生的绝对路径语法；非 Windows 宿主会直接拒绝 `C:\repo\demo` 或 `file:C:\repo\demo` 这类 Windows-local 路径，避免把伪绝对路径落成相对文件操作。
+   - `pip` 的默认解释器回退只会发生在命令缺失时；如果首选解释器已经真实执行安装并失败，installer 会直接返回失败，避免同一 plan 被静默装进另一个 Python 环境。
    - 相对路径只会解析到 `managed_dir` 下；当目标是 Windows 时，`bin\\tool.exe` 与 `bin/tool.exe` 会按同一相对层级处理。
    - 解析后若两个 item 指向同一目标路径，或一个目标路径嵌套在另一个目标路径之下，plan 会在执行前直接拒绝。
    - `npm_global` 允许复用托管目录里已有的 leaf symlink 入口，但这个 symlink 解析后的目标仍必须留在 `managed_dir` 内；不能借复用入口把实际执行路径指到托管根外部。
