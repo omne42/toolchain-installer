@@ -26,7 +26,8 @@ pub(crate) fn execute_system_package_item(
             Some(platform) => default_system_package_install_recipes_for_os(
                 platform.operating_system().as_str(),
                 &package,
-            ),
+            )
+            .map_err(|err| OperationError::install(err.to_string()))?,
             None => Vec::new(),
         },
     };

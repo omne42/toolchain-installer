@@ -28,7 +28,8 @@ impl ExecutionContext {
         let host_triple = detect_host_target_triple()
             .map(str::to_string)
             .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-        let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
+        let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple)
+            .map_err(|err| InstallerError::usage(err.to_string()))?;
         if matches!(constraint, TargetConstraint::HostOnly) && target_triple != host_triple {
             return Err(InstallerError::usage(format!(
                 "bootstrap only supports the current host triple `{host_triple}`; use `--method release` or `--plan-file` for cross-target downloads"

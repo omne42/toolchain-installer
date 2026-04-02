@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use omne_host_info_primitives::executable_suffix_for_target;
 
 pub(crate) fn validated_binary_suffix(target_triple: &str) -> &'static str {
-    executable_suffix_for_target(target_triple)
+    executable_suffix_for_target(target_triple).expect("target triple should be validated")
 }
 
 pub(crate) fn managed_uv_binary_path(target_triple: &str, managed_dir: &Path) -> PathBuf {

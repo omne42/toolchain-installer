@@ -41,7 +41,6 @@ pub(crate) async fn install_uv_from_public_release(
             destination,
             asset_name: &asset.name,
             binary_name: &binary_name,
-            tool_name: "uv",
             archive_binary_hint: archive_binary_hint.as_deref(),
             expected_sha256: Some(&expected_sha),
             max_download_bytes: cfg.download.max_download_bytes,
@@ -55,7 +54,7 @@ pub(crate) async fn install_uv_from_public_release(
     } = downloaded;
     Ok(InstallSource::new(
         source.url,
-        result_source_kind_for_download_candidate(source.kind),
+        result_source_kind_for_download_candidate(&source.source_label),
     )
     .with_archive_match(archive_match.into()))
 }

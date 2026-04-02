@@ -1,5 +1,5 @@
 use github_kit::{GitHubApiRequestOptions, GitHubRelease, fetch_latest_release};
-use http_kit::{HttpClientOptions, build_http_client_with_options};
+use http_kit::{HttpClientOptions, HttpClientProfile, build_http_client_profile};
 #[cfg(test)]
 use reqwest::Url;
 
@@ -18,7 +18,8 @@ pub(crate) async fn fetch_latest_release_metadata(
         repo,
         GitHubApiRequestOptions::new()
             .with_user_agent("toolchain-installer")
-            .with_bearer_token(cfg.github_releases.token.as_deref()),
+            .with_bearer_token(cfg.github_releases.token.as_deref())
+            .with_allow_custom_bearer_api_base(true),
     )
     .await
     .map_err(|err| OperationError::download(err.to_string()))
@@ -26,8 +27,8 @@ pub(crate) async fn fetch_latest_release_metadata(
 
 pub(crate) fn build_github_http_client(
     cfg: &InstallerRuntimeConfig,
-) -> OperationResult<reqwest::Client> {
-    build_http_client_with_options(&HttpClientOptions {
+) -> OperationResult<HttpClientProfile> {
+    build_http_client_profile(&HttpClientOptions {
         timeout: Some(cfg.download.http_timeout),
         ..HttpClientOptions::default()
     })

@@ -13,7 +13,7 @@ use omne_artifact_install_primitives::{
     install_archive_tree_from_bytes, install_binary_from_archive,
 };
 use omne_host_info_primitives::{
-    detect_host_platform, executable_suffix_for_target, resolve_target_triple,
+    TargetTripleError, detect_host_platform, executable_suffix_for_target, resolve_target_triple,
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
@@ -1424,7 +1424,8 @@ fn select_mingit_release_asset_prefers_busybox_on_x64() {
 #[test]
 fn system_recipes_cover_linux() {
     let package = SystemPackageName::new("git").expect("valid package name");
-    let recipes = default_system_package_install_recipes_for_os("linux", &package);
+    let recipes =
+        default_system_package_install_recipes_for_os("linux", &package).expect("linux recipes");
     assert!(!recipes.is_empty());
     assert!(recipes.iter().any(|recipe| recipe.program == "apt-get"));
 }
@@ -2607,7 +2608,6 @@ fn install_binary_from_tar_xz_uses_hint() -> anyhow::Result<()> {
         "node-v1.0.0-linux-x64.tar.xz",
         &archive,
         "node",
-        "node",
         &destination,
         Some("node-v1.0.0-linux-x64/bin/node"),
     )?;
@@ -2725,7 +2725,8 @@ fn gateway_candidate_for_git_release_download_url_rejects_non_matching_or_embedd
 #[test]
 fn system_recipes_cover_macos() {
     let package = SystemPackageName::new("git").expect("valid package name");
-    let recipes = default_system_package_install_recipes_for_os("macos", &package);
+    let recipes =
+        default_system_package_install_recipes_for_os("macos", &package).expect("macos recipes");
     assert_eq!(recipes.len(), 1);
     assert_eq!(recipes[0].program, "brew");
 }
@@ -2734,9 +2735,12 @@ fn system_recipes_cover_macos() {
 fn target_binary_ext_matches_windows_and_unix() {
     assert_eq!(
         executable_suffix_for_target("x86_64-pc-windows-msvc"),
-        ".exe"
+        Ok(".exe")
     );
-    assert_eq!(executable_suffix_for_target("x86_64-unknown-linux-gnu"), "");
+    assert_eq!(
+        executable_suffix_for_target("x86_64-unknown-linux-gnu"),
+        Ok("")
+    );
 }
 
 #[test]
@@ -2745,13 +2749,16 @@ fn resolve_target_triple_accepts_supported_trimmed_override() {
         Some("  x86_64-pc-windows-msvc  "),
         "x86_64-unknown-linux-gnu",
     );
-    assert_eq!(detected, "x86_64-pc-windows-msvc".to_string());
+    assert_eq!(detected, Ok("x86_64-pc-windows-msvc".to_string()));
 }
 
 #[test]
 fn resolve_target_triple_rejects_unknown_trimmed_override() {
     let detected = resolve_target_triple(Some("  custom-target  "), "x86_64-unknown-linux-gnu");
-    assert_eq!(detected, "custom-target".to_string());
+    assert_eq!(
+        detected,
+        Err(TargetTripleError::Unsupported("custom-target".to_string()))
+    );
 }
 
 #[test]
