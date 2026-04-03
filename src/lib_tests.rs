@@ -1378,7 +1378,7 @@ fn gateway_candidate_for_git_release_download_url_parses_exact_git_release_url()
 }
 
 #[test]
-fn gateway_candidate_for_git_release_download_url_ignores_query_and_fragment() {
+fn gateway_candidate_for_git_release_download_url_rejects_query_and_fragment() {
     let cfg = InstallerRuntimeConfig {
         gateway: GatewayRoutingPolicy {
             base: Some("https://gw.example".to_string()),
@@ -1386,14 +1386,12 @@ fn gateway_candidate_for_git_release_download_url_ignores_query_and_fragment() {
         },
         ..test_runtime_config()
     };
-    let candidate = gateway_candidate_for_git_release_download_url(
-        &cfg,
-        "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip?download=1#fragment",
-    )
-    .expect("candidate");
     assert_eq!(
-        candidate,
-        "https://gw.example/toolchain/git/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip"
+        gateway_candidate_for_git_release_download_url(
+            &cfg,
+            "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit-2.48.1-busybox-64-bit.zip?download=1#fragment",
+        ),
+        None
     );
 }
 
