@@ -11,7 +11,7 @@
 ## 强制策略
 
 1. 固定路由
-   - 仅允许 `/toolchain/git/{tag}/{asset}`，禁止任何查询参数。
+   - 仅允许 `/toolchain/git/{tag}/{asset}`，禁止任何查询参数或 fragment。
 2. 白名单来源
    - 只允许预定义域名与资产模式，非白名单直接拒绝。
 3. 中国流量限定
@@ -31,6 +31,7 @@
 9. 路径约束
    - Unix 风格绝对路径如 `/tmp/demo` 会直接拒绝，不能借此绕过托管目录。
    - Windows 绝对路径如 `C:\tools\demo.exe` 只在 Windows 宿主上按原样保留；非 Windows 宿主会直接拒绝，避免把 Windows-local 语法误当成相对路径落盘。
+   - 外部网关候选只接受 canonical `https://github.com/git-for-windows/git/releases/download/{tag}/{asset}` 下载 URL；只要附带 query、fragment，或 `tag` / `asset` 不是单一路径段，就不会参与路由推断。
    - plan 中的 `destination` 禁止包含 `..`。
    - 同时拒绝 Windows drive-relative 路径如 `C:foo`，以及 Windows root-relative 路径如 `\foo`。
    - `id` 与 `binary_name` 都必须是纯叶子名，不允许把路径片段塞进默认目标名。

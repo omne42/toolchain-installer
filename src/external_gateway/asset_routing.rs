@@ -16,6 +16,9 @@ fn git_release_asset_from_url(url: &str) -> Option<(String, String)> {
     if parsed.scheme() != "https" {
         return None;
     }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return None;
+    }
     if parsed.host_str()? != "github.com" {
         return None;
     }
@@ -30,7 +33,7 @@ fn git_release_asset_from_url(url: &str) -> Option<(String, String)> {
     }
     let tag = segments[4];
     let asset = segments[5];
-    if tag.is_empty() || asset.is_empty() {
+    if !is_safe_gateway_path_segment(tag) || !is_safe_gateway_path_segment(asset) {
         return None;
     }
     Some((tag.to_string(), asset.to_string()))
@@ -44,7 +47,7 @@ pub(crate) fn gateway_candidate_for_git_release_asset(
     let base = gateway_base_for_git_release(cfg)?;
     let safe_tag = tag.trim();
     let safe_asset_name = asset_name.trim();
-    if safe_tag.is_empty() || safe_asset_name.is_empty() {
+    if !is_safe_gateway_path_segment(safe_tag) || !is_safe_gateway_path_segment(safe_asset_name) {
         return None;
     }
     Some(make_gateway_asset_candidate(
@@ -53,6 +56,14 @@ pub(crate) fn gateway_candidate_for_git_release_asset(
         safe_tag,
         safe_asset_name,
     ))
+}
+
+fn is_safe_gateway_path_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains(['/', '\\'])
+        && !value.chars().any(char::is_control)
 }
 
 fn gateway_base_for_git_release(cfg: &InstallerRuntimeConfig) -> Option<&str> {
@@ -75,7 +86,37 @@ pub(crate) fn make_gateway_asset_candidate(
 
 #[cfg(test)]
 mod tests {
-    use super::git_release_asset_from_url;
+    use super::{gateway_candidate_for_git_release_asset, git_release_asset_from_url};
+    use crate::installer_runtime_config::{
+        DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy,
+        InstallerRuntimeConfig, PackageIndexPolicy, PythonMirrorPolicy,
+    };
+
+    fn gateway_enabled_config() -> InstallerRuntimeConfig {
+        InstallerRuntimeConfig {
+            github_releases: GitHubReleasePolicy {
+                api_bases: Vec::new(),
+                token: None,
+            },
+            download_sources: DownloadSourcePolicy {
+                mirror_prefixes: Vec::new(),
+            },
+            download: DownloadPolicy {
+                http_timeout: std::time::Duration::from_secs(120),
+                max_download_bytes: None,
+            },
+            package_indexes: PackageIndexPolicy {
+                indexes: Vec::new(),
+            },
+            python_mirrors: PythonMirrorPolicy {
+                install_mirrors: Vec::new(),
+            },
+            gateway: GatewayRoutingPolicy {
+                base: Some("https://gateway.example".to_string()),
+                country: Some("CN".to_string()),
+            },
+        }
+    }
 
     #[test]
     fn git_release_asset_from_url_accepts_exact_github_release_download_path() {
@@ -107,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn git_release_asset_from_url_rejects_non_https_and_query_variants() {
+    fn git_release_asset_from_url_rejects_non_https_query_and_fragment_variants() {
         assert_eq!(
             git_release_asset_from_url(
                 "http://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip"
@@ -118,13 +159,13 @@ mod tests {
             git_release_asset_from_url(
                 "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip?download=1"
             ),
-            Some(("v2.48.1.windows.1".to_string(), "MinGit.zip".to_string()))
+            None
         );
         assert_eq!(
             git_release_asset_from_url(
                 "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip#fragment"
             ),
-            Some(("v2.48.1.windows.1".to_string(), "MinGit.zip".to_string()))
+            None
         );
     }
 
@@ -135,6 +176,20 @@ mod tests {
                 "https://github.com/cli/cli/releases/download/v2.0.0/gh_2.0.0_linux_amd64.tar.gz"
             ),
             None
+        );
+    }
+
+    #[test]
+    fn gateway_candidate_for_git_release_asset_rejects_unsafe_path_segments() {
+        let cfg = gateway_enabled_config();
+
+        assert!(
+            gateway_candidate_for_git_release_asset(&cfg, "../v2.48.1.windows.1", "MinGit.zip")
+                .is_none()
+        );
+        assert!(
+            gateway_candidate_for_git_release_asset(&cfg, "v2.48.1.windows.1", "nested/MinGit.zip")
+                .is_none()
         );
     }
 }
