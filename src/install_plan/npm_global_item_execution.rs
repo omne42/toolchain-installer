@@ -809,10 +809,8 @@ fn npm_package_version_is_exact(version: &str) -> bool {
 
 fn npm_package_name_from_explicit_source(package: &str) -> Option<&str> {
     let package = package.trim();
-    if let Some(alias) = package.split_once("@npm:").map(|(alias, _)| alias)
-        && !alias.is_empty()
-    {
-        return Some(alias);
+    if let Some((_, source)) = package.split_once("@npm:") {
+        return Some(npm_package_name(source));
     }
     package.strip_prefix("npm:").map(npm_package_name)
 }
@@ -1269,7 +1267,7 @@ mod tests {
         assert_eq!(
             npm_package_request("alias@npm:http-server@14.1.1"),
             NpmPackageRequest::ExplicitSource {
-                package_name: Some("alias"),
+                package_name: Some("http-server"),
             }
         );
     }
@@ -1332,6 +1330,39 @@ mod tests {
             "demo",
             Some(&package_dir),
             None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_noop_for_alias_spec_with_matching_source_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("alias");
+        let binary_path = temp.path().join("bin").join("http-server");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "http-server",
+            "14.1.1",
+            "bin/http-server",
+        );
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "alias@npm:http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        );
+
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "alias@npm:http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            Some(&package_root),
             None,
         ));
     }
