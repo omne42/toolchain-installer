@@ -488,6 +488,92 @@ fn single_item_download_failure_uses_download_exit_code() {
 }
 
 #[test]
+fn single_item_plan_file_failure_uses_download_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "demo-release",
+      "method": "release",
+      "url": "http://127.0.0.1:9/demo.tar.gz"
+    }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .args(["--json", "--plan-file"])
+        .arg(&plan_path)
+        .assert()
+        .code(3)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["error_code"], "download_failed");
+}
+
+#[test]
+fn non_strict_multi_item_plan_returns_zero_with_failed_items() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("server addr");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/demo.bin".to_string(), b"demo-binary".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        format!(
+            r#"{{
+  "schema_version": 1,
+  "items": [
+    {{
+      "id": "demo-release-ok",
+      "method": "release",
+      "url": "http://{addr}/demo.bin",
+      "destination": "demo.bin"
+    }},
+    {{
+      "id": "demo-release-fail",
+      "method": "release",
+      "url": "http://127.0.0.1:9/missing.bin",
+      "destination": "missing.bin"
+    }}
+  ]
+}}"#
+        ),
+    )
+    .expect("write plan");
+
+    let managed_dir = temp.path().join("managed");
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .args(["--json", "--managed-dir"])
+        .arg(&managed_dir)
+        .args(["--plan-file"])
+        .arg(&plan_path)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][1]["status"], "failed");
+    assert_eq!(json["items"][1]["error_code"], "download_failed");
+
+    handle.join().expect("mock server thread join");
+}
+
+#[test]
 fn max_download_bytes_flag_limits_release_downloads() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
     let addr = listener.local_addr().expect("server addr");
