@@ -37,11 +37,12 @@ toolchain-installer bootstrap --json \
 ## 来源选择规则
 
 - `uv_tool`
-  - 官方 PyPI `https://pypi.org/simple` 会隐式参与候选。
-  - `--package-index` 追加的是备用索引，安装器会先做可达性探测，再优先使用可达源。
+  - 若 CLI 没显式传 `--package-index`，才会读取 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`；两者都没提供时，默认只使用官方 PyPI `https://pypi.org/simple`。
+  - 一旦存在显式 package index，候选顺序就只由这些显式索引决定，官方 PyPI 不再被隐式插回最前面。
+  - 安装器会先做可达性探测，再优先使用可达源。
 - `uv_python`
   - 官方 Python 下载来源会先尝试。
-  - `--python-mirror` 与 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供顺序回退的备用站。
+  - 若 CLI 显式传了 `--python-mirror`，就只使用这些显式 mirror 作为备用站；否则才读取 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`。
   - `uv python install` / `uv tool install` 默认都有 `900` 秒超时；慢链路环境可用 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 调整。
 - 所有探测都发生在当前宿主环境，因此不同平台会得到各自独立的可达性结果。
 
