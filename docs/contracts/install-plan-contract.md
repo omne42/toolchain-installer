@@ -113,6 +113,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_tool`
   - 允许 `package`、可选 `python`、可选 `binary_name`。
   - 所有 `binary_name` 都必须是 plain file name；调用方如果想控制子目录，应使用对应方法允许的 `destination`，而不是把路径片段塞进 `binary_name`。
+- direct CLI 模式里的 `--tool-version` 只是这个通用 `version` 字段的参数名；它不只属于 `uv_python`，同样可映射到 `cargo_install`、`go_install`。
 
 ## 宿主与目标约束
 
@@ -182,14 +183,16 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 - `uv_tool`
   - 当调用方没有显式提供任何包索引时，默认只使用官方 PyPI `https://pypi.org/simple`。
-  - 当调用方显式提供了 `--package-index` 或 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES` 时，installer 不再隐式把官方 PyPI 插到最前面；显式索引顺序就是候选顺序。
+  - CLI `--package-index` 优先级高于 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`；只有 CLI 没显式传索引时才读取环境变量。
+  - 当调用方显式提供了 `--package-index` 或 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES` 时，installer 不再隐式把官方 PyPI 插到最前面；最终生效的显式索引顺序就是候选顺序。
   - 若显式索引、镜像或镜像前缀里出现重复值，只会保留第一次出现的位置，不会按字典序重排。
   - 安装前会探测显式索引的可达性，把可达源优先用于安装。
   - 结果里的 `source` 会对显式索引做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
   - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式索引配置，避免外部 shell 状态静默污染来源选择。
   - `uv tool install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。超时会直接返回 install error，而不是无限期挂住整个 installer。
 - `uv_python`
-  - 安装前会先对官方 Python 下载来源与显式 `--python-mirror` / `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 做可达性探测；可达来源会被优先尝试，而官方来源在同等可达性下仍保持默认首位。
+  - CLI `--python-mirror` 优先级高于 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`；只有 CLI 没显式传镜像时才读取环境变量。
+  - 安装前会先对官方 Python 下载来源与最终生效的显式 mirror 做可达性探测；可达来源会被优先尝试，而官方来源在同等可达性下仍保持默认首位。
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
   - 官方来源成功时，结果里的 `source_kind` 会是 `canonical`；只有显式镜像命中时才会是 `python_mirror`。
   - 结果里的 `source` 会对显式镜像做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
@@ -200,7 +203,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 结果里的 `source` 会对最终命中的下载 URL 做脱敏，只保留协议、主机和路径，不回显用户信息、query 或 fragment。
 - `release`
   - 通过内置来源规则、镜像前缀与可达性结果确定下载候选顺序。
-  - `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 的重复值只去重，不重排显式顺序。
+  - CLI `--mirror-prefix` 优先级高于 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES`；只有 CLI 没显式传镜像前缀时才读取环境变量。
+  - 生效镜像前缀里的重复值只去重，不重排显式顺序。
 
 ## 参考输入
 

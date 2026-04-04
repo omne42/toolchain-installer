@@ -4,15 +4,15 @@
 
 - 优先官方来源。
 - 备用站只作为可达性和网络条件不佳时的回退。
-- 回退顺序由调用方显式追加的来源与内置来源共同决定。
+- 回退顺序先看调用方显式输入；同一类来源里，CLI 显式值优先于环境变量。
 - 可选 Worker 只做固定路由优化，不做开放代理。
 
 ## `release` 方法
 
 - 基于工具、版本、平台资产匹配规则生成候选。
 - 路径落点继续遵循 plan contract：只有 Windows 宿主才接受 Windows 绝对 `destination`；非 Windows 宿主会在执行前拒绝 `C:\...` 这类路径，而不是把它误拼成相对落点。
-- `--mirror-prefix` 与 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES` 可以追加候选前缀。
-- 显式提供的 mirror 前缀会按传入顺序去重，不会按字典序重排。
+- `--mirror-prefix` 优先于 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES`；只有 CLI 没显式传时才读取环境变量。
+- 生效的 mirror 前缀会按传入顺序去重，不会按字典序重排。
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES` 可覆盖 release metadata API base；未设置时默认只使用官方 `https://api.github.com`。
 - `country=CN` 且 canonical URL 的 path 精确匹配 `https://github.com/git-for-windows/git/releases/download/<tag>/<asset>` 时，可通过 `gateway-base` 走固定网关；query/fragment 不参与 gateway 资产推断。
 - `--gateway-base` / `TOOLCHAIN_INSTALLER_GATEWAY_BASE` 与 `--country` / `TOOLCHAIN_INSTALLER_COUNTRY` 共同决定是否生成网关候选。
@@ -30,7 +30,8 @@
 ## `uv_tool` 方法
 
 - 当调用方没有显式提供任何索引时，默认只使用官方 PyPI `https://pypi.org/simple`。
-- `--package-index` 与 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES` 一旦提供，就由这些显式索引定义候选顺序；installer 不再把官方 PyPI 隐式插到最前面。
+- `--package-index` 优先于 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`；只有 CLI 没显式传时才读取环境变量。
+- 一旦存在生效的显式索引，就由这些索引定义候选顺序；installer 不再把官方 PyPI 隐式插到最前面。
 - 显式索引会按调用方给出的顺序去重，不会被内部集合重排。
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时不会直接硬依赖 GitHub，而是先尝试复用健康 host `uv`，再尝试用显式 package index 通过 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举可复用 `uv`；只有这些路径都失败时才回退到 GitHub public release。
 - package-index 自举 `uv` 时，结果里的 `source` 会继续脱敏显式索引 URL，不回显用户信息、query 或 fragment。
@@ -43,8 +44,8 @@
 ## `uv_python` 方法
 
 - 官方 Python 下载来源保持默认首位。
-- `--python-mirror` 与 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 追加备用镜像。
-- 显式 Python mirror 会按传入顺序去重，回退顺序与调用方声明保持一致。
+- `--python-mirror` 优先于 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`；只有 CLI 没显式传时才读取环境变量。
+- 生效的 Python mirror 会按传入顺序去重，回退顺序与调用方声明保持一致。
 - 安装前会对官方来源和显式 `http(s)` mirror 做可达性探测；可达来源优先，若可达性相同则仍按“官方优先、显式 mirror 按声明顺序追加”的顺序尝试。
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时不会直接硬依赖 GitHub，而是先尝试复用健康 host `uv`，再尝试用显式 package index 通过 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举可复用 `uv`；只有这些路径都失败时才回退到 GitHub public release。
 - 实际执行 `uv python install` 时同样带超时上限；单个安装进程挂死会被终止并返回带 stdout/stderr 的诊断错误，而不是无限阻塞。
