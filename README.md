@@ -18,8 +18,11 @@
 - `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
 - `pip` 表达的是“把包安装进选定 Python 环境”这类宿主环境变更，不承诺 installer 自己拥有的托管 `destination` 或可重放 artifact 坐标。
 - `pip` 只有在默认首选解释器命令不存在时才会回退到后续候选；若首选解释器已经执行 `-m pip install` 并失败，installer 会直接报错，不会静默装到另一个 Python 环境。
+- `uv_python` 与 `uv_tool` 的托管 `uv` 安装子进程会带有界 stdout/stderr 捕获和 hard timeout；默认是 `900` 秒，可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。
 - 未显式传 `--managed-dir` 时，默认托管目录是 `~/.omne_data/toolchain/<target>/bin`。
 - `release` 的相对 `destination` 解析到 `managed_dir` 下，并拒绝 `..` 路径逃逸。
+- 非 Windows 宿主即使显式把 `target_triple` 设为 Windows，也不会接受 `C:\tools\demo.exe` 这类 Windows 绝对 `destination`；installer 只接受当前宿主机真实可落盘的绝对路径语义。
+- Windows 托管 `git` 更新会把 `git-portable/` payload 切换和 `git.cmd` launcher 重写放进同一事务；launcher 写失败时会回滚到旧 payload，不留下半更新状态。
 - 失败项除了 `detail` 外，还会返回机器可读的 `error_code`。
 
 ## 文档入口

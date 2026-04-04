@@ -94,6 +94,8 @@
   - 限制单次下载的最大响应体大小；未设置时不启用额外大小上限。
 - `TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS`
   - 覆盖 HTTP 总超时；默认是 `120` 秒。
+- `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS`
+  - 覆盖 `uv python install` / `uv tool install` 子进程超时；默认是 `900` 秒。
 - `OMNE_DATA_DIR`
   - 当未指定 `--managed-dir` 且未设置 `TOOLCHAIN_INSTALLER_MANAGED_DIR` 时，默认托管目录会解析到 `OMNE_DATA_DIR/toolchain/<target>/bin`。
 
@@ -137,11 +139,11 @@
 - `2`
   - 参数错误、不支持的参数组合，不支持的 target triple，plan 中出现未知字段，或 plan / `--method` 中出现未知方法名。
 - `3`
-  - 单项调用中的下载或校验失败。
+  - 单项 direct method / 单项 plan 调用中的下载或校验失败；即使未开启 `--strict` 也会直接返回该 item 的失败码。
 - `4`
-  - 单项调用中的安装、解压、落盘或宿主安装失败。
+  - 单项 direct method / 单项 plan 调用中的安装、解压、落盘或宿主安装失败；即使未开启 `--strict` 也会直接返回该 item 的失败码。
 - `5`
-  - `--strict` 模式下存在失败项，或显式请求的 bootstrap 工具返回 `unsupported`。
+  - `--strict` 模式下多项执行存在失败项，或显式请求的 bootstrap 工具返回 `unsupported`。
 
 ## 稳定性规则
 

@@ -42,6 +42,7 @@ toolchain-installer bootstrap --json \
 - `uv_python`
   - 官方 Python 下载来源会先尝试。
   - `--python-mirror` 与 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 提供顺序回退的备用站。
+  - `uv python install` / `uv tool install` 默认都有 `900` 秒超时；慢链路环境可用 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 调整。
 - 所有探测都发生在当前宿主环境，因此不同平台会得到各自独立的可达性结果。
 
 ## 直接参数模式

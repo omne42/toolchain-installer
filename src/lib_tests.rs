@@ -13,7 +13,7 @@ use omne_artifact_install_primitives::{
     install_archive_tree_from_bytes, install_binary_from_archive,
 };
 use omne_host_info_primitives::{
-    TargetTripleError, detect_host_platform, executable_suffix_for_target, resolve_target_triple,
+    detect_host_platform, executable_suffix_for_target, resolve_target_triple,
 };
 use omne_integrity_primitives::{hash_sha256, parse_sha256_digest, parse_sha256_user_input};
 use omne_system_package_primitives::{
@@ -42,9 +42,9 @@ use crate::install_plan::install_plan_validation::{
     validate_plan, validate_plan_with_base_dir, validate_plan_with_managed_dir,
 };
 use crate::installer_runtime_config::{
-    DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
-    GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
-    PythonMirrorPolicy,
+    DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy,
+    DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig,
+    ManagedToolchainPolicy, PackageIndexPolicy, PythonMirrorPolicy,
 };
 use crate::managed_toolchain::managed_environment_layout::managed_python_installation_dir;
 use crate::managed_toolchain::managed_root_dir::{
@@ -82,6 +82,9 @@ fn test_runtime_config() -> InstallerRuntimeConfig {
         download: DownloadPolicy {
             http_timeout: Duration::from_secs(5),
             max_download_bytes: None,
+        },
+        managed_toolchain: ManagedToolchainPolicy {
+            uv_recipe_timeout: Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),
         },
     }
 }
@@ -2687,6 +2690,7 @@ fn install_binary_from_tar_xz_uses_hint() -> anyhow::Result<()> {
         "node-v1.0.0-linux-x64.tar.xz",
         &archive,
         "node",
+        "node",
         &destination,
         Some("node-v1.0.0-linux-x64/bin/node"),
     )?;
@@ -2814,12 +2818,9 @@ fn system_recipes_cover_macos() {
 fn target_binary_ext_matches_windows_and_unix() {
     assert_eq!(
         executable_suffix_for_target("x86_64-pc-windows-msvc"),
-        Ok(".exe")
+        ".exe"
     );
-    assert_eq!(
-        executable_suffix_for_target("x86_64-unknown-linux-gnu"),
-        Ok("")
-    );
+    assert_eq!(executable_suffix_for_target("x86_64-unknown-linux-gnu"), "");
 }
 
 #[test]
@@ -2828,16 +2829,13 @@ fn resolve_target_triple_accepts_supported_trimmed_override() {
         Some("  x86_64-pc-windows-msvc  "),
         "x86_64-unknown-linux-gnu",
     );
-    assert_eq!(detected, Ok("x86_64-pc-windows-msvc".to_string()));
+    assert_eq!(detected, "x86_64-pc-windows-msvc".to_string());
 }
 
 #[test]
-fn resolve_target_triple_rejects_unknown_trimmed_override() {
+fn resolve_target_triple_preserves_unknown_trimmed_override() {
     let detected = resolve_target_triple(Some("  custom-target  "), "x86_64-unknown-linux-gnu");
-    assert_eq!(
-        detected,
-        Err(TargetTripleError::Unsupported("custom-target".to_string()))
-    );
+    assert_eq!(detected, "custom-target".to_string());
 }
 
 #[test]
@@ -5077,6 +5075,72 @@ async fn execute_uv_tool_item_ignores_inherited_uv_environment_helper() -> anyho
         result.source.as_deref(),
         Some(format!("package-index:{index}").as_str())
     );
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_tool_item_uses_configured_uv_recipe_timeout() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  echo "timeout-start" >&2
+  sleep 5
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let index = format!("http://{addr}/simple");
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert("/simple".to_string(), b"ok".to_vec());
+    let handle = spawn_mock_http_server(listener, routes, 1);
+
+    let item = UvToolPlanItem {
+        id: "ruff".to_string(),
+        package: "ruff".to_string(),
+        python: None,
+        binary_name: "ruff".to_string(),
+        binary_name_explicit: false,
+    };
+    let cfg = InstallerRuntimeConfig {
+        package_indexes: PackageIndexPolicy {
+            indexes: vec![index],
+        },
+        managed_toolchain: ManagedToolchainPolicy {
+            uv_recipe_timeout: Duration::from_millis(50),
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_tool_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &cfg,
+        &client,
+    )
+    .await
+    .expect_err("hung uv tool install should time out");
+
+    assert!(err.detail().contains("timed out"));
+    assert!(err.detail().contains("timeout-start"));
     handle.join().expect("mock server thread join");
     Ok(())
 }

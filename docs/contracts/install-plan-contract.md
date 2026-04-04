@@ -175,7 +175,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_python` 只有在 `managed_dir` 下实际发现“本次新建或更新”的匹配版本 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0`，或目录里本来就残留着匹配版本旧解释器，都不构成成功条件。
 - `uv_python` 的版本匹配按版本段比较：请求 `3` 可以接受托管目录里的任意 `3.x.y`，请求 `3.13` 可以接受 `3.13.x`，但请求 `3.13.1` 不会误接受 `3.13.12`。
 - `uv_python` 当请求 `3` 或 `3.13` 这类 family selector 时，会在所有匹配的托管解释器里选择版本最高的那个，不会因为目录字典序或旧安装残留而回退到更老的 patch 版本。
-- `uv`、`uv_python`、`uv_tool` 的托管 `uv` 子进程执行都会带固定超时，并对 stdout/stderr 做有界捕获；installer 不会因为挂起进程或无限输出把自身卡死或无限占用内存。
+- `uv_python`、`uv_tool` 的托管 `uv` 安装子进程都会带 hard timeout，并对 stdout/stderr 做有界捕获；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。installer 不会因为挂起进程或无限输出把自身卡死或无限占用内存。
 - `uv_tool` 若目标路径上已有同名旧二进制，installer 会先把旧文件挪到临时备份；只有本次 `uv tool install` 真正产出新的目标二进制，且该入口还能通过一次带超时上限的 `--version` 健康探测后才算成功，失败时会恢复旧文件。
 
 ## 来源探测与回退
@@ -187,14 +187,14 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 安装前会探测显式索引的可达性，把可达源优先用于安装。
   - 结果里的 `source` 会对显式索引做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
   - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式索引配置，避免外部 shell 状态静默污染来源选择。
-  - `uv tool install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；超时会直接返回 install error，而不是无限期挂住整个 installer。
+  - `uv tool install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。超时会直接返回 install error，而不是无限期挂住整个 installer。
 - `uv_python`
   - 安装前会先对官方 Python 下载来源与显式 `--python-mirror` / `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS` 做可达性探测；可达来源会被优先尝试，而官方来源在同等可达性下仍保持默认首位。
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
   - 官方来源成功时，结果里的 `source_kind` 会是 `canonical`；只有显式镜像命中时才会是 `python_mirror`。
   - 结果里的 `source` 会对显式镜像做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
   - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式 Python mirror 配置，避免外部 shell 状态静默污染来源选择。
-  - `uv python install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；超时会直接返回 install error，而不是无限期挂住整个 installer。
+  - `uv python install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。超时会直接返回 install error，而不是无限期挂住整个 installer。
 - `release`、`archive_tree_release`
   - 资产类型判断基于 URL 的 path 最后一段，不把 query string 当成资产名的一部分；`tool.tar.gz?download=1` 仍按 `tool.tar.gz` 处理。
   - 结果里的 `source` 会对最终命中的下载 URL 做脱敏，只保留协议、主机和路径，不回显用户信息、query 或 fragment。

@@ -56,6 +56,7 @@ pub(crate) async fn install_gh_from_public_release(
             destination,
             asset_name: &asset.name,
             binary_name: &format!("gh{binary_ext}"),
+            tool_name: "gh",
             archive_binary_hint: archive_binary_hint.as_deref(),
             expected_sha256: Some(&expected_sha),
             max_download_bytes: cfg.download.max_download_bytes,
@@ -69,7 +70,7 @@ pub(crate) async fn install_gh_from_public_release(
     } = downloaded;
     Ok(InstallSource::new(
         source.url,
-        result_source_kind_for_download_candidate(&source.source_label),
+        result_source_kind_for_download_candidate(source.kind),
     )
     .with_archive_match(archive_match.into()))
 }
@@ -119,6 +120,7 @@ pub(crate) async fn install_git_from_public_release(
             destination,
             asset_name: &asset.name,
             binary_name: "git.exe",
+            tool_name: "git",
             archive_binary_hint: None,
             expected_sha256: Some(&expected_sha),
             max_download_bytes: cfg.download.max_download_bytes,
@@ -132,7 +134,7 @@ pub(crate) async fn install_git_from_public_release(
     } = downloaded;
     Ok(InstallSource::new(
         source.url,
-        result_source_kind_for_download_candidate(&source.source_label),
+        result_source_kind_for_download_candidate(source.kind),
     )
     .with_archive_match(archive_match.into()))
 }
@@ -237,7 +239,7 @@ async fn download_and_install_mingit_bundle(
 
     Ok(InstallSource::new(
         selected.url,
-        result_source_kind_for_download_candidate(&selected.source_label),
+        result_source_kind_for_download_candidate(selected.kind),
     )
     .with_archive_match(BootstrapArchiveMatch {
         format: BootstrapArchiveFormat::Zip,
@@ -595,6 +597,50 @@ mod tests {
         assert_eq!(
             std::fs::read(&launcher_destination).expect("restored launcher"),
             b"old-launcher"
+        );
+        assert!(!backup_root.exists(), "backup root should be cleaned");
+        assert!(
+            !launcher_backup.exists(),
+            "launcher backup should be cleaned"
+        );
+    }
+
+    #[test]
+    fn mingit_finalize_removes_new_launcher_when_old_install_had_no_launcher() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let staging_root = managed_dir.join("git-portable.stage");
+        let backup_root = managed_dir.join("git-portable.backup");
+        let launcher_destination = managed_dir.join("git.cmd");
+        let launcher_backup = mingit_launcher_backup_path(&launcher_destination);
+        std::fs::create_dir_all(portable_root.join("cmd")).expect("create old portable root");
+        std::fs::create_dir_all(staging_root.join("cmd")).expect("create staging portable root");
+        std::fs::write(portable_root.join("cmd").join("git.exe"), b"old").expect("write old git");
+        std::fs::write(staging_root.join("cmd").join("git.exe"), b"new").expect("write staged git");
+
+        let err = finalize_mingit_installation_with_launcher_writer(
+            &portable_root,
+            &staging_root,
+            &backup_root,
+            &launcher_destination,
+            &launcher_backup,
+            || {
+                std::fs::write(&launcher_destination, b"new-launcher")
+                    .map_err(|write_err| OperationError::install(write_err.to_string()))?;
+                Err(OperationError::install("launcher post-write failure"))
+            },
+        )
+        .expect_err("post-write failure should restore payload and remove new launcher");
+
+        assert!(err.to_string().contains("launcher post-write failure"));
+        assert_eq!(
+            std::fs::read(portable_root.join("cmd").join("git.exe")).expect("restored git"),
+            b"old"
+        );
+        assert!(
+            !launcher_destination.exists(),
+            "new launcher should be removed when there was no prior launcher"
         );
         assert!(!backup_root.exists(), "backup root should be cleaned");
         assert!(

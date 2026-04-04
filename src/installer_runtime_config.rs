@@ -5,6 +5,7 @@ use crate::contracts::ExecutionRequest;
 
 pub(crate) const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
 pub(crate) const DEFAULT_HTTP_TIMEOUT_SECONDS: u64 = 120;
+pub(crate) const DEFAULT_UV_TIMEOUT_SECONDS: u64 = 15 * 60;
 pub(crate) const DEFAULT_PYPI_INDEX: &str = "https://pypi.org/simple";
 
 #[derive(Debug, Clone)]
@@ -15,6 +16,7 @@ pub(crate) struct InstallerRuntimeConfig {
     pub(crate) python_mirrors: PythonMirrorPolicy,
     pub(crate) gateway: GatewayRoutingPolicy,
     pub(crate) download: DownloadPolicy,
+    pub(crate) managed_toolchain: ManagedToolchainPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +52,11 @@ pub(crate) struct DownloadPolicy {
     pub(crate) max_download_bytes: Option<u64>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ManagedToolchainPolicy {
+    pub(crate) uv_recipe_timeout: Duration,
+}
+
 impl InstallerRuntimeConfig {
     pub(crate) fn from_execution_request(request: &ExecutionRequest) -> Self {
         Self {
@@ -59,6 +66,7 @@ impl InstallerRuntimeConfig {
             python_mirrors: PythonMirrorPolicy::from_execution_request(request),
             gateway: GatewayRoutingPolicy::from_execution_request(request),
             download: DownloadPolicy::from_execution_request(request),
+            managed_toolchain: ManagedToolchainPolicy::from_environment(),
         }
     }
 }
@@ -180,6 +188,15 @@ impl DownloadPolicy {
     }
 }
 
+impl ManagedToolchainPolicy {
+    fn from_environment() -> Self {
+        let uv_recipe_timeout = parse_positive_u64_env("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS")
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS));
+        Self { uv_recipe_timeout }
+    }
+}
+
 fn dedupe_strings(values: Vec<String>) -> Vec<String> {
     let mut unique = HashSet::new();
     values
@@ -217,7 +234,14 @@ fn parse_nonempty_env(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use super::*;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn download_source_policy_preserves_request_order_while_deduping() {
@@ -276,6 +300,29 @@ mod tests {
                 "https://mirror-b.example/python".to_string(),
                 "https://mirror-a.example/python".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn managed_toolchain_policy_uses_uv_timeout_override() {
+        let _guard = env_lock().lock().expect("env lock");
+        let previous = std::env::var_os("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS");
+        unsafe {
+            std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", "7");
+        }
+
+        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest::default());
+
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", value)
+            },
+            None => unsafe { std::env::remove_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS") },
+        }
+
+        assert_eq!(
+            cfg.managed_toolchain.uv_recipe_timeout,
+            Duration::from_secs(7)
         );
     }
 }

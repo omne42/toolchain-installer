@@ -62,7 +62,12 @@ pub(crate) async fn execute_uv_tool_item(
 
         let args = build_uv_tool_install_args(item);
 
-        if let Err(err) = run_managed_uv_recipe(uv.program.as_os_str(), &args, &env) {
+        if let Err(err) = run_managed_uv_recipe(
+            uv.program.as_os_str(),
+            &args,
+            &env,
+            cfg.managed_toolchain.uv_recipe_timeout,
+        ) {
             backup
                 .restore()
                 .map_err(crate::error::OperationError::install)?;

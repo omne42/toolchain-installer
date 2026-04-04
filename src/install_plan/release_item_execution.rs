@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use omne_artifact_install_primitives::{
-    ArtifactInstallError, ArtifactInstallErrorDetail, BinaryArchiveInstallRequest,
+    ArtifactInstallError, ArtifactInstallErrorKind, BinaryArchiveInstallRequest,
     DownloadBinaryRequest, InstalledArchiveBinary, download_and_install_binary_from_archive,
     download_binary_to_destination, is_binary_archive_asset_name,
 };
@@ -57,32 +57,40 @@ pub(crate) async fn execute_release_item(
             destination: &destination,
             asset_name: &asset_name,
             binary_name: &binary_name,
+            tool_name: &item.id,
             archive_binary_hint: archive_binary_hint.as_deref(),
             expected_sha256: expected_sha,
             max_download_bytes: cfg.download.max_download_bytes,
         };
-        let downloaded =
-            match download_release_archive_binary(download_client, &candidates, &primary_request)
-                .await
+        let downloaded = match download_and_install_binary_from_archive(
+            download_client,
+            &candidates,
+            &primary_request,
+        )
+        .await
+        {
+            Ok(downloaded) => downloaded,
+            Err(err)
+                if should_retry_release_archive_with_unprefixed_hint(
+                    &err,
+                    normalized_archive_binary_hint.as_deref(),
+                    archive_binary_hint.as_deref(),
+                ) =>
             {
-                Ok(downloaded) => downloaded,
-                Err(err)
-                    if should_retry_release_archive_with_unprefixed_hint(
-                        &err,
-                        normalized_archive_binary_hint.as_deref(),
-                        archive_binary_hint.as_deref(),
-                    ) =>
-                {
-                    let fallback_request = BinaryArchiveInstallRequest {
-                        archive_binary_hint: normalized_archive_binary_hint.as_deref(),
-                        ..primary_request
-                    };
-                    download_release_archive_binary(download_client, &candidates, &fallback_request)
-                        .await
-                        .map_err(OperationError::from_artifact_install)?
-                }
-                Err(err) => return Err(OperationError::from_artifact_install(err)),
-            };
+                let fallback_request = BinaryArchiveInstallRequest {
+                    archive_binary_hint: normalized_archive_binary_hint.as_deref(),
+                    ..primary_request
+                };
+                download_and_install_binary_from_archive(
+                    download_client,
+                    &candidates,
+                    &fallback_request,
+                )
+                .await
+                .map_err(OperationError::from_artifact_install)?
+            }
+            Err(err) => return Err(OperationError::from_artifact_install(err)),
+        };
         let InstalledArchiveBinary {
             source,
             archive_match,
@@ -91,9 +99,7 @@ pub(crate) async fn execute_release_item(
             tool: item.id.clone(),
             status: BootstrapStatus::Installed,
             source: Some(redact_source_url(&source.url)),
-            source_kind: Some(result_source_kind_for_download_candidate(
-                &source.source_label,
-            )),
+            source_kind: Some(result_source_kind_for_download_candidate(source.kind)),
             archive_match: Some(archive_match.into()),
             destination: Some(destination.display().to_string()),
             detail: None,
@@ -121,7 +127,7 @@ pub(crate) async fn execute_release_item(
         status: BootstrapStatus::Installed,
         source: Some(redact_source_url(&downloaded_source.url)),
         source_kind: Some(result_source_kind_for_download_candidate(
-            &downloaded_source.source_label,
+            downloaded_source.kind,
         )),
         archive_match: None,
         destination: Some(destination.display().to_string()),
@@ -142,23 +148,13 @@ fn release_archive_binary_hint(asset_name: &str, archive_binary: Option<&str>) -
     Some(format!("{root}/{normalized}"))
 }
 
-async fn download_release_archive_binary<D>(
-    downloader: &D,
-    candidates: &[omne_artifact_install_primitives::ArtifactDownloadCandidate],
-    request: &BinaryArchiveInstallRequest<'_>,
-) -> Result<InstalledArchiveBinary, ArtifactInstallError>
-where
-    D: omne_artifact_install_primitives::ArtifactDownloader + ?Sized,
-{
-    download_and_install_binary_from_archive(downloader, candidates, request).await
-}
-
 fn should_retry_release_archive_with_unprefixed_hint(
     err: &ArtifactInstallError,
     original_hint: Option<&str>,
     prefixed_hint: Option<&str>,
 ) -> bool {
-    err.detail() == Some(ArtifactInstallErrorDetail::ArchiveBinaryNotFound)
+    err.kind() == ArtifactInstallErrorKind::Install
+        && err.to_string().contains(" not found in ")
         && original_hint.is_some()
         && original_hint != prefixed_hint
 }

@@ -86,8 +86,9 @@ fn http_probe_url(raw: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::installer_runtime_config::{
-        DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy,
-        InstallerRuntimeConfig, PackageIndexPolicy, PythonMirrorPolicy,
+        DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy,
+        GitHubReleasePolicy, InstallerRuntimeConfig, ManagedToolchainPolicy, PackageIndexPolicy,
+        PythonMirrorPolicy,
     };
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -116,6 +117,9 @@ mod tests {
             download: DownloadPolicy {
                 http_timeout: Duration::from_secs(5),
                 max_download_bytes: None,
+            },
+            managed_toolchain: ManagedToolchainPolicy {
+                uv_recipe_timeout: Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),
             },
         }
     }
