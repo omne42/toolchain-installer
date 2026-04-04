@@ -1,0 +1,548 @@
+name: ci windows
+
+on:
+  push:
+    branches: ["main", "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_HOME: C:\actions-cache\cargo
+  RUSTUP_HOME: C:\actions-cache\rustup
+  CARGO_TARGET_DIR: C:\actions-cache\toolchain-installer\target
+  TOOLCHAIN_INSTALLER_REPO_DIR: C:\actions-cache\repos\omne42\toolchain-installer
+  TOOLCHAIN_INSTALLER_MIRROR_DIR: C:\actions-cache\mirrors\omne42\toolchain-installer.git
+  OMNE_FOUNDATION_REPO_DIR: C:\actions-cache\repos\omne42\omne_foundation
+  OMNE_FOUNDATION_MIRROR_DIR: C:\actions-cache\mirrors\omne42\omne_foundation.git
+  OMNE_RUNTIME_REPO_DIR: C:\actions-cache\repos\omne42\omne-runtime
+  OMNE_RUNTIME_MIRROR_DIR: C:\actions-cache\mirrors\omne42\omne-runtime.git
+
+jobs:
+  rust-matrix:
+    name: rust-matrix (windows-latest)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on:
+      group: windows-local
+      labels: omne42-local
+    concurrency:
+      group: persistent-worktree-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Sync persistent workspace and shared deps
+        id: sync
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Sync-Repo {
+            param(
+              [string]$RepoUrl,
+              [string]$RepoDir,
+              [string]$MirrorDir,
+              [string]$Ref
+            )
+
+            $repoExists = Test-Path (Join-Path $RepoDir ".git")
+            $mirrorExists = Test-Path $MirrorDir
+
+            New-Item -ItemType Directory -Force -Path (Split-Path $RepoDir -Parent) | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path $MirrorDir -Parent) | Out-Null
+
+            git config --global http.version HTTP/1.1
+            git config --global --add safe.directory $RepoDir
+
+            if (-not $mirrorExists) {
+              git clone --mirror $RepoUrl $MirrorDir
+            }
+
+            git -C $MirrorDir remote set-url origin $RepoUrl
+            git -C $MirrorDir fetch --prune origin "+refs/heads/*:refs/heads/*" "+refs/pull/*:refs/pull/*" "+refs/tags/*:refs/tags/*"
+
+            if (-not $repoExists) {
+              git clone $MirrorDir $RepoDir
+            }
+
+            git -C $RepoDir remote set-url origin $RepoUrl
+            git -C $RepoDir fetch --prune origin "+refs/heads/*:refs/remotes/origin/*" "+refs/pull/*:refs/remotes/pull/*" "+refs/tags/*:refs/tags/*"
+            git -C $RepoDir reset --hard $Ref
+            git -C $RepoDir clean -ffd
+
+            return [ordered]@{
+              mirror_exists = $mirrorExists
+              repo_exists = $repoExists
+              head = (git -C $RepoDir rev-parse HEAD)
+            }
+          }
+
+          function To-BashPath([string]$Path) {
+            $drive = $Path.Substring(0, 1).ToLowerInvariant()
+            $rest = $Path.Substring(2).Replace('\', '/')
+            return "/$drive$rest"
+          }
+
+          $before = [ordered]@{
+            cargo_registry_exists = Test-Path (Join-Path $env:CARGO_HOME "registry")
+            target_exists = Test-Path $env:CARGO_TARGET_DIR
+            target_entries = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          }
+
+          New-Item -ItemType Directory -Force -Path $env:CARGO_HOME | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:RUSTUP_HOME | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:CARGO_TARGET_DIR | Out-Null
+
+          $repo = Sync-Repo "https://github.com/${{ github.repository }}.git" $env:TOOLCHAIN_INSTALLER_REPO_DIR $env:TOOLCHAIN_INSTALLER_MIRROR_DIR $env:GITHUB_SHA
+          $foundation = Sync-Repo "https://github.com/omne42/omne_foundation.git" $env:OMNE_FOUNDATION_REPO_DIR $env:OMNE_FOUNDATION_MIRROR_DIR "origin/main"
+          $runtime = Sync-Repo "https://github.com/omne42/omne-runtime.git" $env:OMNE_RUNTIME_REPO_DIR $env:OMNE_RUNTIME_MIRROR_DIR "origin/main"
+
+          $repoDirBash = To-BashPath $env:TOOLCHAIN_INSTALLER_REPO_DIR
+
+          $report = [ordered]@{
+            repository = $env:GITHUB_REPOSITORY
+            sha = $env:GITHUB_SHA
+            before = $before
+            toolchain_installer = [ordered]@{
+              repo_dir = $env:TOOLCHAIN_INSTALLER_REPO_DIR
+              repo_dir_bash = $repoDirBash
+              mirror_existed_before = $repo.mirror_exists
+              repo_existed_before = $repo.repo_exists
+              head = $repo.head
+            }
+            omne_foundation = [ordered]@{
+              repo_dir = $env:OMNE_FOUNDATION_REPO_DIR
+              head = $foundation.head
+            }
+            omne_runtime = [ordered]@{
+              repo_dir = $env:OMNE_RUNTIME_REPO_DIR
+              head = $runtime.head
+            }
+          }
+
+          $reportPath = Join-Path $env:RUNNER_TEMP "persistent-cache-report.json"
+          $report | ConvertTo-Json -Depth 6 | Out-File -FilePath $reportPath -Encoding utf8
+
+          Write-Host "persistent-cache: mirror_exists_before=$($repo.mirror_exists)"
+          Write-Host "persistent-cache: worktree_exists_before=$($repo.repo_exists)"
+          Write-Host "persistent-cache: cargo_registry_exists_before=$($before.cargo_registry_exists)"
+          Write-Host "persistent-cache: target_exists_before=$($before.target_exists)"
+          Write-Host "persistent-cache: repo_dir=$($env:TOOLCHAIN_INSTALLER_REPO_DIR)"
+          Write-Host "persistent-cache: synced_sha=$($repo.head)"
+          Write-Host "persistent-cache: foundation_sha=$($foundation.head)"
+          Write-Host "persistent-cache: runtime_sha=$($runtime.head)"
+
+          "repo_dir_bash=$repoDirBash" >> $env:GITHUB_OUTPUT
+          "report_path=$reportPath" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Record persistent target state before build
+        id: target_before
+        shell: pwsh
+        run: |
+          $count = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          Write-Host "persistent-cache: target_entries_before_build=$count"
+          "entry_count=$count" >> $env:GITHUB_OUTPUT
+
+      - name: Rust fmt
+        shell: bash
+        env:
+          TOOLCHAIN_INSTALLER_REPO_DIR_BASH: ${{ steps.sync.outputs.repo_dir_bash }}
+        run: |
+          cd "$TOOLCHAIN_INSTALLER_REPO_DIR_BASH"
+          cargo fmt --manifest-path Cargo.toml -- --check
+
+      - name: Rust check
+        shell: bash
+        env:
+          TOOLCHAIN_INSTALLER_REPO_DIR_BASH: ${{ steps.sync.outputs.repo_dir_bash }}
+        run: |
+          cd "$TOOLCHAIN_INSTALLER_REPO_DIR_BASH"
+          cargo check --locked --all-targets
+
+      - name: Rust test
+        shell: bash
+        env:
+          TOOLCHAIN_INSTALLER_REPO_DIR_BASH: ${{ steps.sync.outputs.repo_dir_bash }}
+        run: |
+          cd "$TOOLCHAIN_INSTALLER_REPO_DIR_BASH"
+          cargo test --locked --all-targets
+
+      - name: Summarize persistent cache state
+        if: always()
+        shell: pwsh
+        run: |
+          $report = Get-Content "${{ steps.sync.outputs.report_path }}" | ConvertFrom-Json
+          $afterCount = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          $warmTarget = [int]${{ steps.target_before.outputs.entry_count }} -gt 0
+          $warmCargoRegistry = [bool]$report.before.cargo_registry_exists
+
+          $lines = @(
+            "### Windows persistent workspace cache"
+            "- repo dir: $($report.toolchain_installer.repo_dir)"
+            "- synced sha: $($report.toolchain_installer.head)"
+            "- omne_foundation sha: $($report.omne_foundation.head)"
+            "- omne_runtime sha: $($report.omne_runtime.head)"
+            "- mirror existed before run: $($report.toolchain_installer.mirror_existed_before)"
+            "- worktree existed before run: $($report.toolchain_installer.repo_existed_before)"
+            "- cargo registry existed before run: $warmCargoRegistry"
+            "- target existed before run: $($report.before.target_exists)"
+            "- target entries before build: ${{ steps.target_before.outputs.entry_count }}"
+            "- target entries after build: $afterCount"
+            "- warm cache hit: $([bool]($warmTarget -or $warmCargoRegistry))"
+          )
+
+          $lines | ForEach-Object { Write-Host $_ }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($lines -join "`n")
+
+  install-smoke:
+    name: install-smoke (windows-latest)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on:
+      group: windows-local
+      labels: omne42-local
+    concurrency:
+      group: persistent-worktree-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      TOOLCHAIN_INSTALLER_GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Sync persistent workspace and shared deps
+        id: sync
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Sync-Repo {
+            param(
+              [string]$RepoUrl,
+              [string]$RepoDir,
+              [string]$MirrorDir,
+              [string]$Ref
+            )
+
+            $repoExists = Test-Path (Join-Path $RepoDir ".git")
+            $mirrorExists = Test-Path $MirrorDir
+
+            New-Item -ItemType Directory -Force -Path (Split-Path $RepoDir -Parent) | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path $MirrorDir -Parent) | Out-Null
+
+            git config --global http.version HTTP/1.1
+            git config --global --add safe.directory $RepoDir
+
+            if (-not $mirrorExists) {
+              git clone --mirror $RepoUrl $MirrorDir
+            }
+
+            git -C $MirrorDir remote set-url origin $RepoUrl
+            git -C $MirrorDir fetch --prune origin "+refs/heads/*:refs/heads/*" "+refs/pull/*:refs/pull/*" "+refs/tags/*:refs/tags/*"
+
+            if (-not $repoExists) {
+              git clone $MirrorDir $RepoDir
+            }
+
+            git -C $RepoDir remote set-url origin $RepoUrl
+            git -C $RepoDir fetch --prune origin "+refs/heads/*:refs/remotes/origin/*" "+refs/pull/*:refs/remotes/pull/*" "+refs/tags/*:refs/tags/*"
+            git -C $RepoDir reset --hard $Ref
+            git -C $RepoDir clean -ffd
+
+            return [ordered]@{
+              mirror_exists = $mirrorExists
+              repo_exists = $repoExists
+              head = (git -C $RepoDir rev-parse HEAD)
+            }
+          }
+
+          function To-BashPath([string]$Path) {
+            $drive = $Path.Substring(0, 1).ToLowerInvariant()
+            $rest = $Path.Substring(2).Replace('\', '/')
+            return "/$drive$rest"
+          }
+
+          $before = [ordered]@{
+            cargo_registry_exists = Test-Path (Join-Path $env:CARGO_HOME "registry")
+            target_exists = Test-Path $env:CARGO_TARGET_DIR
+            target_entries = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          }
+
+          New-Item -ItemType Directory -Force -Path $env:CARGO_HOME | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:RUSTUP_HOME | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:CARGO_TARGET_DIR | Out-Null
+
+          $repo = Sync-Repo "https://github.com/${{ github.repository }}.git" $env:TOOLCHAIN_INSTALLER_REPO_DIR $env:TOOLCHAIN_INSTALLER_MIRROR_DIR $env:GITHUB_SHA
+          $foundation = Sync-Repo "https://github.com/omne42/omne_foundation.git" $env:OMNE_FOUNDATION_REPO_DIR $env:OMNE_FOUNDATION_MIRROR_DIR "origin/main"
+          $runtime = Sync-Repo "https://github.com/omne42/omne-runtime.git" $env:OMNE_RUNTIME_REPO_DIR $env:OMNE_RUNTIME_MIRROR_DIR "origin/main"
+
+          $repoDirBash = To-BashPath $env:TOOLCHAIN_INSTALLER_REPO_DIR
+
+          $report = [ordered]@{
+            before = $before
+            toolchain_installer = [ordered]@{
+              repo_dir = $env:TOOLCHAIN_INSTALLER_REPO_DIR
+              repo_dir_bash = $repoDirBash
+              mirror_existed_before = $repo.mirror_exists
+              repo_existed_before = $repo.repo_exists
+              head = $repo.head
+            }
+            omne_foundation = [ordered]@{ head = $foundation.head }
+            omne_runtime = [ordered]@{ head = $runtime.head }
+          }
+
+          $reportPath = Join-Path $env:RUNNER_TEMP "persistent-cache-report.json"
+          $report | ConvertTo-Json -Depth 6 | Out-File -FilePath $reportPath -Encoding utf8
+
+          Write-Host "persistent-cache: mirror_exists_before=$($repo.mirror_exists)"
+          Write-Host "persistent-cache: worktree_exists_before=$($repo.repo_exists)"
+          Write-Host "persistent-cache: cargo_registry_exists_before=$($before.cargo_registry_exists)"
+          Write-Host "persistent-cache: target_exists_before=$($before.target_exists)"
+          Write-Host "persistent-cache: repo_dir=$($env:TOOLCHAIN_INSTALLER_REPO_DIR)"
+          Write-Host "persistent-cache: synced_sha=$($repo.head)"
+
+          "repo_dir_bash=$repoDirBash" >> $env:GITHUB_OUTPUT
+          "report_path=$reportPath" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        shell: bash
+        run: corepack enable
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify Bun
+        shell: bash
+        run: bun --version
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Record persistent target state before build
+        id: target_before
+        shell: pwsh
+        run: |
+          $count = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          Write-Host "persistent-cache: target_entries_before_build=$count"
+          "entry_count=$count" >> $env:GITHUB_OUTPUT
+
+      - name: Build release binary
+        shell: bash
+        env:
+          TOOLCHAIN_INSTALLER_REPO_DIR_BASH: ${{ steps.sync.outputs.repo_dir_bash }}
+        run: |
+          cd "$TOOLCHAIN_INSTALLER_REPO_DIR_BASH"
+          cargo build --locked --release
+
+      - name: Live install smoke
+        shell: bash
+        env:
+          TOOLCHAIN_INSTALLER_REPO_DIR_BASH: ${{ steps.sync.outputs.repo_dir_bash }}
+        run: |
+          cd "$TOOLCHAIN_INSTALLER_REPO_DIR_BASH"
+          python scripts/install_smoke.py --binary target/release/toolchain-installer
+
+      - name: Summarize persistent cache state
+        if: always()
+        shell: pwsh
+        run: |
+          $report = Get-Content "${{ steps.sync.outputs.report_path }}" | ConvertFrom-Json
+          $afterCount = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          $warmTarget = [int]${{ steps.target_before.outputs.entry_count }} -gt 0
+          $warmCargoRegistry = [bool]$report.before.cargo_registry_exists
+
+          $lines = @(
+            "### Windows persistent workspace cache"
+            "- repo dir: $($report.toolchain_installer.repo_dir)"
+            "- synced sha: $($report.toolchain_installer.head)"
+            "- mirror existed before run: $($report.toolchain_installer.mirror_existed_before)"
+            "- worktree existed before run: $($report.toolchain_installer.repo_existed_before)"
+            "- cargo registry existed before run: $warmCargoRegistry"
+            "- target existed before run: $($report.before.target_exists)"
+            "- target entries before build: ${{ steps.target_before.outputs.entry_count }}"
+            "- target entries after build: $afterCount"
+            "- warm cache hit: $([bool]($warmTarget -or $warmCargoRegistry))"
+          )
+
+          $lines | ForEach-Object { Write-Host $_ }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($lines -join "`n")
+
+  release-catalog-smoke:
+    name: release-catalog-smoke (windows-latest)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on:
+      group: windows-local
+      labels: omne42-local
+    concurrency:
+      group: persistent-worktree-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      TOOLCHAIN_INSTALLER_GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Sync persistent workspace and shared deps
+        id: sync
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Sync-Repo {
+            param(
+              [string]$RepoUrl,
+              [string]$RepoDir,
+              [string]$MirrorDir,
+              [string]$Ref
+            )
+
+            $repoExists = Test-Path (Join-Path $RepoDir ".git")
+            $mirrorExists = Test-Path $MirrorDir
+
+            New-Item -ItemType Directory -Force -Path (Split-Path $RepoDir -Parent) | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path $MirrorDir -Parent) | Out-Null
+
+            git config --global http.version HTTP/1.1
+            git config --global --add safe.directory $RepoDir
+
+            if (-not $mirrorExists) {
+              git clone --mirror $RepoUrl $MirrorDir
+            }
+
+            git -C $MirrorDir remote set-url origin $RepoUrl
+            git -C $MirrorDir fetch --prune origin "+refs/heads/*:refs/heads/*" "+refs/pull/*:refs/pull/*" "+refs/tags/*:refs/tags/*"
+
+            if (-not $repoExists) {
+              git clone $MirrorDir $RepoDir
+            }
+
+            git -C $RepoDir remote set-url origin $RepoUrl
+            git -C $RepoDir fetch --prune origin "+refs/heads/*:refs/remotes/origin/*" "+refs/pull/*:refs/remotes/pull/*" "+refs/tags/*:refs/tags/*"
+            git -C $RepoDir reset --hard $Ref
+            git -C $RepoDir clean -ffd
+
+            return [ordered]@{
+              mirror_exists = $mirrorExists
+              repo_exists = $repoExists
+              head = (git -C $RepoDir rev-parse HEAD)
+            }
+          }
+
+          function To-BashPath([string]$Path) {
+            $drive = $Path.Substring(0, 1).ToLowerInvariant()
+            $rest = $Path.Substring(2).Replace('\', '/')
+            return "/$drive$rest"
+          }
+
+          $before = [ordered]@{
+            cargo_registry_exists = Test-Path (Join-Path $env:CARGO_HOME "registry")
+            target_exists = Test-Path $env:CARGO_TARGET_DIR
+            target_entries = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          }
+
+          New-Item -ItemType Directory -Force -Path $env:CARGO_HOME | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:RUSTUP_HOME | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:CARGO_TARGET_DIR | Out-Null
+
+          $repo = Sync-Repo "https://github.com/${{ github.repository }}.git" $env:TOOLCHAIN_INSTALLER_REPO_DIR $env:TOOLCHAIN_INSTALLER_MIRROR_DIR $env:GITHUB_SHA
+          $foundation = Sync-Repo "https://github.com/omne42/omne_foundation.git" $env:OMNE_FOUNDATION_REPO_DIR $env:OMNE_FOUNDATION_MIRROR_DIR "origin/main"
+          $runtime = Sync-Repo "https://github.com/omne42/omne-runtime.git" $env:OMNE_RUNTIME_REPO_DIR $env:OMNE_RUNTIME_MIRROR_DIR "origin/main"
+
+          $repoDirBash = To-BashPath $env:TOOLCHAIN_INSTALLER_REPO_DIR
+
+          $report = [ordered]@{
+            before = $before
+            toolchain_installer = [ordered]@{
+              repo_dir = $env:TOOLCHAIN_INSTALLER_REPO_DIR
+              repo_dir_bash = $repoDirBash
+              mirror_existed_before = $repo.mirror_exists
+              repo_existed_before = $repo.repo_exists
+              head = $repo.head
+            }
+            omne_foundation = [ordered]@{ head = $foundation.head }
+            omne_runtime = [ordered]@{ head = $runtime.head }
+          }
+
+          $reportPath = Join-Path $env:RUNNER_TEMP "persistent-cache-report.json"
+          $report | ConvertTo-Json -Depth 6 | Out-File -FilePath $reportPath -Encoding utf8
+
+          Write-Host "persistent-cache: mirror_exists_before=$($repo.mirror_exists)"
+          Write-Host "persistent-cache: worktree_exists_before=$($repo.repo_exists)"
+          Write-Host "persistent-cache: cargo_registry_exists_before=$($before.cargo_registry_exists)"
+          Write-Host "persistent-cache: target_exists_before=$($before.target_exists)"
+          Write-Host "persistent-cache: repo_dir=$($env:TOOLCHAIN_INSTALLER_REPO_DIR)"
+          Write-Host "persistent-cache: synced_sha=$($repo.head)"
+
+          "repo_dir_bash=$repoDirBash" >> $env:GITHUB_OUTPUT
+          "report_path=$reportPath" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Record persistent target state before build
+        id: target_before
+        shell: pwsh
+        run: |
+          $count = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          Write-Host "persistent-cache: target_entries_before_build=$count"
+          "entry_count=$count" >> $env:GITHUB_OUTPUT
+
+      - name: Build release binary
+        shell: bash
+        env:
+          TOOLCHAIN_INSTALLER_REPO_DIR_BASH: ${{ steps.sync.outputs.repo_dir_bash }}
+        run: |
+          cd "$TOOLCHAIN_INSTALLER_REPO_DIR_BASH"
+          cargo build --locked --release
+
+      - name: Live release catalog smoke
+        shell: bash
+        env:
+          TOOLCHAIN_INSTALLER_REPO_DIR_BASH: ${{ steps.sync.outputs.repo_dir_bash }}
+        run: |
+          cd "$TOOLCHAIN_INSTALLER_REPO_DIR_BASH"
+          python scripts/install_smoke.py --binary target/release/toolchain-installer --phase release_catalog
+
+      - name: Summarize persistent cache state
+        if: always()
+        shell: pwsh
+        run: |
+          $report = Get-Content "${{ steps.sync.outputs.report_path }}" | ConvertFrom-Json
+          $afterCount = if (Test-Path $env:CARGO_TARGET_DIR) { (Get-ChildItem $env:CARGO_TARGET_DIR -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object).Count } else { 0 }
+          $warmTarget = [int]${{ steps.target_before.outputs.entry_count }} -gt 0
+          $warmCargoRegistry = [bool]$report.before.cargo_registry_exists
+
+          $lines = @(
+            "### Windows persistent workspace cache"
+            "- repo dir: $($report.toolchain_installer.repo_dir)"
+            "- synced sha: $($report.toolchain_installer.head)"
+            "- mirror existed before run: $($report.toolchain_installer.mirror_existed_before)"
+            "- worktree existed before run: $($report.toolchain_installer.repo_existed_before)"
+            "- cargo registry existed before run: $warmCargoRegistry"
+            "- target existed before run: $($report.before.target_exists)"
+            "- target entries before build: ${{ steps.target_before.outputs.entry_count }}"
+            "- target entries after build: $afterCount"
+            "- warm cache hit: $([bool]($warmTarget -or $warmCargoRegistry))"
+          )
+
+          $lines | ForEach-Object { Write-Host $_ }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($lines -join "`n")

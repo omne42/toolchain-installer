@@ -1,0 +1,197 @@
+name: ci linux
+
+on:
+  push:
+    branches: ["main", "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  architecture-lint:
+    name: architecture-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Architecture lint
+        run: cargo run --quiet --locked --manifest-path tools/source-layout-check/Cargo.toml --
+
+      - name: Architecture lint tests
+        run: cargo test --locked --manifest-path tools/source-layout-check/Cargo.toml
+
+  rust-matrix:
+    name: rust-matrix (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Checkout shared deps
+        uses: ./.github/actions/checkout-shared-deps
+        with:
+          repo-owner: ${{ github.repository_owner }}
+          token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust fmt
+        run: cargo fmt --manifest-path Cargo.toml -- --check
+
+      - name: Rust check
+        run: cargo check --locked --all-targets
+
+      - name: Rust test
+        run: cargo test --locked --all-targets
+
+  rust-clippy:
+    name: rust-clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Checkout shared deps
+        uses: ./.github/actions/checkout-shared-deps
+        with:
+          repo-owner: ${{ github.repository_owner }}
+          token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  install-smoke:
+    name: install-smoke (ubuntu-latest)
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      TOOLCHAIN_INSTALLER_GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Checkout shared deps
+        uses: ./.github/actions/checkout-shared-deps
+        with:
+          repo-owner: ${{ github.repository_owner }}
+          token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify Bun
+        run: bun --version
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Live install smoke
+        run: python scripts/install_smoke.py --binary target/release/toolchain-installer
+
+  release-catalog-smoke:
+    name: release-catalog-smoke (ubuntu-latest)
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      TOOLCHAIN_INSTALLER_GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Checkout shared deps
+        uses: ./.github/actions/checkout-shared-deps
+        with:
+          repo-owner: ${{ github.repository_owner }}
+          token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Live release catalog smoke
+        run: python scripts/install_smoke.py --binary target/release/toolchain-installer --phase release_catalog
+
+  cli-smoke:
+    name: cli-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Checkout shared deps
+        uses: ./.github/actions/checkout-shared-deps
+        with:
+          repo-owner: ${{ github.repository_owner }}
+          token: ${{ secrets.OMNE_REPO_READ_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build binary
+        run: cargo build --locked --release
+
+      - name: Smoke bootstrap output
+        run: |
+          export OUT="$(./target/release/toolchain-installer bootstrap --json --tool custom-tool)"
+          python3 -c 'import json, os; data = json.loads(os.environ["OUT"]); assert data["schema_version"] == 1'
+
+      - name: Smoke direct method usage failure
+        run: |
+          python3 - <<'PY'
+          import subprocess
+
+          completed = subprocess.run(
+              [
+                  "./target/release/toolchain-installer",
+                  "bootstrap",
+                  "--json",
+                  "--method",
+                  "unknown",
+                  "--id",
+                  "demo",
+              ],
+              text=True,
+              capture_output=True,
+          )
+          assert completed.returncode == 2, completed
+          assert "uses unsupported method `unknown`" in completed.stderr, completed.stderr
+          PY
