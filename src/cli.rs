@@ -363,4 +363,19 @@ mod tests {
 
         assert_eq!(resolved, temp.path().join("plans"));
     }
+
+    #[test]
+    fn build_direct_plan_maps_tool_version_into_generic_version_field() {
+        let args = BootstrapArgs {
+            method: Some("cargo_install".to_string()),
+            id: Some("cargo-binstall".to_string()),
+            tool_version: Some("1.7.0".to_string()),
+            package: Some("cargo-binstall".to_string()),
+            ..BootstrapArgs::default()
+        };
+
+        let plan = args.build_direct_plan().expect("direct plan");
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].version.as_deref(), Some("1.7.0"));
+    }
 }
