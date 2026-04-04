@@ -31,7 +31,8 @@
    - `uv` / `uv_tool` / `uv_python` 的失败 `detail` 不回显托管 `uv` 子进程原始 stdout/stderr；只报告退出状态、超时和捕获字节数。
 9. 路径约束
    - Unix 风格绝对路径如 `/tmp/demo` 会直接拒绝，不能借此绕过托管目录。
-   - Windows 绝对路径如 `C:\tools\demo.exe` 只在 Windows 宿主上按原样保留；非 Windows 宿主会直接拒绝，避免把 Windows-local 语法误当成相对路径落盘。
+   - 托管落盘方法同样拒绝 Windows 绝对路径如 `C:\tools\demo.exe`；不能借“宿主机本身是 Windows”或“显式把 `target_triple` 设成 Windows”把写入绕出 `managed_dir`。
+   - `workspace_package` 这类工作区目录输入仍按当前宿主机的原生绝对路径语法解释；只有 Windows 宿主才接受 `C:\workspace\app` 这类目录路径。
    - 外部网关候选只接受 canonical `https://github.com/git-for-windows/git/releases/download/{tag}/{asset}` 下载 URL；只要附带 query、fragment，或 `tag` / `asset` 不是单一路径段，就不会参与路由推断。
    - plan 中的 `destination` 禁止包含 `..`。
    - 同时拒绝 Windows drive-relative 路径如 `C:foo`，以及 Windows root-relative 路径如 `\foo`。
