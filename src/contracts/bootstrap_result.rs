@@ -1,7 +1,4 @@
 use omne_archive_primitives::{ArchiveBinaryMatch, BinaryArchiveFormat};
-use omne_artifact_install_primitives::{
-    BinaryArchiveFormat as ArtifactBinaryArchiveFormat, BinaryArchiveMatch,
-};
 use serde::Serialize;
 
 use crate::error::ExitCode;
@@ -53,16 +50,6 @@ impl From<BinaryArchiveFormat> for BootstrapArchiveFormat {
     }
 }
 
-impl From<ArtifactBinaryArchiveFormat> for BootstrapArchiveFormat {
-    fn from(value: ArtifactBinaryArchiveFormat) -> Self {
-        match value {
-            ArtifactBinaryArchiveFormat::TarGz => Self::TarGz,
-            ArtifactBinaryArchiveFormat::TarXz => Self::TarXz,
-            ArtifactBinaryArchiveFormat::Zip => Self::Zip,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BootstrapArchiveMatch {
     pub format: BootstrapArchiveFormat,
@@ -71,15 +58,6 @@ pub struct BootstrapArchiveMatch {
 
 impl From<ArchiveBinaryMatch> for BootstrapArchiveMatch {
     fn from(value: ArchiveBinaryMatch) -> Self {
-        Self {
-            format: value.archive_format.into(),
-            path: value.archive_path,
-        }
-    }
-}
-
-impl From<BinaryArchiveMatch> for BootstrapArchiveMatch {
-    fn from(value: BinaryArchiveMatch) -> Self {
         Self {
             format: value.archive_format.into(),
             path: value.archive_path,

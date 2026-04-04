@@ -16,8 +16,7 @@ use super::execution_context::ExecutionContext;
 
 pub async fn bootstrap(command: &BootstrapCommand) -> InstallerResult<BootstrapResult> {
     let ctx = ExecutionContext::for_bootstrap(&command.execution)?;
-    let binary_ext = executable_suffix_for_target(&ctx.target_triple)
-        .map_err(|err| crate::error::InstallerError::usage(err.to_string()))?;
+    let binary_ext = executable_suffix_for_target(&ctx.target_triple);
 
     let tools = normalize_requested_tools(&command.tools);
     let mut items = Vec::new();

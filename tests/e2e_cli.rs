@@ -727,6 +727,26 @@ fn windows_absolute_release_destination_is_rejected_on_non_windows_host() {
     .code(2);
 }
 
+#[cfg(not(windows))]
+#[test]
+fn windows_absolute_archive_tree_destination_is_rejected_on_non_windows_host() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args([
+        "--method",
+        "archive_tree_release",
+        "--target-triple",
+        "x86_64-pc-windows-msvc",
+        "--id",
+        "demo-tree",
+        "--url",
+        "http://127.0.0.1:9/demo.zip",
+        "--destination",
+        r"C:\tools\demo-tree",
+    ])
+    .assert()
+    .code(2);
+}
+
 #[test]
 fn duplicate_plan_item_ids_return_usage_exit_code() {
     let temp = tempfile::tempdir().expect("tempdir");

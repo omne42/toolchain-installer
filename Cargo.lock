@@ -1074,13 +1074,16 @@ dependencies = [
 name = "omne-artifact-install-primitives"
 version = "0.1.0"
 dependencies = [
- "cap-std",
+ "flate2",
  "http-kit",
  "omne-archive-primitives",
  "omne-fs-primitives",
  "omne-integrity-primitives",
  "reqwest",
+ "tar",
  "tokio",
+ "xz2",
+ "zip",
 ]
 
 [[package]]

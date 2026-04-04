@@ -23,7 +23,7 @@
   - `bootstrap_installation.rs`：bootstrap 内置工具的目标路径规则、来源分发、系统包 fallback 与结果归并；把 `git` / `gh` / `uv` 的安装策略从 application 用例层收回领域模块。
   - `builtin_tool_selection.rs`：内置工具默认选择、输入归一化与支持集判定。
   - `bootstrap_tool_health.rs`：bootstrap 内置工具的宿主与托管安装健康探针，覆盖 `git` / `gh` / `uv` 的复用前检查，以及 Windows 托管 `git` 的 MinGit payload 完整性判定。
-  - `public_release_asset_installation.rs`：`gh` / `git` public release 资产选择与安装适配。
+  - `public_release_asset_installation.rs`：`gh` / `git` public release 资产选择与安装适配；其中 Windows `git` 的 MinGit payload 切换与 `git.cmd` launcher 重写通过同一事务提交或回滚。
   - `mod.rs`：内置工具领域汇总。
 - `src/contracts/`
   - `execution_request.rs`：`ExecutionRequest` 与 `BootstrapCommand` 输入契约。

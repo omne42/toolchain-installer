@@ -412,9 +412,9 @@ fn append_bootstrap_context(err: OperationError, bootstrap_errors: &[String]) ->
 mod tests {
     use super::build_install_uv_with_pip_args;
     use crate::installer_runtime_config::{
-        DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DownloadPolicy, DownloadSourcePolicy,
-        GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig, PackageIndexPolicy,
-        PythonMirrorPolicy,
+        DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy,
+        DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig,
+        ManagedToolchainPolicy, PackageIndexPolicy, PythonMirrorPolicy,
     };
     use std::time::Duration;
 
@@ -440,6 +440,9 @@ mod tests {
             download: DownloadPolicy {
                 http_timeout: Duration::from_secs(5),
                 max_download_bytes: None,
+            },
+            managed_toolchain: ManagedToolchainPolicy {
+                uv_recipe_timeout: Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),
             },
         }
     }

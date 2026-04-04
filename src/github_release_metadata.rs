@@ -1,5 +1,4 @@
 use github_kit::{GitHubApiRequestOptions, GitHubRelease, fetch_latest_release};
-use http_kit::{HttpClientOptions, HttpClientProfile, build_http_client_profile};
 #[cfg(test)]
 use reqwest::Url;
 
@@ -7,13 +6,12 @@ use crate::error::{OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 
 pub(crate) async fn fetch_latest_release_metadata(
-    _client: &reqwest::Client,
+    client: &reqwest::Client,
     cfg: &InstallerRuntimeConfig,
     repo: &str,
 ) -> OperationResult<GitHubRelease> {
-    let github_client = build_github_http_client(cfg)?;
     fetch_latest_release(
-        github_client.client(),
+        client,
         &cfg.github_releases.api_bases,
         repo,
         GitHubApiRequestOptions::new()
@@ -23,16 +21,6 @@ pub(crate) async fn fetch_latest_release_metadata(
     )
     .await
     .map_err(|err| OperationError::download(err.to_string()))
-}
-
-pub(crate) fn build_github_http_client(
-    cfg: &InstallerRuntimeConfig,
-) -> OperationResult<HttpClientProfile> {
-    build_http_client_profile(&HttpClientOptions {
-        timeout: Some(cfg.download.http_timeout),
-        ..HttpClientOptions::default()
-    })
-    .map_err(|err| OperationError::download(format!("build github http client failed: {err}")))
 }
 
 #[cfg(test)]
@@ -57,10 +45,10 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use crate::installer_runtime_config::InstallerRuntimeConfig;
     use crate::installer_runtime_config::{
-        DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy,
-        PackageIndexPolicy, PythonMirrorPolicy,
+        DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy,
+        GitHubReleasePolicy, InstallerRuntimeConfig, ManagedToolchainPolicy, PackageIndexPolicy,
+        PythonMirrorPolicy,
     };
 
     use super::{fetch_latest_release_metadata, is_github_release_asset_url};
@@ -112,6 +100,9 @@ mod tests {
             download: DownloadPolicy {
                 http_timeout: Duration::from_secs(5),
                 max_download_bytes: None,
+            },
+            managed_toolchain: ManagedToolchainPolicy {
+                uv_recipe_timeout: Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),
             },
         };
 

@@ -292,7 +292,10 @@ PY
             ),
         );
 
-        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 4)
+        // Full `cargo test --all-targets` can contend heavily with compile jobs on CI and
+        // shared runners. Keep this probe comfortably above the default timeout so we only fail
+        // on an actual pipe-drain regression, not on transient scheduler starvation.
+        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 8)
             .expect("probe output");
 
         assert!(probe.success);

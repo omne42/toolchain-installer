@@ -64,8 +64,13 @@ pub(crate) async fn execute_uv_python_item(
         .collect::<Vec<_>>();
         let preinstall_state =
             capture_managed_python_installation_state(managed_dir, target_triple);
-        run_managed_uv_recipe(uv.program.as_os_str(), &args, &env)
-            .map_err(|err| OperationError::install(format!("{candidate_label} failed: {err}")))?;
+        run_managed_uv_recipe(
+            uv.program.as_os_str(),
+            &args,
+            &env,
+            cfg.managed_toolchain.uv_recipe_timeout,
+        )
+        .map_err(|err| OperationError::install(format!("{candidate_label} failed: {err}")))?;
         let destination = find_updated_managed_python_executable(
             managed_dir,
             &item.version,

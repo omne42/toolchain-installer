@@ -7,15 +7,15 @@ use omne_process_primitives::{
     HostRecipeRequest, run_host_recipe_with_options,
 };
 
-const MANAGED_UV_RECIPE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MANAGED_UV_RECIPE_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) fn run_managed_uv_recipe(
     program: &OsStr,
     args: &[OsString],
     env: &[(OsString, OsString)],
+    timeout: Duration,
 ) -> Result<Output, String> {
-    run_managed_uv_recipe_with_timeout(program, args, env, MANAGED_UV_RECIPE_TIMEOUT)
+    run_managed_uv_recipe_with_timeout(program, args, env, timeout)
 }
 
 fn run_managed_uv_recipe_with_timeout(

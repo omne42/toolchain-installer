@@ -41,6 +41,7 @@
    - `pip` 的默认解释器回退只会发生在命令缺失时；如果首选解释器已经真实执行安装并失败，installer 会直接返回失败，避免同一 plan 被静默装进另一个 Python 环境。
    - `pip` 不是托管落盘方法；它会把安装副作用交给被选中的 Python 环境自己处理，因此不会声明或验证一个 installer-owned `destination`。
    - 相对路径只会解析到 `managed_dir` 下；当目标是 Windows 时，`bin\\tool.exe` 与 `bin/tool.exe` 会按同一相对层级处理。
+   - Windows 托管 `git` 的 `git-portable/` payload 替换与 `git.cmd` launcher 更新属于同一事务；launcher 写失败时必须恢复旧 payload 和旧 launcher，不能留下半更新状态。
    - 解析后若两个 item 指向同一目标路径，或一个目标路径嵌套在另一个目标路径之下，plan 会在执行前直接拒绝。
    - `npm_global` 允许复用托管目录里已有的 leaf symlink 入口，但这个 symlink 解析后的目标仍必须留在 `managed_dir` 内；不能借复用入口把实际执行路径指到托管根外部。
 10. 托管 bootstrap 健康检查

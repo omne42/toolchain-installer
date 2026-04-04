@@ -2,7 +2,7 @@ use std::path::Path;
 
 use github_kit::GitHubReleaseAsset;
 use omne_artifact_install_primitives::{
-    ArtifactInstallErrorDetail, BinaryArchiveInstallRequest, InstalledArchiveBinary,
+    ArtifactInstallErrorKind, BinaryArchiveInstallRequest, InstalledArchiveBinary,
     download_and_install_binary_from_archive,
 };
 use omne_integrity_primitives::parse_sha256_digest;
@@ -39,6 +39,7 @@ pub(crate) async fn install_uv_from_public_release(
         destination,
         asset_name: &asset.name,
         binary_name: &binary_name,
+        tool_name: "uv",
         archive_binary_hint: archive_binary_hint.as_deref(),
         expected_sha256: Some(&expected_sha),
         max_download_bytes: cfg.download.max_download_bytes,
@@ -48,7 +49,8 @@ pub(crate) async fn install_uv_from_public_release(
         {
             Ok(downloaded) => downloaded,
             Err(err)
-                if err.detail() == Some(ArtifactInstallErrorDetail::ArchiveBinaryNotFound)
+                if err.kind() == ArtifactInstallErrorKind::Install
+                    && err.to_string().contains(" not found in ")
                     && archive_binary_hint.as_deref() != Some(binary_name.as_str()) =>
             {
                 let fallback_request = BinaryArchiveInstallRequest {
@@ -67,7 +69,7 @@ pub(crate) async fn install_uv_from_public_release(
     } = downloaded;
     Ok(InstallSource::new(
         source.url,
-        result_source_kind_for_download_candidate(&source.source_label),
+        result_source_kind_for_download_candidate(source.kind),
     )
     .with_archive_match(archive_match.into()))
 }
