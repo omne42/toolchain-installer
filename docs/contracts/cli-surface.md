@@ -19,11 +19,16 @@
   - 安装输出目录；未指定时默认使用 `~/.omne_data/toolchain/<target>/bin`。
   - 传给 `npm` / `pnpm` / `bun` / `cargo` / `go` / `uv` 这类宿主命令时，会保留宿主机原生路径字节；Unix 下的非 UTF-8 路径不会在 argv/env 拼装阶段被提前改写。
 - `--mirror-prefix <prefix>`
-  - 追加 release 下载候选前缀。
+  - 为 `release` / `archive_tree_release` 显式指定下载镜像前缀。
+  - 只要 CLI 提供了任意 `--mirror-prefix`，候选顺序就只由这些显式前缀决定；未提供时才会读取 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES`。
 - `--package-index <url>`
-  - 为 `uv_tool` 显式追加 Python 包索引；若未提供任何索引，默认只使用官方 PyPI。
+  - 为 `uv_tool` 显式指定 Python 包索引。
+  - 只要 CLI 提供了任意 `--package-index`，候选顺序就只由这些显式索引决定；未提供时才会读取 `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`。
+  - 若 CLI 和环境变量都没有提供任何索引，默认只使用官方 PyPI。
 - `--python-mirror <url>`
-  - 追加 `uv_python` 的备用 Python 下载镜像；官方来源隐式存在。
+  - 为 `uv_python` 显式指定备用 Python 下载镜像。
+  - 只要 CLI 提供了任意 `--python-mirror`，备用镜像集合就只由这些显式值决定；未提供时才会读取 `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`。
+  - 官方来源始终隐式存在。
 - `--gateway-base <url>`
   - 外部固定网关入口；installer 本身不包含网关实现。
 - `--country <ISO2>`
@@ -39,8 +44,9 @@
 - `--id <name>`
   - 单个安装项标识。
 - `--tool-version <value>`
-  - `uv_python` 直接参数模式下的 Python 版本。
-  - 当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
+  - direct-plan 模式里的通用 `version` 字段入口；当前用于 `cargo_install`、`go_install`、`uv_python`。
+  - 对 `uv_python` 而言，当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
+  - 对 `cargo_install`、`go_install` 而言，installer 只负责把该值映射到对应方法的 `version` 字段，不额外重写上游版本语义。
 - `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
   - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
   - `--archive-binary` 传的是 archive 内目标二进制的相对路径；installer 会规范斜杠，并在常见单根目录 archive 上自动补齐根目录后再做精确匹配。
@@ -64,6 +70,7 @@
 当调用方只执行一个安装项时，可直接传 `--method` 与对应字段，不必写 JSON plan。
 
 - 只有显式提供 `--method` 时，`--id`、`--tool-version`、`--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`、`--package`、`--manager`、`--python` 这些 direct-plan 字段才合法。
+- `--tool-version` 只是 direct-plan 的 CLI 名；进入 plan contract 后对应的仍是通用 `version` 字段，因此只有接受 `version` 的方法才能使用它。
 - 若未提供 `--method`，这些字段不会再被静默吞掉后退回 bootstrap；CLI 会直接返回 usage error。
 - 若提供了 `--plan-file`，这些 direct-plan 字段同样会被拒绝，而不是继续以“CLI 覆盖 plan”的模糊语义混用。
 - `--tool` 只能和纯 bootstrap 模式一起出现；不能再与 `--method` 或 `--plan-file` 混用后被静默忽略。
@@ -74,14 +81,15 @@
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES`
   - 逗号分隔的 GitHub metadata API base 列表；未设置时默认只使用 `https://api.github.com`。
 - `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES`
-  - 逗号分隔的 release 下载镜像前缀；与 `--mirror-prefix` 共同组成候选顺序。
-  - 重复值只按首次出现去重，不会改变显式给定的候选顺序。
+  - 逗号分隔的 release 下载镜像前缀；只有当 CLI 没有显式传 `--mirror-prefix` 时才会作为候选顺序输入。
+  - 重复值只按首次出现去重。
 - `TOOLCHAIN_INSTALLER_PACKAGE_INDEXES`
-  - 逗号分隔的 `uv_tool` 显式索引列表；若这里或 CLI 没有提供任何索引，installer 才会回退到官方 PyPI。
-  - 重复值只按首次出现去重，不会改变显式给定的候选顺序。
+  - 逗号分隔的 `uv_tool` 显式索引列表；只有当 CLI 没有显式传 `--package-index` 时才会作为候选顺序输入。
+  - 若这里和 CLI 都没有提供任何索引，installer 才会回退到官方 PyPI。
+  - 重复值只按首次出现去重。
 - `TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS`
-  - 逗号分隔的 `uv_python` 备用镜像列表。
-  - 重复值只按首次出现去重，不会改变显式给定的候选顺序。
+  - 逗号分隔的 `uv_python` 备用镜像列表；只有当 CLI 没有显式传 `--python-mirror` 时才会作为备用镜像输入。
+  - 重复值只按首次出现去重。
 - `TOOLCHAIN_INSTALLER_GITHUB_TOKEN`
   - 可选 GitHub token；用于请求 GitHub release metadata API，避免 CI / 共享出口上的匿名限额。若未设置，installer 会回退读取 `GITHUB_TOKEN`。
 - `TOOLCHAIN_INSTALLER_GATEWAY_BASE`
