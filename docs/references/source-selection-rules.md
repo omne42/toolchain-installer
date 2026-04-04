@@ -34,7 +34,7 @@
 - 显式索引会按调用方给出的顺序去重，不会被内部集合重排。
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时不会直接硬依赖 GitHub，而是先尝试复用健康 host `uv`，再尝试用显式 package index 通过 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举可复用 `uv`；只有这些路径都失败时才回退到 GitHub public release。
 - package-index 自举 `uv` 时，结果里的 `source` 会继续脱敏显式索引 URL，不回显用户信息、query 或 fragment。
-- 实际执行 `uv tool install` 时同样带超时上限；单个安装进程挂死会被终止并返回带 stdout/stderr 的诊断错误，而不是无限阻塞。
+- 实际执行 `uv tool install` 时同样带超时上限；单个安装进程挂死会被终止并返回只含状态、超时和捕获字节数的摘要诊断，不会把 raw stdout/stderr 直接回显到对外 `detail`。
 - `uv tool install` 成功后还会对最终 CLI 入口再做一次带超时上限的 `--version` 健康探测；只写出一个有执行位但无法正常探活的脚本入口，不会被当成成功安装。
 - 安装前先做可达性探测，再按可达结果优先尝试显式索引。
 - 对外 JSON 结果里的 `source` 会脱敏显式索引 URL，不回显用户信息、query 或 fragment。
@@ -47,7 +47,7 @@
 - 显式 Python mirror 会按传入顺序去重，回退顺序与调用方声明保持一致。
 - 安装前会对官方来源和显式 `http(s)` mirror 做可达性探测；可达来源优先，若可达性相同则仍按“官方优先、显式 mirror 按声明顺序追加”的顺序尝试。
 - 复用托管 `uv` 之前会先做带超时上限的 `uv --version` 健康探测；探测失败或超时不会直接硬依赖 GitHub，而是先尝试复用健康 host `uv`，再尝试用显式 package index 通过 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举可复用 `uv`；只有这些路径都失败时才回退到 GitHub public release。
-- 实际执行 `uv python install` 时同样带超时上限；单个安装进程挂死会被终止并返回带 stdout/stderr 的诊断错误，而不是无限阻塞。
+- 实际执行 `uv python install` 时同样带超时上限；单个安装进程挂死会被终止并返回只含状态、超时和捕获字节数的摘要诊断，不会把 raw stdout/stderr 直接回显到对外 `detail`。
 - 冲突校验不只保留 `managed_dir/.uv-python/` 安装根，也会把 `managed_dir` 顶层可能出现的 `python` / `python3` / `python3.x` shim 纳入保留集合，避免其他 item 抢占这些解释器入口。
 - 对外 JSON 结果里，官方来源会标成 `source_kind=canonical`，显式镜像才会标成 `python_mirror`。
 - 对外 JSON 结果里的 `source` 会脱敏显式镜像 URL，不回显用户信息、query 或 fragment。

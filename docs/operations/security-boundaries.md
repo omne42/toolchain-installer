@@ -28,6 +28,7 @@
 8. 最小日志
    - 只记录必要诊断字段，避免泄露凭证或敏感头。
    - `uv_tool` / `uv_python` 对外结果里的 `source` 不回显显式索引或镜像 URL 中的用户信息、query 或 fragment。
+   - `uv` / `uv_tool` / `uv_python` 的失败 `detail` 不回显托管 `uv` 子进程原始 stdout/stderr；只报告退出状态、超时和捕获字节数。
 9. 路径约束
    - Unix 风格绝对路径如 `/tmp/demo` 会直接拒绝，不能借此绕过托管目录。
    - Windows 绝对路径如 `C:\tools\demo.exe` 只在 Windows 宿主上按原样保留；非 Windows 宿主会直接拒绝，避免把 Windows-local 语法误当成相对路径落盘。

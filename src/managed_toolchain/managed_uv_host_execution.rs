@@ -8,7 +8,6 @@ use omne_process_primitives::{
 };
 
 const MANAGED_UV_RECIPE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-const MANAGED_UV_RECIPE_OUTPUT_LIMIT: usize = 64 * 1024;
 
 pub(crate) fn run_managed_uv_recipe(
     program: &OsStr,
@@ -24,16 +23,6 @@ fn run_managed_uv_recipe_with_timeout(
     env: &[(OsString, OsString)],
     timeout: Duration,
 ) -> Result<Output, String> {
-    run_managed_uv_recipe_with_limits(program, args, env, timeout, MANAGED_UV_RECIPE_OUTPUT_LIMIT)
-}
-
-fn run_managed_uv_recipe_with_limits(
-    program: &OsStr,
-    args: &[OsString],
-    env: &[(OsString, OsString)],
-    timeout: Duration,
-    output_limit: usize,
-) -> Result<Output, String> {
     let removed_env = inherited_uv_environment_names();
     let request = HostRecipeRequest::new(program, args)
         .with_env(env)
@@ -46,45 +35,48 @@ fn run_managed_uv_recipe_with_limits(
         Ok(output) => Ok(output.output),
         Err(HostRecipeError::NonZeroExit {
             program, output, ..
-        }) => Err(format!(
-            "run {} failed: status={} stderr={} stdout={}",
-            program.to_string_lossy(),
+        }) => Err(render_redacted_managed_uv_failure(
+            format!("run {} failed", program.to_string_lossy()),
             output.status,
-            render_captured_bytes(&output.stderr, output_limit),
-            render_captured_bytes(&output.stdout, output_limit),
+            &output.stderr,
+            &output.stdout,
         )),
-        Err(HostRecipeError::Command(err)) => {
-            Err(render_managed_uv_command_error(err, output_limit))
-        }
+        Err(HostRecipeError::Command(err)) => Err(render_managed_uv_command_error(err)),
     }
 }
 
-fn render_managed_uv_command_error(err: HostCommandError, output_limit: usize) -> String {
+fn render_managed_uv_command_error(err: HostCommandError) -> String {
     match err {
         HostCommandError::TimedOut {
             program,
             timeout,
             output,
             ..
-        } => format!(
-            "run {} timed out after {}s: status={} stderr={} stdout={}",
-            program.to_string_lossy(),
-            timeout.as_secs(),
+        } => render_redacted_managed_uv_failure(
+            format!(
+                "run {} timed out after {}s",
+                program.to_string_lossy(),
+                timeout.as_secs()
+            ),
             output.status,
-            render_captured_bytes(&output.stderr, output_limit),
-            render_captured_bytes(&output.stdout, output_limit),
+            &output.stderr,
+            &output.stdout,
         ),
         other => other.to_string(),
     }
 }
 
-fn render_captured_bytes(bytes: &[u8], output_limit: usize) -> String {
-    let retained = bytes.len().min(output_limit);
-    let mut rendered = String::from_utf8_lossy(&bytes[..retained]).into_owned();
-    if bytes.len() > output_limit {
-        rendered.push_str(&format!(" [truncated after {} bytes]", output_limit));
-    }
-    rendered
+fn render_redacted_managed_uv_failure(
+    prefix: String,
+    status: std::process::ExitStatus,
+    stderr: &[u8],
+    stdout: &[u8],
+) -> String {
+    format!(
+        "{prefix}: status={status} stderr_bytes={} stdout_bytes={} (captured output redacted)",
+        stderr.len(),
+        stdout.len(),
+    )
 }
 
 fn inherited_uv_environment_names() -> Vec<OsString> {
@@ -103,7 +95,7 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use super::{run_managed_uv_recipe_with_limits, run_managed_uv_recipe_with_timeout};
+    use super::run_managed_uv_recipe_with_timeout;
 
     fn portable_unix_script(body: &str) -> String {
         format!("#!/usr/bin/env bash\n{body}")
@@ -156,13 +148,16 @@ sleep 5
         )
         .expect_err("hung process should time out");
 
-        assert!(err.contains("stdout-before-timeout"));
-        assert!(err.contains("stderr-before-timeout"));
+        assert!(err.contains("stderr_bytes=22"), "{err}");
+        assert!(err.contains("stdout_bytes=22"), "{err}");
+        assert!(err.contains("captured output redacted"), "{err}");
+        assert!(!err.contains("stdout-before-timeout"), "{err}");
+        assert!(!err.contains("stderr-before-timeout"), "{err}");
     }
 
     #[cfg_attr(windows, ignore = "probe script is unix-specific")]
     #[test]
-    fn run_managed_uv_recipe_limits_captured_output() {
+    fn run_managed_uv_recipe_redacts_non_zero_exit_stdio() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let script_path = tmp.path().join("uv");
         write_unix_script(
@@ -174,17 +169,21 @@ exit 42
             ),
         );
 
-        let err = run_managed_uv_recipe_with_limits(
+        let err = run_managed_uv_recipe_with_timeout(
             script_path.as_os_str(),
             &[],
             &[],
             Duration::from_secs(1),
-            16,
         )
-        .expect_err("large output should be truncated");
+        .expect_err("non-zero exit should fail");
 
-        assert!(err.contains("0123456789abcdef"));
-        assert!(err.contains("[truncated after 16 bytes]"));
+        assert!(err.contains("stdout_bytes=36"), "{err}");
+        assert!(err.contains("stderr_bytes=0"), "{err}");
+        assert!(err.contains("captured output redacted"), "{err}");
+        assert!(
+            !err.contains("0123456789abcdefghijklmnopqrstuvwxyz"),
+            "{err}"
+        );
     }
 
     fn write_unix_script(path: &Path, body: &str) {
