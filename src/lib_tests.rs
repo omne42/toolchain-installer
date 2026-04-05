@@ -2748,6 +2748,25 @@ fn normalize_requested_tools_dedups_and_trims() {
 }
 
 #[test]
+fn unsupported_tool_does_not_reuse_managed_binary_state() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    let destination = managed_dir.join("custom-tool");
+    std::fs::write(&destination, b"#!/bin/sh\necho custom-tool 1.0.0\n")?;
+
+    let state = assess_managed_bootstrap_state(
+        "custom-tool",
+        "x86_64-unknown-linux-gnu",
+        &destination,
+        &managed_dir,
+    );
+
+    assert_eq!(state, ManagedBootstrapState::NeedsInstall);
+    Ok(())
+}
+
+#[test]
 fn parse_sha256_user_input_rejects_short_value() {
     assert!(parse_sha256_user_input("abc").is_none());
 }
