@@ -1667,7 +1667,12 @@ async fn install_gh_from_public_release_redacts_mirror_source_url() -> anyhow::R
         "/api/repos/cli/cli/releases/latest".to_string(),
         release_body,
     );
-    routes.insert(format!("/mirror/{archive_name}"), archive_bytes);
+    routes.insert(
+        format!(
+            "/mirror/https://github.com/cli/cli/releases/download/v9.9.9/{archive_name}?token=abc"
+        ),
+        archive_bytes,
+    );
     let handle = spawn_mock_http_server(listener, routes, 2);
 
     let cfg = InstallerRuntimeConfig {
@@ -1691,11 +1696,15 @@ async fn install_gh_from_public_release_redacts_mirror_source_url() -> anyhow::R
     let source =
         install_gh_from_public_release("x86_64-unknown-linux-gnu", "", &destination, &cfg, &client)
             .await?;
-    assert_eq!(
-        source.locator,
-        format!(
-            "http://{addr}/mirror/https://github.com/cli/cli/releases/download/v9.9.9/{archive_name}"
-        )
+    assert!(
+        source
+            .locator
+            .starts_with(&format!("http://{addr}/mirror/"))
+    );
+    assert!(
+        source
+            .locator
+            .ends_with(&format!("/releases/download/v9.9.9/{archive_name}"))
     );
     assert!(!source.locator.contains("user:secret"));
     assert!(!source.locator.contains("?token=abc"));
@@ -1819,7 +1828,7 @@ async fn install_git_from_public_release_redacts_mirror_source_url() -> anyhow::
         release_body,
     );
     routes.insert(
-        "/mirror/https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.1/MinGit-2.53.0-busybox-64-bit.zip".to_string(),
+        "/mirror/https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.1/MinGit-2.53.0-busybox-64-bit.zip?token=abc".to_string(),
         archive_bytes,
     );
     let handle = spawn_mock_http_server(listener, routes, 2);
@@ -1846,6 +1855,16 @@ async fn install_git_from_public_release_redacts_mirror_source_url() -> anyhow::
         install_git_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
             .await?;
     assert_eq!(source.source_kind, BootstrapSourceKind::Mirror);
+    assert!(
+        source
+            .locator
+            .starts_with(&format!("http://{addr}/mirror/"))
+    );
+    assert!(
+        source
+            .locator
+            .ends_with("/releases/download/v2.53.0.windows.1/MinGit-2.53.0-busybox-64-bit.zip")
+    );
     assert!(!source.locator.contains("user:secret"));
     assert!(!source.locator.contains("?token=abc"));
     assert!(!source.locator.contains("#frag"));
@@ -2142,7 +2161,7 @@ async fn install_uv_from_public_release_redacts_mirror_source_url() -> anyhow::R
         release_body,
     );
     routes.insert(
-        "/mirror/https://github.com/astral-sh/uv/releases/download/0.7.0/uv-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+        "/mirror/https://github.com/astral-sh/uv/releases/download/0.7.0/uv-x86_64-unknown-linux-gnu.tar.gz?token=abc".to_string(),
         archive_bytes,
     );
     let handle = spawn_mock_http_server(listener, routes, 2);
@@ -2169,6 +2188,16 @@ async fn install_uv_from_public_release_redacts_mirror_source_url() -> anyhow::R
         install_uv_from_public_release("x86_64-unknown-linux-gnu", &destination, &cfg, &client)
             .await?;
     assert_eq!(source.source_kind, BootstrapSourceKind::Mirror);
+    assert!(
+        source
+            .locator
+            .starts_with(&format!("http://{addr}/mirror/"))
+    );
+    assert!(
+        source
+            .locator
+            .ends_with("/releases/download/0.7.0/uv-x86_64-unknown-linux-gnu.tar.gz")
+    );
     assert!(!source.locator.contains("user:secret"));
     assert!(!source.locator.contains("?token=abc"));
     assert!(!source.locator.contains("#frag"));
