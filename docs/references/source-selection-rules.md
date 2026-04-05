@@ -10,7 +10,7 @@
 ## `release` 方法
 
 - 基于工具、版本、平台资产匹配规则生成候选。
-- 路径落点继续遵循 plan contract：只有 Windows 宿主才接受 Windows 绝对 `destination`；非 Windows 宿主会在执行前拒绝 `C:\...` 这类路径，而不是把它误拼成相对落点。
+- 路径落点继续遵循 plan contract：`release`、`archive_tree_release` 这类托管落盘方法不会接受 `C:\...` 这类 Windows 绝对 `destination`；installer 会统一在执行前拒绝，避免把写入绕出 `managed_dir`。
 - `--mirror-prefix` 优先于 `TOOLCHAIN_INSTALLER_MIRROR_PREFIXES`；只有 CLI 没显式传时才读取环境变量。
 - 生效的 mirror 前缀会按传入顺序去重，不会按字典序重排。
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES` 可覆盖 release metadata API base；未设置时默认只使用官方 `https://api.github.com`。

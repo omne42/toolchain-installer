@@ -707,6 +707,25 @@ fn absolute_release_destination_returns_usage_exit_code() {
     .code(2);
 }
 
+#[test]
+fn windows_absolute_release_destination_returns_usage_exit_code() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args([
+        "--method",
+        "release",
+        "--target-triple",
+        "x86_64-pc-windows-msvc",
+        "--id",
+        "demo-release",
+        "--url",
+        "http://127.0.0.1:9/demo.tar.gz",
+        "--destination",
+        "C:\\tools\\demo.exe",
+    ])
+    .assert()
+    .code(2);
+}
+
 #[cfg(not(windows))]
 #[test]
 fn windows_absolute_release_destination_is_rejected_on_non_windows_host() {
@@ -1554,6 +1573,136 @@ ln -sfn ../lib/node_modules/http-server/bin/http-server "$npm_config_prefix/bin/
             .join("http-server")
             .display()
             .to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_global_rejects_preexisting_leaf_symlink_escape_on_repeat_install() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(&fake_npm, "#!/bin/sh\nexit 0\n");
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let package_dir = managed_dir
+        .join("lib")
+        .join("node_modules")
+        .join("http-server");
+    let outside_dir = temp.path().join("outside");
+    std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+    std::fs::create_dir_all(managed_dir.join("bin")).expect("create managed bin");
+    std::fs::create_dir_all(&outside_dir).expect("create outside dir");
+    std::fs::write(
+        package_dir.join("package.json"),
+        r#"{"name":"http-server","version":"14.1.1","bin":{"http-server":"bin/http-server"}}"#,
+    )
+    .expect("write manifest");
+    write_executable(
+        &outside_dir.join("http-server"),
+        r#"#!/bin/sh
+echo "outside"
+"#,
+    );
+    std::os::unix::fs::symlink(
+        "../../outside/http-server",
+        managed_dir.join("bin").join("http-server"),
+    )
+    .expect("create escaping symlink");
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert!(
+        json["items"][0]["detail"]
+            .as_str()
+            .expect("detail")
+            .contains("escapes via symlink leaf")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_global_rejects_fresh_leaf_symlink_escape_created_by_install() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    let outside_dir = temp.path().join("outside");
+    std::fs::create_dir_all(&outside_dir).expect("create outside dir");
+    write_executable(
+        &fake_npm,
+        &format!(
+            r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+package_dir="$npm_config_prefix/lib/node_modules/http-server"
+/bin/mkdir -p "$package_dir" "$npm_config_prefix/bin" "{outside_dir}"
+/bin/cat > "$package_dir/package.json" <<'EOF'
+{{"name":"http-server","version":"14.1.1","bin":{{"http-server":"bin/http-server"}}}}
+EOF
+/bin/cat > "{outside_dir}/http-server" <<'EOF'
+#!/bin/sh
+echo "outside"
+EOF
+/bin/chmod +x "{outside_dir}/http-server"
+/bin/ln -sfn ../../outside/http-server "$npm_config_prefix/bin/http-server"
+"#,
+            outside_dir = outside_dir.display()
+        ),
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", &fake_bin_dir)
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "http-server",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert!(
+        json["items"][0]["detail"]
+            .as_str()
+            .expect("detail")
+            .contains("escapes via symlink leaf")
     );
 }
 
