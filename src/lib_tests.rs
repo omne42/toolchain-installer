@@ -3901,6 +3901,38 @@ fn validate_plan_rejects_pip_destination_field() {
 }
 
 #[test]
+fn validate_plan_accepts_apt_method_without_manager() {
+    let plan = InstallPlan {
+        schema_version: Some(PLAN_SCHEMA_VERSION),
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "apt".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("demo".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+    let items = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect("apt method should default to canonical apt-get");
+
+    assert!(matches!(
+        items.as_slice(),
+        [ResolvedPlanItem::SystemPackage(item)]
+            if item.package == "demo" && item.mode == SystemPackageMode::AptGet
+    ));
+}
+
+#[test]
 fn validate_plan_accepts_apt_method_with_canonical_manager() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
