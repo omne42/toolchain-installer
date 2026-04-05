@@ -40,8 +40,9 @@ pub(crate) fn execute_npm_global_item(
         target_triple,
         managed_dir,
     )?;
-    let preinstall_state = capture_installation_state(
+    let preinstall_state = capture_installation_state_with_item_id(
         &recipe.binary_path,
+        &item.id,
         &item.package_spec,
         &item.binary_name,
         recipe.fallback_package_dir.as_deref(),
@@ -53,8 +54,9 @@ pub(crate) fn execute_npm_global_item(
     )
     .map_err(OperationError::from_host_recipe)?;
 
-    let destination = match resolve_npm_global_destination(
+    let destination = match resolve_npm_global_destination_with_item_id(
         &recipe.binary_path,
+        &item.id,
         &item.package_spec,
         &item.binary_name,
         recipe.fallback_package_dir.as_deref(),
@@ -76,9 +78,10 @@ pub(crate) fn execute_npm_global_item(
             ))
         })?,
     };
-    if !installation_result_is_acceptable(
+    if !installation_result_is_acceptable_with_item_id(
         &preinstall_state,
         &destination,
+        &item.id,
         &item.package_spec,
         &item.binary_name,
         recipe.fallback_package_dir.as_deref(),
@@ -292,17 +295,56 @@ fn bun_install_layout(managed_dir: &Path) -> OperationResult<BunInstallLayout> {
     })
 }
 
+#[cfg(test)]
 fn resolve_npm_global_destination(
     binary_path: &Path,
-    _package: &str,
+    package: &str,
     binary_name: &str,
-    _fallback_package_dir: Option<&Path>,
-    _package_search_root: Option<&Path>,
-    _fallback_search_root: Option<&Path>,
+    fallback_package_dir: Option<&Path>,
+    package_search_root: Option<&Path>,
+    fallback_search_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    find_binary_at_path(binary_path, binary_name)
+    resolve_npm_global_destination_with_item_id(
+        binary_path,
+        binary_name,
+        package,
+        binary_name,
+        fallback_package_dir,
+        package_search_root,
+        fallback_search_root,
+    )
 }
 
+fn resolve_npm_global_destination_with_item_id(
+    binary_path: &Path,
+    item_id: &str,
+    package: &str,
+    binary_name: &str,
+    fallback_package_dir: Option<&Path>,
+    package_search_root: Option<&Path>,
+    _fallback_search_root: Option<&Path>,
+) -> Option<PathBuf> {
+    resolve_binary_path_candidates(binary_path, item_id, binary_name)
+        .into_iter()
+        .find(|candidate| candidate.is_file() && command_path_exists(candidate))
+        .or_else(|| {
+            let binary_dir = binary_path.parent()?;
+            let manifest_names =
+                resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
+                    .into_iter()
+                    .flat_map(|package_dir| {
+                        manifest_binary_names(&package_dir, package, binary_name)
+                    })
+                    .collect::<Vec<_>>();
+            choose_existing_binary_path(
+                binary_dir,
+                &preferred_binary_names(item_id, binary_name),
+                &manifest_names,
+            )
+        })
+}
+
+#[cfg(test)]
 fn capture_installation_state(
     binary_path: &Path,
     package: &str,
@@ -311,7 +353,27 @@ fn capture_installation_state(
     package_search_root: Option<&Path>,
     fallback_search_root: Option<&Path>,
 ) -> HashMap<PathBuf, Option<FileFingerprint>> {
-    let mut paths = candidate_binary_paths(binary_path, binary_name);
+    capture_installation_state_with_item_id(
+        binary_path,
+        binary_name,
+        package,
+        binary_name,
+        fallback_package_dir,
+        package_search_root,
+        fallback_search_root,
+    )
+}
+
+fn capture_installation_state_with_item_id(
+    binary_path: &Path,
+    item_id: &str,
+    package: &str,
+    binary_name: &str,
+    fallback_package_dir: Option<&Path>,
+    package_search_root: Option<&Path>,
+    fallback_search_root: Option<&Path>,
+) -> HashMap<PathBuf, Option<FileFingerprint>> {
+    let mut paths = resolve_binary_path_candidates(binary_path, item_id, binary_name);
     for package_dir in
         resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
     {
@@ -319,6 +381,14 @@ fn capture_installation_state(
         paths.push(manifest_path.clone());
         if let Some(destination) = resolve_package_bin_script(&package_dir, package, binary_name) {
             paths.push(destination);
+        }
+        if let Some(binary_dir) = binary_path.parent() {
+            for manifest_binary_name in manifest_binary_names(&package_dir, package, binary_name) {
+                paths.extend(candidate_binary_paths(
+                    &binary_dir.join(&manifest_binary_name),
+                    &manifest_binary_name,
+                ));
+            }
         }
     }
     if let Some(root) = fallback_search_root {
@@ -335,9 +405,32 @@ fn capture_installation_state(
         .collect()
 }
 
+#[cfg(test)]
 fn installation_result_is_acceptable(
     preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>,
     destination: &Path,
+    package: &str,
+    binary_name: &str,
+    fallback_package_dir: Option<&Path>,
+    package_search_root: Option<&Path>,
+    fallback_search_root: Option<&Path>,
+) -> bool {
+    installation_result_is_acceptable_with_item_id(
+        preinstall_state,
+        destination,
+        binary_name,
+        package,
+        binary_name,
+        fallback_package_dir,
+        package_search_root,
+        fallback_search_root,
+    )
+}
+
+fn installation_result_is_acceptable_with_item_id(
+    preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>,
+    destination: &Path,
+    item_id: &str,
     package: &str,
     binary_name: &str,
     fallback_package_dir: Option<&Path>,
@@ -350,6 +443,7 @@ fn installation_result_is_acceptable(
 
     destination_preexisted(preinstall_state, destination)
         && managed_package_matches_request(
+            item_id,
             package,
             binary_name,
             fallback_package_dir,
@@ -379,6 +473,7 @@ fn path_changed(preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>, pa
 }
 
 fn managed_package_matches_request(
+    item_id: &str,
     package: &str,
     binary_name: &str,
     fallback_package_dir: Option<&Path>,
@@ -393,14 +488,94 @@ fn managed_package_matches_request(
             continue;
         }
 
-        if let Some(path) = resolve_package_bin_script(&package_dir, package, binary_name)
-            && command_path_exists(&path)
+        if let Some(path) = resolve_package_bin_script(&package_dir, package, binary_name) {
+            if command_path_exists(&path) {
+                return true;
+            }
+        }
+
+        if let Some(binary_dir) =
+            fallback_binary_dir_from_package_dir(&package_dir, package_search_root)
+            && choose_existing_binary_path(
+                &binary_dir,
+                &preferred_binary_names(item_id, binary_name),
+                &manifest_binary_names(&package_dir, package, binary_name),
+            )
+            .is_some()
         {
             return true;
         }
     }
     let _ = fallback_search_root;
     false
+}
+
+fn resolve_binary_path_candidates(
+    binary_path: &Path,
+    item_id: &str,
+    binary_name: &str,
+) -> Vec<PathBuf> {
+    let mut candidates = candidate_binary_paths(binary_path, binary_name);
+    let Some(parent) = binary_path.parent() else {
+        return candidates;
+    };
+    for preferred_name in preferred_binary_names(item_id, binary_name) {
+        for candidate in candidate_binary_paths(&parent.join(preferred_name), preferred_name) {
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates
+}
+
+fn preferred_binary_names<'a>(item_id: &'a str, binary_name: &'a str) -> Vec<&'a str> {
+    let mut names = vec![binary_name];
+    if item_id != binary_name {
+        names.push(item_id);
+    }
+    names
+}
+
+fn fallback_binary_dir_from_package_dir(
+    package_dir: &Path,
+    package_search_root: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(root) = package_search_root {
+        let candidate = root.join(".bin");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+
+    package_dir
+        .ancestors()
+        .find(|ancestor| {
+            ancestor.file_name().and_then(|value| value.to_str()) == Some("node_modules")
+        })
+        .and_then(Path::parent)
+        .map(|install_root| install_root.join("bin"))
+}
+
+fn choose_existing_binary_path(
+    binary_dir: &Path,
+    preferred_names: &[&str],
+    manifest_binary_names: &[String],
+) -> Option<PathBuf> {
+    let mut ordered_names = preferred_names
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    for manifest_binary_name in manifest_binary_names {
+        if !ordered_names.contains(manifest_binary_name) {
+            ordered_names.push(manifest_binary_name.clone());
+        }
+    }
+
+    ordered_names
+        .into_iter()
+        .flat_map(|name| candidate_binary_paths(&binary_dir.join(&name), &name))
+        .find(|candidate| candidate.is_file() && command_path_exists(candidate))
 }
 
 fn resolve_installed_package_dirs(
@@ -700,6 +875,46 @@ fn package_bin_relative_path(
     }
 }
 
+fn manifest_binary_names(package_dir: &Path, package: &str, binary_name: &str) -> Vec<String> {
+    let Ok(manifest) = std::fs::read_to_string(package_dir.join("package.json")) else {
+        return Vec::new();
+    };
+    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&manifest) else {
+        return Vec::new();
+    };
+    package_manifest_binary_names(&manifest, package, binary_name)
+}
+
+fn package_manifest_binary_names(
+    manifest: &serde_json::Value,
+    package: &str,
+    binary_name: &str,
+) -> Vec<String> {
+    let package_name = npm_package_name(package);
+    let package_basename = package_name.rsplit('/').next().unwrap_or(package_name);
+    let Some(bin) = manifest.get("bin") else {
+        return Vec::new();
+    };
+    match bin {
+        serde_json::Value::String(_) => vec![binary_name.to_string()],
+        serde_json::Value::Object(entries) => {
+            let mut names = entries
+                .keys()
+                .filter(|name| !name.is_empty())
+                .cloned()
+                .collect::<Vec<_>>();
+            names.sort();
+            if let Some(index) = names.iter().position(|name| name == binary_name) {
+                names.swap(0, index);
+            } else if let Some(index) = names.iter().position(|name| name == package_basename) {
+                names.swap(0, index);
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn sanitize_package_bin_relative_path(raw: &str) -> Option<PathBuf> {
     let path = Path::new(raw);
     let mut sanitized = PathBuf::new();
@@ -916,6 +1131,7 @@ fn global_binary_filename(
     binary_name.to_string()
 }
 
+#[cfg(test)]
 fn find_binary_at_path(binary_path: &Path, binary_name: &str) -> Option<PathBuf> {
     candidate_binary_paths(binary_path, binary_name)
         .into_iter()
@@ -977,9 +1193,10 @@ mod tests {
     use super::{
         NpmPackageRequest, build_npm_global_recipe, capture_installation_state, file_fingerprint,
         find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
-        installation_result_is_acceptable, npm_global_package_dir, npm_package_request,
-        package_bin_relative_path, parse_pnpm_root_stdout, path_has_no_symlink_components,
-        resolve_npm_global_destination, resolve_package_bin_script,
+        installation_result_is_acceptable, installation_result_is_acceptable_with_item_id,
+        npm_global_package_dir, npm_package_request, package_bin_relative_path,
+        parse_pnpm_root_stdout, path_has_no_symlink_components, resolve_npm_global_destination,
+        resolve_npm_global_destination_with_item_id, resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
 
@@ -1458,6 +1675,75 @@ mod tests {
             "http-server",
             None,
             Some(temp.path().join("global").as_path()),
+            None,
+        ));
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_prefers_item_id_when_manifest_bin_differs_from_package_name()
+    {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_root = temp.path().join("bin");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("typescript");
+        let expected_binary_path = binary_root.join("typescript");
+        let actual_binary_path = binary_root.join("tsc");
+
+        write_package_with_binary(
+            &package_dir,
+            &actual_binary_path,
+            "typescript",
+            "5.6.3",
+            "bin/tsc",
+        );
+
+        assert_eq!(
+            resolve_npm_global_destination_with_item_id(
+                &expected_binary_path,
+                "tsc",
+                "typescript@5.6.3",
+                "typescript",
+                Some(&package_dir),
+                Some(&package_root),
+                None,
+            ),
+            Some(actual_binary_path)
+        );
+    }
+
+    #[test]
+    fn installation_result_accepts_idempotent_binary_when_item_id_matches_manifest_bin() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_root = temp.path().join("bin");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("typescript");
+        let expected_binary_path = binary_root.join("typescript");
+        let actual_binary_path = binary_root.join("tsc");
+
+        write_package_with_binary(
+            &package_dir,
+            &actual_binary_path,
+            "typescript",
+            "5.6.3",
+            "bin/tsc",
+        );
+        let preinstall_state = capture_installation_state(
+            &expected_binary_path,
+            "typescript@5.6.3",
+            "typescript",
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        );
+
+        assert!(installation_result_is_acceptable_with_item_id(
+            &preinstall_state,
+            &actual_binary_path,
+            "tsc",
+            "typescript@5.6.3",
+            "typescript",
+            Some(&package_dir),
+            Some(&package_root),
             None,
         ));
     }
