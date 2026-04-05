@@ -150,25 +150,30 @@ fn build_npm_global_recipe(
             })
         }
         NodePackageManager::Pnpm => {
+            let program = resolved_package_manager_program("pnpm");
+            let env = vec![
+                (
+                    OsString::from("PNPM_HOME"),
+                    managed_dir.as_os_str().to_os_string(),
+                ),
+                (OsString::from("PATH"), prepend_path_env(managed_dir)?),
+            ];
+            let package_search_root = resolve_pnpm_global_package_root(&program, &env);
             let binary_path =
                 managed_dir.join(global_binary_filename(binary_name, manager, target_triple));
             Ok(NpmGlobalRecipe {
-                program: resolved_package_manager_program("pnpm"),
+                program,
                 args: vec![
                     OsString::from("add"),
                     OsString::from("--global"),
-                    OsString::from(package),
+                    OsString::from(package.clone()),
                 ],
-                env: vec![
-                    (
-                        OsString::from("PNPM_HOME"),
-                        managed_dir.as_os_str().to_os_string(),
-                    ),
-                    (OsString::from("PATH"), prepend_path_env(managed_dir)?),
-                ],
+                env,
                 binary_path,
-                fallback_package_dir: None,
-                package_search_root: Some(managed_dir.join("global")),
+                fallback_package_dir: package_search_root
+                    .as_deref()
+                    .map(|root| package_dir_with_root(root, &package)),
+                package_search_root,
                 fallback_search_root: None,
                 source: "npm:pnpm".to_string(),
             })
@@ -213,6 +218,21 @@ fn resolved_package_manager_program(command: &str) -> OsString {
     resolve_command_path(command)
         .map(|path| path.into_os_string())
         .unwrap_or_else(|| OsString::from(command))
+}
+
+fn resolve_pnpm_global_package_root(
+    program: &OsStr,
+    env: &[(OsString, OsString)],
+) -> Option<PathBuf> {
+    let args = [OsString::from("root"), OsString::from("--global")];
+    let output = run_host_recipe(&HostRecipeRequest::new(program, &args).with_env(env)).ok()?;
+    parse_pnpm_root_stdout(&output.output.stdout)
+}
+
+fn parse_pnpm_root_stdout(stdout: &[u8]) -> Option<PathBuf> {
+    let stdout = std::str::from_utf8(stdout).ok()?;
+    let root = stdout.lines().find(|line| !line.trim().is_empty())?.trim();
+    (!root.is_empty()).then(|| PathBuf::from(root))
 }
 
 fn npm_prefix_root_for_target(target_triple: &str, managed_dir: &Path) -> OperationResult<PathBuf> {
@@ -958,8 +978,8 @@ mod tests {
         NpmPackageRequest, build_npm_global_recipe, capture_installation_state, file_fingerprint,
         find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
         installation_result_is_acceptable, npm_global_package_dir, npm_package_request,
-        package_bin_relative_path, path_has_no_symlink_components, resolve_npm_global_destination,
-        resolve_package_bin_script,
+        package_bin_relative_path, parse_pnpm_root_stdout, path_has_no_symlink_components,
+        resolve_npm_global_destination, resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
 
@@ -988,6 +1008,20 @@ mod tests {
             .next()
             .expect("first PATH entry");
         assert_eq!(first, managed_dir);
+    }
+
+    #[test]
+    fn parse_pnpm_root_stdout_uses_first_non_empty_line() {
+        assert_eq!(
+            parse_pnpm_root_stdout(b"\n/tmp/pnpm-global/node_modules\nignored\n"),
+            Some(PathBuf::from("/tmp/pnpm-global/node_modules"))
+        );
+    }
+
+    #[test]
+    fn parse_pnpm_root_stdout_rejects_empty_or_non_utf8_output() {
+        assert_eq!(parse_pnpm_root_stdout(b"\n \n"), None);
+        assert_eq!(parse_pnpm_root_stdout(&[0xff, 0xfe]), None);
     }
 
     #[test]
