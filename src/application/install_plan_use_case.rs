@@ -29,12 +29,9 @@ pub async fn apply_install_plan(
         .ok_or_else(|| crate::error::InstallerError::install("unsupported host platform/arch"))?;
     let target_triple =
         resolve_requested_target_triple(request.target_triple.as_deref(), &host_triple)?;
-    let resolved_items = validate_plan_structure(
-        plan,
-        &host_triple,
-        &target_triple,
-        request.plan_base_dir.as_deref(),
-    )?;
+    let plan_base_dir = request.normalized_plan_base_dir()?;
+    let resolved_items =
+        validate_plan_structure(plan, &host_triple, &target_triple, plan_base_dir.as_deref())?;
     let managed_dir = resolve_managed_toolchain_dir(request.managed_dir.as_deref(), &target_triple);
     if plan_requires_managed_dir(&resolved_items) && managed_dir.is_none() {
         return Err(crate::error::InstallerError::install(

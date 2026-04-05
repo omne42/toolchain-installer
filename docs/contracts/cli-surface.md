@@ -40,7 +40,7 @@
   - 执行 plan 文件。
   - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
   - plan 中声明的本地相对路径按该 plan 文件所在目录解析，不按调用 CLI 时的当前工作目录解析；这同样适用于 `pip` / `npm_global` 的本地 `package` 路径。
-- `--method <release|archive_tree_release|system_package|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
+- `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
   - 单个安装项标识。
@@ -55,9 +55,9 @@
   - 非 Windows 宿主会拒绝 `C:\tools\demo.exe` 这类 Windows 绝对 `--destination`，即使 `--target-triple` 是 Windows 也不例外；`destination` 必须符合当前宿主机的实际落盘语义。
   - `uv_tool` 额外允许 `--binary-name`，用于声明托管目录下期望出现的可执行文件名。
 - `--package`、`--manager`
-  - `system_package`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component` 或 `go_install` 模式字段。
-  - 需要固定 canonical `apt-get` 时，使用 `--method system_package --manager apt-get`；不会再接受单独的 `apt` 方法别名。
-  - `pip` / `npm_global` 的 `--package` 不允许传 `-r`、`--editable`、`--workspace` 这类 option-like 值。
+  - `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install` 或 `uv_tool` 模式字段。
+  - `--method apt` 会固定使用 canonical `apt-get`；若显式传 `--manager`，当前也只接受 `apt-get`。
+  - `pip` / `npm_global` / `workspace_package` / `uv_tool` 的 `--package` 不允许传 `-r`、`--editable`、`--workspace`、`--from` 这类 option-like 值。
 - `--python`
   - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
   - 对 `pip` 而言，显式提供后只会调用该解释器；未提供时默认先探测 `python3`，只有 `python3` 命令不存在时才回退到 `python`，不会在 `python3 -m pip install` 已经失败后静默切到另一个 Python 环境。

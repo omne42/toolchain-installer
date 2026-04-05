@@ -29,6 +29,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
 - 纯库 API `validate_install_plan()` 只做 schema、字段组合、宿主/目标约束和重复 `id` 校验；它不知道 `managed_dir`，因此不会擅自猜测依赖目标目录的全局路径冲突。
 - CLI 与 `validate_install_plan_with_request()` 会在结构校验通过后，再结合真实 `managed_dir` 做需要托管根的方法的全局目标路径冲突校验；如果整份 plan 只包含 `system_package`、`pip`、`workspace_package`、`rustup_component` 这类不依赖托管根的方法，即使默认 `managed_dir` 不可解析也不会提前失败。
+- 纯库调用若要传 `ExecutionRequest.plan_base_dir`，该路径必须已经是绝对路径；库层不会再偷偷回退到进程当前工作目录帮调用方猜测基准目录。
 - 真正进入 bootstrap 或 plan 执行时，installer 还会对目标 `managed_dir` 获取进程级 advisory lock；命中同一托管根的并发调用会串行等待，直到前一个执行释放锁后才继续，避免共享 state root、固定 staging 名或回滚逻辑互相踩坏。
 - `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
 
@@ -40,6 +41,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 下载 archive 资产并把完整目录树解到目标路径。
 - `system_package`
   - 通过宿主系统包管理器安装。
+- `apt`
+  - 显式通过 canonical `apt-get` 安装。
 - `pip`
   - 通过 `python -m pip install` 安装。
 - `npm_global`
@@ -66,7 +69,9 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 归属于 release 安装域。
 - `system_package`
   - 归属于宿主系统包安装域。
-  - 需要固定 canonical `apt-get` 时，使用 `manager=apt-get`，而不是单独的 `apt` 方法名。
+- `apt`
+  - 归属于宿主系统包安装域。
+  - 它是固定 `apt-get` 的显式 alias；执行层会收敛成 `system_package + manager=apt-get`，不会再让调用方自己拼 manager 字符串猜测行为。
 - `pip`
   - 归属于 Python 包安装域。
   - 它表达的是“把包交给选定解释器所在环境执行 `python -m pip install`”这一宿主环境变更，不承诺把产物收口到 installer 自己可拥有的托管目标路径。
@@ -92,6 +97,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 允许 `url`、`sha256`、`destination`。
 - `system_package`
   - 允许 `package`、可选 `manager`。
+- `apt`
+  - 允许 `package`、可选 `manager=apt-get`。
 - `pip`
   - 允许 `package`、可选 `python`。
 - `npm_global`
@@ -120,7 +127,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `bootstrap` 仅支持当前宿主机，即 `target_triple` 必须等于自动探测到的 `host_triple`。
 - `method=release` 支持显式跨目标平台下载与落盘。
 - `method=archive_tree_release` 支持显式跨目标平台下载与解包。
-- `method=system_package|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool` 仅作用于当前宿主机。
+- `method=system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool` 仅作用于当前宿主机。
 - 若宿主机方法出现 `target_triple != host_triple`，执行前直接返回退出码 `2`。
 
 ## 路径与 URL 约束
@@ -140,8 +147,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
 - `workspace_package` 执行时会把底层包管理器的工作目录锚定到该 workspace；即使调用 CLI 时的当前目录不同，`npm` 的 `file:`、相对路径和其他依赖解析也按目标 workspace 解析，而不是按 installer 进程当前目录漂移。
 - `workspace_package` 不接受独立 `version` 字段；如需锁定版本，应直接把版本写进 `package` 自身。
-- `system_package` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
-- `method=system_package` 若显式传 `manager=apt-get`，会固定收敛到 canonical `apt-get` recipe；其他 manager 值则按 shared runtime 的受支持系统包管理器集合解析，不会把 `apt` 当作独立方法名。
+- `system_package`、`apt` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
+- `method=system_package` 若显式传 `manager=apt-get`，会固定收敛到 canonical `apt-get` recipe；`method=apt` 则直接固定到同一 canonical `apt-get` recipe，并只接受可选 `manager=apt-get`。
 - `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的 `package` 不允许是 `-r`、`--editable`、`--workspace`、`--git`、`--toolchain`、`--index-url` 这类看起来像命令行选项的值；installer 会在 resolve 阶段直接返回 usage error，而不是把额外语义透传给底层包管理器。
 - `pip` 成功结果里的 `source` 只会记录实际使用的解释器标识（例如 `pip:python3` 或 `pip:/abs/path/python3.13`），不会把它包装成 artifact 坐标；同时 `destination` 会保持为空，因为底层 site-packages / script 落点由被选中的 Python 环境决定，而不是 installer 自己拥有的托管输出。
 - 多个 `workspace_package` item 只有在 `manager` 相同的前提下才可以指向同一个 workspace；这表示对同一工作区重复执行同一套包管理器的依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。

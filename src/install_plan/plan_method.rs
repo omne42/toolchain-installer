@@ -2,6 +2,7 @@ pub(crate) const SUPPORTED_PLAN_METHODS: &[&str] = &[
     "release",
     "archive_tree_release",
     "system_package",
+    "apt",
     "pip",
     "npm_global",
     "workspace_package",
@@ -25,6 +26,7 @@ pub(crate) enum PlanMethod {
     Release,
     ArchiveTreeRelease,
     SystemPackage,
+    Apt,
     Pip,
     NpmGlobal,
     WorkspacePackage,
@@ -41,6 +43,7 @@ impl PlanMethod {
             "release" => Self::Release,
             "archive_tree_release" => Self::ArchiveTreeRelease,
             "system_package" => Self::SystemPackage,
+            "apt" => Self::Apt,
             "pip" => Self::Pip,
             "npm_global" => Self::NpmGlobal,
             "workspace_package" => Self::WorkspacePackage,
@@ -58,6 +61,7 @@ impl PlanMethod {
         matches!(
             self,
             Self::SystemPackage
+                | Self::Apt
                 | Self::Pip
                 | Self::NpmGlobal
                 | Self::WorkspacePackage
