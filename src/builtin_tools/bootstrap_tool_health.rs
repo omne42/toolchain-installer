@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use omne_process_primitives::resolve_command_path_or_standard_location;
+use omne_process_primitives::resolve_command_path;
 
 use crate::builtin_tools::builtin_tool_selection::is_supported_builtin_tool;
 use crate::managed_toolchain::version_probe::binary_reports_version_with_prefix;
@@ -46,7 +46,7 @@ pub(crate) fn assess_managed_bootstrap_state(
 
 pub(crate) fn host_command_is_healthy(tool: &str) -> bool {
     is_supported_builtin_tool(tool)
-        && resolve_command_path_or_standard_location(tool)
+        && resolve_command_path(tool)
             .is_some_and(|path| managed_binary_reports_expected_version(tool, &path))
 }
 

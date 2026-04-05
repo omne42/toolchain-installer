@@ -5,7 +5,7 @@
 - `src/main.rs`
   - 二进制入口。只负责调用 CLI 解析与执行，不承载业务规则。
 - `src/cli.rs`
-  - 二进制专属 CLI 参数模型、plan 文件读取和命令分发。
+  - 二进制专属 CLI 参数模型、plan 文件读取、进程环境到 `ExecutionRequest` 的显式收敛和命令分发。
 - `src/lib.rs`
   - 库入口。只做模块装配与公开导出。
 
@@ -26,7 +26,7 @@
   - `public_release_asset_installation.rs`：`gh` / `git` public release 资产选择与安装适配；其中 Windows `git` 的 MinGit payload 切换与 `git.cmd` launcher 重写通过同一事务提交或回滚。
   - `mod.rs`：内置工具领域汇总。
 - `src/contracts/`
-  - `execution_request.rs`：`ExecutionRequest` 与 `BootstrapCommand` 输入契约。
+  - `execution_request.rs`：`ExecutionRequest` 与 `BootstrapCommand` 输入契约，以及 CLI 可选复用的进程环境 fallback 收敛辅助。
   - `bootstrap_result.rs`：稳定 JSON 输出、状态与 schema 版本。
   - `install_plan_contract.rs`：安装 plan schema 与条目结构。
   - `mod.rs`：契约域汇总导出，并向 crate 内部暴露失败 `BootstrapItem` 构造辅助。
@@ -109,7 +109,7 @@
 - `src/error.rs`
   - 错误类型、退出码与统一结果类型。
 - `src/installer_runtime_config.rs`
-  - installer 运行期配置与环境变量归一化，消费 `ExecutionRequest` 组装运行时策略。
+  - installer 运行期配置归一化，消费显式 `ExecutionRequest` 组装运行时策略。
   - 内部进一步拆成 `GitHubReleasePolicy`、`DownloadSourcePolicy`、`DownloadPolicy`、`PackageIndexPolicy`、`PythonMirrorPolicy`、`GatewayRoutingPolicy`，避免 GitHub API、镜像候选、索引、gateway、下载限制继续揉在一个平铺 struct 里。
 - `src/plan_items.rs`
   - `install_plan` 与 `managed_toolchain` 共享的强类型安装项模型，例如 `ResolvedPlanItem`、`UvPythonPlanItem`、`UvToolPlanItem`。

@@ -60,41 +60,48 @@ pub(crate) struct ManagedToolchainPolicy {
 impl InstallerRuntimeConfig {
     pub(crate) fn from_execution_request(request: &ExecutionRequest) -> Self {
         Self {
-            github_releases: GitHubReleasePolicy::from_environment(),
+            github_releases: GitHubReleasePolicy::from_execution_request(request),
             download_sources: DownloadSourcePolicy::from_execution_request(request),
             package_indexes: PackageIndexPolicy::from_execution_request(request),
             python_mirrors: PythonMirrorPolicy::from_execution_request(request),
             gateway: GatewayRoutingPolicy::from_execution_request(request),
             download: DownloadPolicy::from_execution_request(request),
-            managed_toolchain: ManagedToolchainPolicy::from_environment(),
+            managed_toolchain: ManagedToolchainPolicy::from_execution_request(request),
         }
     }
 }
 
 impl GitHubReleasePolicy {
-    fn from_environment() -> Self {
-        let github_api_bases = parse_csv_env("TOOLCHAIN_INSTALLER_GITHUB_API_BASES");
-        let github_api_bases = if github_api_bases.is_empty() {
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
+        let api_bases = dedupe_strings(
+            request
+                .github_api_bases
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        );
+        let api_bases = if api_bases.is_empty() {
             vec![DEFAULT_GITHUB_API_BASE.to_string()]
         } else {
-            github_api_bases
+            api_bases
         };
-        let github_token = parse_nonempty_env("TOOLCHAIN_INSTALLER_GITHUB_TOKEN")
-            .or_else(|| parse_nonempty_env("GITHUB_TOKEN"));
 
         Self {
-            api_bases: github_api_bases,
-            token: github_token,
+            api_bases,
+            token: request
+                .github_token
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
         }
     }
 }
 
 impl DownloadSourcePolicy {
     fn from_execution_request(request: &ExecutionRequest) -> Self {
-        let mirror_prefixes = explicit_or_env_csv(
-            &request.mirror_prefixes,
-            "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
-        );
+        let mirror_prefixes = explicit_values(&request.mirror_prefixes);
 
         Self {
             mirror_prefixes: dedupe_strings(mirror_prefixes),
@@ -104,10 +111,7 @@ impl DownloadSourcePolicy {
 
 impl PackageIndexPolicy {
     fn from_execution_request(request: &ExecutionRequest) -> Self {
-        let mut indexes = dedupe_strings(explicit_or_env_csv(
-            &request.package_indexes,
-            "TOOLCHAIN_INSTALLER_PACKAGE_INDEXES",
-        ));
+        let mut indexes = dedupe_strings(explicit_values(&request.package_indexes));
         if indexes.is_empty() {
             indexes.push(DEFAULT_PYPI_INDEX.to_string());
         }
@@ -117,10 +121,7 @@ impl PackageIndexPolicy {
 
 impl PythonMirrorPolicy {
     fn from_execution_request(request: &ExecutionRequest) -> Self {
-        let install_mirrors = explicit_or_env_csv(
-            &request.python_install_mirrors,
-            "TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS",
-        );
+        let install_mirrors = explicit_values(&request.python_install_mirrors);
         Self {
             install_mirrors: dedupe_strings(install_mirrors),
         }
@@ -133,25 +134,13 @@ impl GatewayRoutingPolicy {
             .gateway_base
             .as_ref()
             .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                std::env::var("TOOLCHAIN_INSTALLER_GATEWAY_BASE")
-                    .ok()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-            });
+            .filter(|value| !value.is_empty());
 
         let country = request
             .country
             .as_ref()
             .map(|value| value.trim().to_ascii_uppercase())
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                std::env::var("TOOLCHAIN_INSTALLER_COUNTRY")
-                    .ok()
-                    .map(|value| value.trim().to_ascii_uppercase())
-                    .filter(|value| !value.is_empty())
-            });
+            .filter(|value| !value.is_empty());
 
         Self { base, country }
     }
@@ -163,16 +152,12 @@ impl GatewayRoutingPolicy {
 
 impl DownloadPolicy {
     fn from_execution_request(request: &ExecutionRequest) -> Self {
-        let http_timeout = std::env::var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS")
-            .ok()
-            .and_then(|raw| raw.trim().parse::<u64>().ok())
+        let http_timeout = request
+            .http_timeout_seconds
             .filter(|seconds| *seconds > 0)
             .map(Duration::from_secs)
             .unwrap_or_else(|| Duration::from_secs(DEFAULT_HTTP_TIMEOUT_SECONDS));
-        let max_download_bytes = request
-            .max_download_bytes
-            .filter(|value| *value > 0)
-            .or_else(|| parse_positive_u64_env("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES"));
+        let max_download_bytes = request.max_download_bytes.filter(|value| *value > 0);
 
         Self {
             http_timeout,
@@ -182,8 +167,10 @@ impl DownloadPolicy {
 }
 
 impl ManagedToolchainPolicy {
-    fn from_environment() -> Self {
-        let uv_recipe_timeout = parse_positive_u64_env("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS")
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
+        let uv_recipe_timeout = request
+            .uv_timeout_seconds
+            .filter(|seconds| *seconds > 0)
             .map(Duration::from_secs)
             .unwrap_or_else(|| Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS));
         Self { uv_recipe_timeout }
@@ -198,45 +185,13 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn explicit_or_env_csv(explicit: &[String], env_name: &str) -> Vec<String> {
-    let explicit = explicit
+fn explicit_values(explicit: &[String]) -> Vec<String> {
+    explicit
         .iter()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    if explicit.is_empty() {
-        parse_csv_env(env_name)
-    } else {
-        explicit
-    }
-}
-
-fn parse_csv_env(name: &str) -> Vec<String> {
-    std::env::var(name)
-        .ok()
-        .map(|raw| {
-            raw.split(',')
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_positive_u64_env(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-}
-
-fn parse_nonempty_env(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|raw| raw.trim().to_string())
-        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
 }
 
 #[cfg(test)]
@@ -311,16 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_mirror_prefixes_override_environment_values() {
-        let _guard = env_lock().lock().expect("env lock");
-        let previous = std::env::var_os("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES");
-        unsafe {
-            std::env::set_var(
-                "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
-                "https://env.example/releases,https://env-second.example/releases",
-            );
-        }
-
+    fn explicit_mirror_prefixes_are_preserved() {
         let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
             mirror_prefixes: vec![
                 "https://cli-a.example/releases".to_string(),
@@ -329,7 +275,6 @@ mod tests {
             ..ExecutionRequest::default()
         });
 
-        restore_env_var("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES", previous);
         assert_eq!(
             cfg.download_sources.mirror_prefixes,
             vec![
@@ -340,16 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_package_indexes_override_environment_values() {
-        let _guard = env_lock().lock().expect("env lock");
-        let previous = std::env::var_os("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES");
-        unsafe {
-            std::env::set_var(
-                "TOOLCHAIN_INSTALLER_PACKAGE_INDEXES",
-                "https://env.example/simple,https://env-second.example/simple",
-            );
-        }
-
+    fn explicit_package_indexes_are_preserved() {
         let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
             package_indexes: vec![
                 "https://cli-a.example/simple".to_string(),
@@ -358,7 +294,6 @@ mod tests {
             ..ExecutionRequest::default()
         });
 
-        restore_env_var("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES", previous);
         assert_eq!(
             cfg.package_indexes.indexes,
             vec![
@@ -369,16 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_python_mirrors_override_environment_values() {
-        let _guard = env_lock().lock().expect("env lock");
-        let previous = std::env::var_os("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS");
-        unsafe {
-            std::env::set_var(
-                "TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS",
-                "https://env.example/python,https://env-second.example/python",
-            );
-        }
-
+    fn explicit_python_mirrors_are_preserved() {
         let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
             python_install_mirrors: vec![
                 "https://cli-a.example/python".to_string(),
@@ -387,7 +313,6 @@ mod tests {
             ..ExecutionRequest::default()
         });
 
-        restore_env_var("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS", previous);
         assert_eq!(
             cfg.python_mirrors.install_mirrors,
             vec![
@@ -398,32 +323,68 @@ mod tests {
     }
 
     #[test]
-    fn managed_toolchain_policy_uses_uv_timeout_override() {
-        let _guard = env_lock().lock().expect("env lock");
-        let previous = std::env::var_os("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS");
-        unsafe {
-            std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", "7");
-        }
-
-        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest::default());
-
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", value)
-            },
-            None => unsafe { std::env::remove_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS") },
-        }
-
+    fn managed_toolchain_policy_uses_request_timeout_override() {
+        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
+            uv_timeout_seconds: Some(7),
+            ..ExecutionRequest::default()
+        });
         assert_eq!(
             cfg.managed_toolchain.uv_recipe_timeout,
             Duration::from_secs(7)
         );
     }
 
-    fn restore_env_var(name: &str, previous: Option<std::ffi::OsString>) {
-        match previous {
-            Some(value) => unsafe { std::env::set_var(name, value) },
-            None => unsafe { std::env::remove_var(name) },
+    #[test]
+    fn runtime_config_ignores_process_environment_once_request_is_built() {
+        let _guard = env_lock().lock().expect("env lock");
+        let request = ExecutionRequest {
+            github_api_bases: vec!["https://api.request.example".to_string()],
+            github_token: Some("request-token".to_string()),
+            gateway_base: Some("https://gateway.request".to_string()),
+            country: Some("US".to_string()),
+            http_timeout_seconds: Some(41),
+            max_download_bytes: Some(43),
+            uv_timeout_seconds: Some(47),
+            ..ExecutionRequest::default()
+        };
+
+        unsafe {
+            std::env::set_var(
+                "TOOLCHAIN_INSTALLER_GITHUB_API_BASES",
+                "https://api.env.example",
+            );
+            std::env::set_var("TOOLCHAIN_INSTALLER_GITHUB_TOKEN", "env-token");
+            std::env::set_var("TOOLCHAIN_INSTALLER_GATEWAY_BASE", "https://gateway.env");
+            std::env::set_var("TOOLCHAIN_INSTALLER_COUNTRY", "CN");
+            std::env::set_var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS", "53");
+            std::env::set_var("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES", "59");
+            std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", "61");
         }
+
+        let cfg = InstallerRuntimeConfig::from_execution_request(&request);
+
+        unsafe {
+            std::env::remove_var("TOOLCHAIN_INSTALLER_GITHUB_API_BASES");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_GITHUB_TOKEN");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_GATEWAY_BASE");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_COUNTRY");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS");
+        }
+
+        assert_eq!(
+            cfg.github_releases.api_bases,
+            vec!["https://api.request.example".to_string()]
+        );
+        assert_eq!(cfg.github_releases.token.as_deref(), Some("request-token"));
+        assert_eq!(cfg.gateway.base.as_deref(), Some("https://gateway.request"));
+        assert_eq!(cfg.gateway.country.as_deref(), Some("US"));
+        assert_eq!(cfg.download.http_timeout, Duration::from_secs(41));
+        assert_eq!(cfg.download.max_download_bytes, Some(43));
+        assert_eq!(
+            cfg.managed_toolchain.uv_recipe_timeout,
+            Duration::from_secs(47)
+        );
     }
 }
