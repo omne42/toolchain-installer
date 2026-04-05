@@ -982,11 +982,13 @@ def phase_apt(binary: Path) -> None:
         [
             "--json",
             "--method",
-            "apt",
+            "system_package",
             "--id",
             "jq-apt",
             "--package",
             "jq",
+            "--manager",
+            "apt-get",
         ],
         attempts=HOST_INSTALL_ATTEMPTS,
     )
