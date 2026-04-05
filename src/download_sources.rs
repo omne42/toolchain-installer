@@ -59,7 +59,27 @@ pub(crate) fn redact_source_url(raw: &str) -> String {
     let _ = url.set_password(None);
     url.set_query(None);
     url.set_fragment(None);
+    let redacted_path = redact_embedded_absolute_url(url.path());
+    if redacted_path != url.path() {
+        url.set_path(&redacted_path);
+    }
     url.to_string()
+}
+
+fn redact_embedded_absolute_url(path: &str) -> String {
+    let Some(index) = path.find("https://").or_else(|| path.find("http://")) else {
+        return path.to_string();
+    };
+    let prefix = &path[..index];
+    let nested = &path[index..];
+    let Ok(mut nested_url) = reqwest::Url::parse(nested) else {
+        return path.to_string();
+    };
+    let _ = nested_url.set_username("");
+    let _ = nested_url.set_password(None);
+    nested_url.set_query(None);
+    nested_url.set_fragment(None);
+    format!("{prefix}{nested_url}")
 }
 
 #[cfg(test)]
@@ -120,6 +140,16 @@ mod tests {
                 "https://user:secret@example.com/download/demo.tar.gz?token=abc#frag"
             ),
             "https://example.com/download/demo.tar.gz"
+        );
+    }
+
+    #[test]
+    fn redact_source_url_strips_sensitive_data_from_embedded_upstream_url() {
+        assert_eq!(
+            redact_source_url(
+                "https://mirror.example/proxy/https://user:secret@example.com/download/demo.tar.gz?token=abc#frag"
+            ),
+            "https://mirror.example/proxy/https://example.com/download/demo.tar.gz"
         );
     }
 

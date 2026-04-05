@@ -9,7 +9,7 @@ use omne_integrity_primitives::parse_sha256_digest;
 
 use crate::artifact::InstallSource;
 use crate::download_sources::{
-    build_download_candidates, result_source_kind_for_download_candidate,
+    build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
 use crate::github_release_metadata::fetch_latest_release_metadata;
@@ -68,7 +68,7 @@ pub(crate) async fn install_uv_from_public_release(
         archive_match,
     } = downloaded;
     Ok(InstallSource::new(
-        source.url,
+        redact_source_url(&source.url),
         result_source_kind_for_download_candidate(source.kind),
     )
     .with_archive_match(archive_match.into()))
