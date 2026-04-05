@@ -54,7 +54,6 @@ pub(crate) fn resolve_plan_item(
             resolve_archive_tree_release_plan_item(item, id, host_triple, target_triple)
         }
         PlanMethod::SystemPackage => resolve_system_package_plan_item(item, id),
-        PlanMethod::Apt => resolve_apt_plan_item(item, id),
         PlanMethod::Pip => resolve_pip_plan_item(item, id, host_triple, plan_base_dir),
         PlanMethod::NpmGlobal => resolve_npm_global_plan_item(item, id, host_triple, plan_base_dir),
         PlanMethod::WorkspacePackage => {
@@ -172,37 +171,6 @@ fn resolve_system_package_plan_item(
             item.id.as_str(),
         )?,
         mode,
-    }))
-}
-
-fn resolve_apt_plan_item(item: &InstallPlanItem, id: String) -> InstallerResult<ResolvedPlanItem> {
-    reject_disallowed_fields(
-        &id,
-        &[
-            ("version", item.version.as_deref()),
-            ("url", item.url.as_deref()),
-            ("sha256", item.sha256.as_deref()),
-            ("archive_binary", item.archive_binary.as_deref()),
-            ("binary_name", item.binary_name.as_deref()),
-            ("destination", item.destination.as_deref()),
-            ("python", item.python.as_deref()),
-        ],
-    )?;
-    if let Some(manager) = optional_trimmed(item.manager.as_deref())
-        && manager != "apt-get"
-    {
-        return Err(InstallerError::usage(format!(
-            "plan item `{id}` uses method `apt` but manager `{manager}`"
-        )));
-    }
-    Ok(ResolvedPlanItem::SystemPackage(SystemPackagePlanItem {
-        id,
-        package: require_non_empty(
-            item.package.as_deref().unwrap_or_default(),
-            "package",
-            item.id.as_str(),
-        )?,
-        mode: SystemPackageMode::AptGet,
     }))
 }
 

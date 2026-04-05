@@ -3903,12 +3903,12 @@ fn validate_plan_rejects_pip_destination_field() {
 }
 
 #[test]
-fn validate_plan_accepts_apt_method_with_canonical_manager() {
+fn validate_plan_accepts_system_package_method_with_explicit_apt_get_manager() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
-            method: "apt".to_string(),
+            method: "system_package".to_string(),
             version: None,
             url: None,
             sha256: None,
@@ -3925,17 +3925,18 @@ fn validate_plan_accepts_apt_method_with_canonical_manager() {
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect("apt method should accept canonical manager");
+    .expect("system_package should accept explicit apt-get manager");
 
     assert!(matches!(
         items.as_slice(),
         [ResolvedPlanItem::SystemPackage(item)]
-            if item.package == "demo" && item.mode == SystemPackageMode::AptGet
+            if item.package == "demo"
+                && item.mode == SystemPackageMode::Explicit(SystemPackageManager::AptGet)
     ));
 }
 
 #[test]
-fn validate_plan_rejects_apt_method_with_non_apt_manager() {
+fn validate_plan_rejects_legacy_apt_method() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -3957,8 +3958,9 @@ fn validate_plan_rejects_apt_method_with_non_apt_manager() {
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt method should reject non-apt manager values");
+    .expect_err("legacy apt method should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(err.to_string().contains("unsupported method `apt`"));
 }
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
@@ -6002,7 +6004,7 @@ fn with_path_entries<T>(entries: Vec<PathBuf>, f: impl FnOnce() -> T) -> T {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("lock env guard");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let original = std::env::var_os("PATH");
     let joined = std::env::join_paths(entries).expect("join PATH");
     let restore = EnvVarRestore::new("PATH", original);

@@ -24,7 +24,6 @@ impl NodePackageManager {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SystemPackageMode {
     Auto,
-    AptGet,
     Explicit(SystemPackageManager),
 }
 

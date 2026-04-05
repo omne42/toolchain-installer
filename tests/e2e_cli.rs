@@ -2544,7 +2544,7 @@ fn conflicting_nested_plan_destinations_return_usage_exit_code() {
 }
 
 #[test]
-fn apt_method_rejects_non_apt_manager() {
+fn legacy_apt_method_returns_usage_error() {
     let mut cmd = bootstrap_cmd();
     cmd.args([
         "--method",
@@ -2553,8 +2553,6 @@ fn apt_method_rejects_non_apt_manager() {
         "demo-apt",
         "--package",
         "demo-package",
-        "--manager",
-        "dnf",
     ])
     .assert()
     .code(2);
