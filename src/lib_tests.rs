@@ -56,8 +56,8 @@ use crate::managed_toolchain::{
 };
 use crate::plan_items::{
     CargoInstallPlanItem, CargoInstallSource, GoInstallPlanItem, GoInstallSource,
-    ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem, ResolvedPlanItem, SystemPackageMode,
-    UvPythonPlanItem, UvToolPlanItem,
+    ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem, ResolvedPlanItem, UvPythonPlanItem,
+    UvToolPlanItem,
 };
 
 fn test_runtime_config() -> InstallerRuntimeConfig {
@@ -3901,7 +3901,7 @@ fn validate_plan_rejects_pip_destination_field() {
 }
 
 #[test]
-fn validate_plan_accepts_apt_method_with_canonical_manager() {
+fn validate_plan_rejects_apt_method_alias() {
     let plan = InstallPlan {
         schema_version: Some(PLAN_SCHEMA_VERSION),
         items: vec![InstallPlanItem {
@@ -3918,44 +3918,12 @@ fn validate_plan_accepts_apt_method_with_canonical_manager() {
             python: None,
         }],
     };
-    let items = validate_plan(
-        &plan,
-        "x86_64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-    )
-    .expect("apt method should accept canonical manager");
-
-    assert!(matches!(
-        items.as_slice(),
-        [ResolvedPlanItem::SystemPackage(item)]
-            if item.package == "demo" && item.mode == SystemPackageMode::AptGet
-    ));
-}
-
-#[test]
-fn validate_plan_rejects_apt_method_with_non_apt_manager() {
-    let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
-        items: vec![InstallPlanItem {
-            id: "demo".to_string(),
-            method: "apt".to_string(),
-            version: None,
-            url: None,
-            sha256: None,
-            archive_binary: None,
-            binary_name: None,
-            destination: None,
-            package: Some("demo".to_string()),
-            manager: Some("dnf".to_string()),
-            python: None,
-        }],
-    };
     let err = validate_plan(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt method should reject non-apt manager values");
+    .expect_err("apt alias method should be rejected");
     assert_eq!(err.exit_code(), ExitCode::Usage);
 }
 

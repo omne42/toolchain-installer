@@ -45,7 +45,7 @@
   - `item_method_dispatch.rs`：消费 `ResolvedPlanItem` 做领域方法分发，不再直接读取外部弱类型 DTO。
   - `release_item_execution.rs`：`plan.method=release` 的下载、摘要校验与安装执行。
   - `archive_tree_release_item_execution.rs`：`plan.method=archive_tree_release` 的整目录归档下载、摘要校验与 staging+replace 安装执行。
-  - `system_package_item_execution.rs`：`plan.method=system_package|apt` 的系统包执行，消费 runtime system-package primitives 生成 recipe；`apt` 只是显式固定到 canonical `apt-get` 的系统包入口。
+  - `system_package_item_execution.rs`：`plan.method=system_package` 的系统包执行，消费 runtime system-package primitives 生成 recipe；若调用方显式给出 `manager=apt-get`，这里会固定到 canonical `apt-get`。
   - `pip_item_execution.rs`：`plan.method=pip` 的 Python/pip 执行。
   - `npm_global_item_execution.rs`：`plan.method=npm_global` 的 npm/pnpm/bun 全局 CLI 安装执行，以及 Windows bun launcher 补齐。
   - `workspace_package_item_execution.rs`：`plan.method=workspace_package` 的现有 JS workspace 目录依赖安装执行。
