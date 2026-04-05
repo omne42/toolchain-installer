@@ -12,13 +12,12 @@ pub(crate) fn gateway_candidate_for_git_release_download_url(
 }
 
 fn git_release_asset_from_url(url: &str) -> Option<(String, String)> {
-    let parsed = Url::parse(url).ok()?;
+    let mut parsed = Url::parse(url).ok()?;
     if parsed.scheme() != "https" {
         return None;
     }
-    if parsed.query().is_some() || parsed.fragment().is_some() {
-        return None;
-    }
+    parsed.set_query(None);
+    parsed.set_fragment(None);
     if parsed.host_str()? != "github.com" {
         return None;
     }
@@ -152,24 +151,28 @@ mod tests {
     }
 
     #[test]
-    fn git_release_asset_from_url_rejects_non_https_query_and_fragment_variants() {
+    fn git_release_asset_from_url_rejects_non_https_variants() {
         assert_eq!(
             git_release_asset_from_url(
                 "http://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip"
             ),
             None
         );
+    }
+
+    #[test]
+    fn git_release_asset_from_url_strips_query_and_fragment() {
         assert_eq!(
             git_release_asset_from_url(
                 "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip?download=1"
             ),
-            None
+            Some(("v2.48.1.windows.1".to_string(), "MinGit.zip".to_string()))
         );
         assert_eq!(
             git_release_asset_from_url(
                 "https://github.com/git-for-windows/git/releases/download/v2.48.1.windows.1/MinGit.zip#fragment"
             ),
-            None
+            Some(("v2.48.1.windows.1".to_string(), "MinGit.zip".to_string()))
         );
     }
 
