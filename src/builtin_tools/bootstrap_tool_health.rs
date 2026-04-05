@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use omne_process_primitives::resolve_command_path;
+use omne_process_primitives::{resolve_command_path, resolve_command_path_or_standard_location};
 
 use crate::builtin_tools::builtin_tool_selection::is_supported_builtin_tool;
 use crate::managed_toolchain::version_probe::binary_reports_version_with_prefix;
@@ -45,8 +45,19 @@ pub(crate) fn assess_managed_bootstrap_state(
 }
 
 pub(crate) fn host_command_is_healthy(tool: &str) -> bool {
+    host_command_is_healthy_with_resolver(tool, resolve_command_path)
+}
+
+pub(crate) fn host_command_is_healthy_including_standard_locations(tool: &str) -> bool {
+    host_command_is_healthy_with_resolver(tool, resolve_command_path_or_standard_location)
+}
+
+fn host_command_is_healthy_with_resolver<F>(tool: &str, resolve_command: F) -> bool
+where
+    F: Fn(&str) -> Option<PathBuf>,
+{
     is_supported_builtin_tool(tool)
-        && resolve_command_path(tool)
+        && resolve_command(tool)
             .is_some_and(|path| managed_binary_reports_expected_version(tool, &path))
 }
 
@@ -201,5 +212,36 @@ fn expected_version_prefix(tool: &str) -> Option<&'static str> {
         "gh" => Some("gh version "),
         "uv" => Some("uv "),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::host_command_is_healthy_with_resolver;
+
+    #[cfg(unix)]
+    fn write_executable(path: &std::path::Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(path, body).expect("write executable");
+        let mut permissions = std::fs::metadata(path)
+            .expect("stat executable")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).expect("chmod executable");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_resolution_can_validate_hidden_supported_binary() {
+        let hidden_dir = tempfile::tempdir().expect("hidden tempdir");
+        let git_path = hidden_dir.path().join("git");
+        write_executable(&git_path, "#!/bin/sh\necho 'git version 2.53.0'\n");
+
+        assert!(host_command_is_healthy_with_resolver("git", |_| Some(
+            PathBuf::from(&git_path)
+        )));
     }
 }

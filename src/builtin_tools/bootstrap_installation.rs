@@ -10,6 +10,7 @@ use omne_system_package_primitives::try_default_system_package_install_recipes_f
 use crate::artifact::InstallSource;
 use crate::builtin_tools::bootstrap_tool_health::{
     ManagedBootstrapState, assess_managed_bootstrap_state, host_command_is_healthy,
+    host_command_is_healthy_including_standard_locations,
 };
 use crate::builtin_tools::builtin_tool_selection::is_supported_builtin_tool;
 use crate::builtin_tools::public_release_asset_installation::{
@@ -215,14 +216,14 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
         let args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
         match run_host_recipe(&HostRecipeRequest::new(recipe.program.as_ref(), &args)) {
             Ok(_) => {
-                if host_command_is_healthy("git") {
+                if host_command_is_healthy_including_standard_locations("git") {
                     return Ok(InstallSource::new(
                         format!("system:{}", recipe.program),
                         BootstrapSourceKind::SystemPackage,
                     ));
                 }
                 errors.push(format!(
-                    "{} succeeded but `git --version` is still unavailable",
+                    "{} succeeded but `git --version` is still unavailable from PATH or trusted standard locations",
                     recipe.program
                 ));
             }

@@ -161,6 +161,7 @@
 - `schema_version` 升级前必须保持向后兼容。
 - 已有输出字段只能追加，不能重命名或删除。
 - `status=present` 只表示受支持的内置工具在宿主机上已经发现，且 `--version` 健康检查既成功又匹配该工具预期的版本输出前缀；PATH 中同名但不可执行、探活失败、输出不匹配，或根本不属于支持集的命令名都不会被当成已安装。
+- `status=present` 的宿主探测仍只看当前执行上下文里的 PATH，不会因为 `/usr/bin`、`/opt/homebrew/bin` 这类标准安装位置里碰巧已有同名命令就跳过 bootstrap；但如果 `bootstrap --tool git` 已经成功跑完系统包管理器 recipe，installer 会在 PATH 之外补查这些受信任标准位置来确认新装的 `git` 是否真的可用。
 - 如果托管目录里已经存在同名内置工具，但该 managed 安装健康检查失败，`bootstrap` 不会因为宿主 PATH 上碰巧也有一个健康同名命令就降级成 `status=present`；它会继续走修复/重装路径，并在失败时保留 `managed_install_broken` 诊断。
 - 调用方应依赖 `status`、`detail` 与 `error_code`，不要解析 stderr 文本。
 - stderr 文本是面向人的即时诊断输出，不承诺固定措辞，也不属于机器契约的一部分。
