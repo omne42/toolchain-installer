@@ -574,9 +574,9 @@ fn validate_allowed_leaf_symlink(candidate: &Path, managed_dir: &Path) -> Result
     })?;
     let parent = candidate.parent().unwrap_or(managed_dir);
     let resolved = if destination_is_absolute(&target) {
-        normalize_lexical_path(&target)
+        collapse_lexical_path(&target)
     } else {
-        normalize_lexical_path(&parent.join(target))
+        collapse_lexical_path(&parent.join(target))
     };
     let Some(relative) = managed_relative_path(&resolved, managed_dir) else {
         return Err(format!(
@@ -594,6 +594,29 @@ fn validate_allowed_leaf_symlink(candidate: &Path, managed_dir: &Path) -> Result
         reject_symlink_path_component(&current, managed_dir)?;
     }
     Ok(())
+}
+
+fn collapse_lexical_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match normalized.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    normalized.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                Some(Component::ParentDir) | None => normalized.push(component.as_os_str()),
+                Some(Component::CurDir) => {}
+            },
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }
 
 fn windows_destination_has_no_file_name(raw: &str) -> bool {
@@ -939,6 +962,29 @@ mod tests {
             true,
         )
         .expect_err("escaping leaf symlink should be rejected");
+        assert!(err.contains("escapes via symlink leaf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_managed_path_boundary_rejects_relative_leaf_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = tmp.path().join("managed");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(managed_dir.join("bin")).expect("create managed bin");
+        std::fs::create_dir_all(&outside).expect("create outside dir");
+        std::fs::write(outside.join("demo"), "outside").expect("write outside file");
+        symlink("../../outside/demo", managed_dir.join("bin").join("demo"))
+            .expect("create escaping symlink");
+
+        let err = validate_managed_path_boundary(
+            &managed_dir.join("bin").join("demo"),
+            &managed_dir,
+            true,
+        )
+        .expect_err("relative escaping leaf symlink should be rejected");
         assert!(err.contains("escapes via symlink leaf"));
     }
 
