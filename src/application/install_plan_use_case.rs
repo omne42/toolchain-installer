@@ -35,21 +35,15 @@ pub async fn apply_install_plan(
         let destination = destination_path
             .as_ref()
             .map(|path| path.display().to_string());
+        let allow_leaf_symlink = allow_leaf_symlink_in_managed_destination(item);
         if let Some(path) = destination_path.as_ref()
-            && let Err(detail) = validate_managed_path_boundary(
-                path,
-                &ctx.managed_dir,
-                allow_leaf_symlink_in_managed_destination(item),
-            )
+            && let Err(detail) =
+                validate_managed_path_boundary(path, &ctx.managed_dir, allow_leaf_symlink)
         {
-            let err = OperationError::install(detail);
-            let (detail, error_code, exit_code) = err.into_failure_parts();
-            items.push(build_failed_bootstrap_item(
-                item.id().to_string(),
-                destination,
+            items.push(build_boundary_failure_item(
+                item.id(),
+                destination.clone(),
                 detail,
-                error_code,
-                exit_code,
             ));
             continue;
         }
@@ -62,7 +56,16 @@ pub async fn apply_install_plan(
         )
         .await
         {
-            Ok(bootstrap_item) => bootstrap_item,
+            Ok(bootstrap_item) => {
+                if let Some(path) = destination_path.as_ref()
+                    && let Err(detail) =
+                        validate_managed_path_boundary(path, &ctx.managed_dir, allow_leaf_symlink)
+                {
+                    build_boundary_failure_item(item.id(), destination.clone(), detail)
+                } else {
+                    bootstrap_item
+                }
+            }
             Err(err) => {
                 let (detail, error_code, exit_code) = err.into_failure_parts();
                 build_failed_bootstrap_item(
@@ -84,4 +87,20 @@ pub async fn apply_install_plan(
         managed_dir: ctx.managed_dir.display().to_string(),
         items,
     })
+}
+
+fn build_boundary_failure_item(
+    item_id: &str,
+    destination: Option<String>,
+    detail: String,
+) -> crate::contracts::BootstrapItem {
+    let err = OperationError::install(detail);
+    let (detail, error_code, exit_code) = err.into_failure_parts();
+    build_failed_bootstrap_item(
+        item_id.to_string(),
+        destination,
+        detail,
+        error_code,
+        exit_code,
+    )
 }
