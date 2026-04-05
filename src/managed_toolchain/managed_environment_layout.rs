@@ -42,6 +42,14 @@ pub(crate) fn managed_python_installation_dir(managed_dir: &Path) -> PathBuf {
     managed_dir.join(".uv-python")
 }
 
+pub(crate) fn managed_uv_tool_dir(managed_dir: &Path) -> PathBuf {
+    managed_dir.join(".uv-tools")
+}
+
+pub(crate) fn managed_uv_cache_dir(managed_dir: &Path) -> PathBuf {
+    managed_dir.join(".uv-cache")
+}
+
 pub(crate) fn managed_python_shim_paths(
     version: &str,
     target_triple: &str,
@@ -68,7 +76,7 @@ pub(crate) fn managed_uv_process_env(managed_dir: &Path) -> Vec<(OsString, OsStr
     vec![
         (
             OsString::from("UV_TOOL_DIR"),
-            managed_dir.join(".uv-tools").into_os_string(),
+            managed_uv_tool_dir(managed_dir).into_os_string(),
         ),
         (
             OsString::from("UV_TOOL_BIN_DIR"),
@@ -86,7 +94,7 @@ pub(crate) fn managed_uv_process_env(managed_dir: &Path) -> Vec<(OsString, OsStr
         (OsString::from("UV_MANAGED_PYTHON"), OsString::from("1")),
         (
             OsString::from("UV_CACHE_DIR"),
-            managed_dir.join(".uv-cache").into_os_string(),
+            managed_uv_cache_dir(managed_dir).into_os_string(),
         ),
     ]
 }
@@ -108,7 +116,7 @@ fn python_major_minor(version: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::managed_uv_process_env;
+    use super::{managed_uv_cache_dir, managed_uv_process_env};
 
     #[cfg(unix)]
     #[test]
@@ -134,7 +142,7 @@ mod tests {
             .expect("UV_CACHE_DIR env");
         assert_eq!(
             cache_dir.as_bytes(),
-            managed_dir.join(".uv-cache").as_os_str().as_bytes()
+            managed_uv_cache_dir(managed_dir).as_os_str().as_bytes()
         );
     }
 }

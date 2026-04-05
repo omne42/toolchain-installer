@@ -6,11 +6,16 @@ use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple
 
 use crate::contracts::{ExecutionRequest, InstallPlan, PLAN_SCHEMA_VERSION};
 use crate::error::{InstallerError, InstallerResult};
-use crate::managed_toolchain::managed_environment_layout::managed_python_shim_paths;
+use crate::managed_toolchain::managed_environment_layout::{
+    bootstrap_uv_root, managed_python_installation_dir, managed_python_shim_paths,
+    managed_uv_cache_dir, managed_uv_tool_dir,
+};
 use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
 use crate::plan_items::ResolvedPlanItem;
 
-use super::item_destination_resolution::effective_destination_for_item;
+use super::item_destination_resolution::{
+    effective_destination_for_item, npm_global_internal_state_roots,
+};
 use super::resolved_plan_item::resolve_plan_item;
 
 pub fn validate_install_plan(
@@ -120,74 +125,211 @@ pub(crate) fn validate_destination_conflicts(
     target_triple: &str,
     managed_dir: &Path,
 ) -> InstallerResult<()> {
-    let mut destinations: Vec<(&ResolvedPlanItem, PathBuf, Vec<String>)> = Vec::new();
+    let mut destinations: Vec<ReservedDestination<'_>> = Vec::new();
     for item in items {
-        for destination in reserved_destinations_for_item(item, target_triple, managed_dir) {
+        for reserved in reserved_destinations_for_item(item, target_triple, managed_dir) {
             let normalized_destination =
-                normalize_destination_components(&destination, target_triple);
-            for (existing_item, existing_destination, existing_normalized) in &destinations {
+                normalize_destination_components(&reserved.path, target_triple);
+            for existing in &destinations {
                 if destination_conflict_is_allowed(
-                    existing_item,
+                    existing,
+                    &reserved,
                     item,
-                    existing_normalized,
                     &normalized_destination,
                 ) {
                     continue;
                 }
-                if *existing_normalized == normalized_destination {
+                if existing.normalized == normalized_destination {
                     return Err(InstallerError::usage(format!(
                         "install plan items `{}` and `{}` resolve to the same destination `{}`",
-                        existing_item.id(),
+                        existing.item.id(),
                         item.id(),
-                        destination.display()
+                        reserved.path.display()
                     )));
                 }
-                if destinations_overlap(existing_normalized, &normalized_destination) {
+                if destinations_overlap(&existing.normalized, &normalized_destination) {
                     return Err(InstallerError::usage(format!(
                         "install plan items `{}` and `{}` resolve to overlapping destinations `{}` and `{}`",
-                        existing_item.id(),
+                        existing.item.id(),
                         item.id(),
-                        existing_destination.display(),
-                        destination.display()
+                        existing.path.display(),
+                        reserved.path.display()
                     )));
                 }
             }
-            destinations.push((item, destination, normalized_destination));
+            destinations.push(ReservedDestination {
+                item,
+                path: reserved.path,
+                normalized: normalized_destination,
+                sharing: reserved.sharing,
+            });
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SharedReservation {
+    Workspace,
+    ManagedPython,
+    ManagedUvBootstrap,
+    ManagedUvCache,
+    ManagedUvTool,
+    NpmGlobalState,
+}
+
+struct ReservedDestinationSpec {
+    path: PathBuf,
+    sharing: Option<SharedReservation>,
+}
+
+struct ReservedDestination<'a> {
+    item: &'a ResolvedPlanItem,
+    path: PathBuf,
+    normalized: Vec<String>,
+    sharing: Option<SharedReservation>,
 }
 
 fn reserved_destinations_for_item(
     item: &ResolvedPlanItem,
     target_triple: &str,
     managed_dir: &Path,
-) -> Vec<PathBuf> {
+) -> Vec<ReservedDestinationSpec> {
     let mut destinations = effective_destination_for_item(item, target_triple, managed_dir)
         .into_iter()
+        .map(|path| ReservedDestinationSpec {
+            path,
+            sharing: None,
+        })
         .collect::<Vec<_>>();
-    if let ResolvedPlanItem::UvPython(item) = item {
-        destinations.extend(managed_python_shim_paths(
-            &item.version,
-            target_triple,
-            managed_dir,
-        ));
+    match item {
+        ResolvedPlanItem::UvPython(item) => {
+            let managed_python_root = managed_python_installation_dir(managed_dir);
+            for destination in &mut destinations {
+                if destination.path == managed_python_root {
+                    destination.sharing = Some(SharedReservation::ManagedPython);
+                }
+            }
+            destinations.push(ReservedDestinationSpec {
+                path: bootstrap_uv_root(managed_dir),
+                sharing: Some(SharedReservation::ManagedUvBootstrap),
+            });
+            destinations.push(ReservedDestinationSpec {
+                path: managed_uv_cache_dir(managed_dir),
+                sharing: Some(SharedReservation::ManagedUvCache),
+            });
+            destinations.extend(
+                managed_python_shim_paths(&item.version, target_triple, managed_dir)
+                    .into_iter()
+                    .map(|path| ReservedDestinationSpec {
+                        path,
+                        sharing: None,
+                    }),
+            );
+        }
+        ResolvedPlanItem::UvTool(_) => {
+            destinations.extend(
+                [
+                    (
+                        managed_python_installation_dir(managed_dir),
+                        SharedReservation::ManagedPython,
+                    ),
+                    (
+                        bootstrap_uv_root(managed_dir),
+                        SharedReservation::ManagedUvBootstrap,
+                    ),
+                    (
+                        managed_uv_cache_dir(managed_dir),
+                        SharedReservation::ManagedUvCache,
+                    ),
+                    (
+                        managed_uv_tool_dir(managed_dir),
+                        SharedReservation::ManagedUvTool,
+                    ),
+                ]
+                .into_iter()
+                .map(|(path, sharing)| ReservedDestinationSpec {
+                    path,
+                    sharing: Some(sharing),
+                }),
+            );
+        }
+        ResolvedPlanItem::NpmGlobal(item) => {
+            destinations.extend(
+                npm_global_internal_state_roots(item, target_triple, managed_dir)
+                    .into_iter()
+                    .map(|path| ReservedDestinationSpec {
+                        path,
+                        sharing: Some(SharedReservation::NpmGlobalState),
+                    }),
+            );
+        }
+        ResolvedPlanItem::WorkspacePackage(_) => {
+            if let Some(primary) = destinations.first_mut() {
+                primary.sharing = Some(SharedReservation::Workspace);
+            }
+        }
+        _ => {}
     }
     destinations
 }
 
 fn destination_conflict_is_allowed(
-    existing_item: &ResolvedPlanItem,
+    existing: &ReservedDestination<'_>,
+    candidate_spec: &ReservedDestinationSpec,
     candidate_item: &ResolvedPlanItem,
-    existing_destination: &[String],
     candidate_destination: &[String],
 ) -> bool {
-    match (existing_item, candidate_item) {
+    if existing
+        .sharing
+        .zip(candidate_spec.sharing)
+        .is_some_and(|(left, right)| {
+            left == right
+                && shared_reservation_overlap_is_allowed(left, existing.item, candidate_item)
+                && existing.normalized == candidate_destination
+        })
+    {
+        return true;
+    }
+
+    match (existing.item, candidate_item) {
         (ResolvedPlanItem::UvPython(_), ResolvedPlanItem::UvPython(_)) => true,
         (ResolvedPlanItem::WorkspacePackage(_), ResolvedPlanItem::WorkspacePackage(_)) => {
-            existing_destination == candidate_destination
+            existing.normalized == candidate_destination
         }
         _ => false,
+    }
+}
+
+fn shared_reservation_overlap_is_allowed(
+    sharing: SharedReservation,
+    existing_item: &ResolvedPlanItem,
+    candidate_item: &ResolvedPlanItem,
+) -> bool {
+    match sharing {
+        SharedReservation::Workspace => {
+            matches!(existing_item, ResolvedPlanItem::WorkspacePackage(_))
+                && matches!(candidate_item, ResolvedPlanItem::WorkspacePackage(_))
+        }
+        SharedReservation::ManagedPython
+        | SharedReservation::ManagedUvBootstrap
+        | SharedReservation::ManagedUvCache => {
+            matches!(
+                existing_item,
+                ResolvedPlanItem::UvPython(_) | ResolvedPlanItem::UvTool(_)
+            ) && matches!(
+                candidate_item,
+                ResolvedPlanItem::UvPython(_) | ResolvedPlanItem::UvTool(_)
+            )
+        }
+        SharedReservation::ManagedUvTool => {
+            matches!(existing_item, ResolvedPlanItem::UvTool(_))
+                && matches!(candidate_item, ResolvedPlanItem::UvTool(_))
+        }
+        SharedReservation::NpmGlobalState => {
+            matches!(existing_item, ResolvedPlanItem::NpmGlobal(_))
+                && matches!(candidate_item, ResolvedPlanItem::NpmGlobal(_))
+        }
     }
 }
 
@@ -366,6 +508,95 @@ mod tests {
     }
 
     #[test]
+    fn validate_destination_conflicts_rejects_uv_tool_internal_state_overlap() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                uv_tool_item("ruff", "ruff"),
+                archive_tree_release_item("tool-cache", Some(".uv-tools/ruff")),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("uv_tool should reserve its managed uv state roots");
+
+        assert!(
+            err.to_string()
+                .contains("resolve to overlapping destinations")
+        );
+    }
+
+    #[test]
+    fn validate_destination_conflicts_allows_uv_python_and_uv_tool_shared_managed_state() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                uv_python_item("python", "3.13.12"),
+                uv_tool_item("ruff", "ruff"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect("uv_python and uv_tool should be allowed to share managed uv state roots");
+    }
+
+    #[test]
+    fn validate_destination_conflicts_rejects_npm_global_internal_state_overlap() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                npm_global_item("http-server", "http-server@14.1.1", "npm"),
+                archive_tree_release_item(
+                    "managed-node-modules",
+                    Some("lib/node_modules/http-server"),
+                ),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err("npm_global should reserve its managed package-state tree");
+
+        assert!(
+            err.to_string()
+                .contains("resolve to overlapping destinations")
+        );
+    }
+
+    #[test]
+    fn validate_destination_conflicts_allows_multiple_npm_global_items_to_share_state_root() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                npm_global_item("http-server", "http-server@14.1.1", "npm"),
+                npm_global_item("prettier", "prettier@3.4.2", "npm"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect("npm_global items should be allowed to share their managed package-state root");
+    }
+
+    #[test]
     fn validate_destination_conflicts_rejects_case_only_overlaps_on_windows() {
         let plan = InstallPlan {
             schema_version: Some(PLAN_SCHEMA_VERSION),
@@ -406,6 +637,26 @@ mod tests {
             Path::new("/tmp/managed"),
         )
         .expect("different uv_python items should be allowed to share the managed install root");
+    }
+
+    #[test]
+    fn validate_destination_conflicts_allows_shared_uv_state_between_python_and_tools() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                uv_python_item("python", "3.13.12"),
+                uv_tool_item("ruff", "ruff"),
+                uv_tool_item("mypy", "mypy"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect("uv_python and multiple uv_tool items should share managed uv state");
     }
 
     #[test]
@@ -519,6 +770,38 @@ mod tests {
             destination: Some(destination.to_string()),
             package: Some(id.to_string()),
             manager: Some("npm".to_string()),
+            python: None,
+        }
+    }
+
+    fn uv_tool_item(id: &str, package: &str) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "uv_tool".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some(package.to_string()),
+            manager: None,
+            python: Some("3.13.12".to_string()),
+        }
+    }
+
+    fn npm_global_item(id: &str, package: &str, manager: &str) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "npm_global".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: Some(id.to_string()),
+            destination: None,
+            package: Some(package.to_string()),
+            manager: Some(manager.to_string()),
             python: None,
         }
     }

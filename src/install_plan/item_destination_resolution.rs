@@ -120,17 +120,7 @@ pub(crate) fn resolve_npm_global_destination(
 ) -> PathBuf {
     match item.manager {
         NodePackageManager::Npm => {
-            let prefix_root = if target_triple.contains("windows") {
-                managed_dir.to_path_buf()
-            } else if managed_dir
-                .file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value == "bin")
-            {
-                managed_dir.parent().unwrap_or(managed_dir).to_path_buf()
-            } else {
-                managed_dir.to_path_buf()
-            };
+            let prefix_root = npm_global_prefix_root(target_triple, managed_dir);
             if target_triple.contains("windows") {
                 prefix_root.join(npm_global_binary_filename(&item.binary_name, target_triple))
             } else {
@@ -145,14 +135,36 @@ pub(crate) fn resolve_npm_global_destination(
     }
 }
 
-fn bun_global_binary_dir(managed_dir: &Path, target_triple: &str) -> PathBuf {
+pub(crate) fn npm_global_internal_state_roots(
+    item: &NpmGlobalPlanItem,
+    target_triple: &str,
+    managed_dir: &Path,
+) -> Vec<PathBuf> {
+    match item.manager {
+        NodePackageManager::Npm => {
+            vec![npm_global_package_root(
+                &npm_global_prefix_root(target_triple, managed_dir),
+                target_triple,
+            )]
+        }
+        NodePackageManager::Pnpm => vec![managed_dir.join("global")],
+        NodePackageManager::Bun => vec![
+            bun_global_install_root(managed_dir, target_triple)
+                .join("install")
+                .join("global")
+                .join("node_modules"),
+        ],
+    }
+}
+
+pub(crate) fn bun_global_binary_dir(managed_dir: &Path, target_triple: &str) -> PathBuf {
     if managed_dir_ends_with_bin(managed_dir, target_triple) {
         return managed_dir.to_path_buf();
     }
     managed_dir.join("bin")
 }
 
-fn managed_dir_ends_with_bin(managed_dir: &Path, target_triple: &str) -> bool {
+pub(crate) fn managed_dir_ends_with_bin(managed_dir: &Path, target_triple: &str) -> bool {
     if target_triple.contains("windows") {
         return managed_dir
             .as_os_str()
@@ -165,6 +177,30 @@ fn managed_dir_ends_with_bin(managed_dir: &Path, target_triple: &str) -> bool {
         .file_name()
         .and_then(|value| value.to_str())
         .is_some_and(|value| value == "bin")
+}
+
+fn npm_global_prefix_root(target_triple: &str, managed_dir: &Path) -> PathBuf {
+    if target_triple.contains("windows") {
+        return managed_dir.to_path_buf();
+    }
+    if managed_dir_ends_with_bin(managed_dir, target_triple) {
+        return managed_dir.parent().unwrap_or(managed_dir).to_path_buf();
+    }
+    managed_dir.to_path_buf()
+}
+
+fn npm_global_package_root(prefix_root: &Path, target_triple: &str) -> PathBuf {
+    if target_triple.contains("windows") {
+        return prefix_root.join("node_modules");
+    }
+    prefix_root.join("lib").join("node_modules")
+}
+
+fn bun_global_install_root(managed_dir: &Path, target_triple: &str) -> PathBuf {
+    if managed_dir_ends_with_bin(managed_dir, target_triple) {
+        return managed_dir.parent().unwrap_or(managed_dir).to_path_buf();
+    }
+    managed_dir.to_path_buf()
 }
 
 fn npm_global_binary_filename(binary_name: &str, target_triple: &str) -> String {
