@@ -153,6 +153,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `cargo_install`、`go_install` 若显式提供 `binary_name`，它表示最终托管目标文件名；installer 会先在隔离 staging 目录执行安装，再把本次实际产出的目标二进制提升到该文件名。只要 staging 产物里没有名字直接匹配请求的 `binary_name`，整项就会返回失败而不是猜测，即使 staging 里只剩一个名字不匹配的二进制也一样。
 - `cargo_install` 若显式提供 `binary_name`，installer 还会把它传给 `cargo install --bin <binary_name>`；如果上游 crate 根本不导出这个可执行文件，整项会直接失败，而不是靠旧文件误报成功。
 - Windows target 下，`npm_global` 的 `pnpm`/`bun` CLI 入口也按 `<binary>.cmd` 参与目标路径冲突校验，而不是按无后缀文件名比较。
+- `npm_global` 的预检冲突校验不只看最终 CLI binary，还会保留包管理器自己的托管状态树：`npm` 保留 prefix 下的 `node_modules` 根，`bun` 保留 `install/global/node_modules`，`pnpm` 保留其托管 `global` 根。多个 `npm_global` item 可以共享同一类内部状态根，但其他方法不能把目标落到这些树里。
 - `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的 manifest/bin 元数据按 package spec 语义证明“当前安装与请求相符”：精确版本仍要求 `manifest.version` 精确匹配，`latest`/range/tag/`npm:` alias 以及 `github:`/`git:`/`file:` 等显式来源则退回到包名或可解析来源身份匹配；孤儿旧 binary 仍不会被当成成功安装。
 - `npm_global` 做幂等探测时会按目标平台使用原生包目录布局：npm 在 Unix 上检查 `<prefix>/lib/node_modules`，在 Windows target 上检查 `<prefix>/node_modules`；pnpm 会递归扫描 `PNPM_HOME/global/` 下的实际 store/workspace 布局，而不是假设固定单层目录。
 - `npm_global` 在托管目录内做包目录或回退二进制探测时不会跟随目录 symlink，避免循环目录把安装流程拖死；同时会跳过不可读目录、不可读 manifest 和坏 manifest，不会因为单个坏条目把幂等重跑误判成失败。
@@ -170,6 +171,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一路径，也不能形成父子路径重叠，避免后执行项覆盖先执行项目录树。
 - 对 Windows target，冲突校验始终按大小写不敏感语义比较路径；对 Darwin target，则按目标路径所在宿主文件系统的真实大小写语义比较，不再把所有 macOS 卷一律当成大小写不敏感。
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，并预留它在 `managed_dir` 顶层实际可能写出的 `python` / `python3` / `python3.x` shim 名称；因此它会继续拦截其他方法写入这棵子树或这些顶层解释器入口，但多个 `uv_python` item 彼此不会仅因共享这些托管路径就在执行前互相冲突。
+- `uv_python`、`uv_tool` 的预检冲突校验还会保留共享托管状态根：`.uv-bootstrap`、`.uv-cache`、`.uv-python`，以及 `uv_tool` 额外使用的 `.uv-tools`。托管工具链方法之间允许共享这些根，但其他方法不能把目标写到这些树下。
 - `uv`、`uv_python`、`uv_tool` 只有在已有托管 `uv` 通过 `--version` 健康检查后才会直接复用；若托管 `uv` 文件存在但健康检查失败，会先自愈重装再继续执行。
 - `uv` 方法始终保证结果落到 `managed_dir/uv[.exe]`；即使宿主机已装了健康的 `uv`，它也不会把宿主二进制直接当成 `uv` item 的安装结果。
 - `uv_python`、`uv_tool` 在缺少健康托管 `uv` 时，会先按顺序尝试复用健康 host `uv`、再尝试用宿主 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举一个可复用 `uv`；只有这些本地可复用路径都失败后，才会回退到 GitHub public release 下载独立 `uv` 二进制。
