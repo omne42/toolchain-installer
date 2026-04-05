@@ -9,6 +9,7 @@ use omne_process_primitives::{
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::install_plan::item_destination_resolution::validate_managed_path_boundary;
 use crate::plan_items::{NodePackageManager, NpmGlobalPlanItem};
 
 struct NpmGlobalRecipe {
@@ -91,6 +92,9 @@ pub(crate) fn execute_npm_global_item(
             destination.display()
         )));
     }
+
+    validate_managed_path_boundary(&destination, managed_dir, true)
+        .map_err(OperationError::install)?;
 
     if !command_path_exists(&destination) {
         return Err(OperationError::install(format!(
