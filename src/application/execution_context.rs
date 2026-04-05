@@ -44,8 +44,6 @@ impl ExecutionContext {
         let managed_dir_lock = acquire_managed_dir_execution_lock(&managed_dir)?;
         let cfg = InstallerRuntimeConfig::from_execution_request(request);
         let client = reqwest::Client::builder()
-            // GitHub release asset transfers are more reliable via HTTP/1.1 in our CI/runtime mix.
-            .http1_only()
             .timeout(cfg.download.http_timeout)
             .user_agent("toolchain-installer")
             .build()
