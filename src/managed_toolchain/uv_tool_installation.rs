@@ -11,7 +11,8 @@ use crate::managed_toolchain::bootstrap_item_construction::{
     build_installed_bootstrap_item, build_managed_uv_usage_detail,
 };
 use crate::managed_toolchain::managed_environment_layout::{
-    managed_tool_binary_path, managed_uv_process_env,
+    bootstrap_uv_root, managed_python_installation_dir, managed_tool_binary_path,
+    managed_uv_cache_dir, managed_uv_process_env, managed_uv_tool_dir,
 };
 use crate::managed_toolchain::managed_uv_host_execution::run_managed_uv_recipe;
 use crate::managed_toolchain::managed_uv_installation::{
@@ -57,6 +58,8 @@ pub(crate) async fn execute_uv_tool_item(
                 .iter()
                 .map(|(key, value)| (OsString::from(key), OsString::from(value))),
         );
+        let state_backups = ManagedUvToolStateBackups::stash(managed_dir, &uv.program)
+            .map_err(crate::error::OperationError::install)?;
         let backup = ManagedDestinationBackup::stash(&destination, "managed binary")
             .map_err(crate::error::OperationError::install)?;
 
@@ -68,16 +71,14 @@ pub(crate) async fn execute_uv_tool_item(
             &env,
             cfg.managed_toolchain.uv_recipe_timeout,
         ) {
-            backup
-                .restore()
+            restore_failed_uv_tool_install(&backup, &state_backups)
                 .map_err(crate::error::OperationError::install)?;
             return Err(crate::error::OperationError::install(format!(
                 "{candidate_label} failed: {err}"
             )));
         }
         if !command_path_exists(&destination) {
-            backup
-                .restore()
+            restore_failed_uv_tool_install(&backup, &state_backups)
                 .map_err(crate::error::OperationError::install)?;
             return Err(crate::error::OperationError::install(format!(
                 "{} installed package `{}` but expected managed binary at {}",
@@ -87,8 +88,7 @@ pub(crate) async fn execute_uv_tool_item(
             )));
         }
         if !binary_reports_version(&destination) {
-            backup
-                .restore()
+            restore_failed_uv_tool_install(&backup, &state_backups)
                 .map_err(crate::error::OperationError::install)?;
             return Err(crate::error::OperationError::install(format!(
                 "{} installed package `{}` but managed binary at {} failed --version health check",
@@ -99,6 +99,7 @@ pub(crate) async fn execute_uv_tool_item(
         }
         let detail = build_uv_tool_success_detail(
             &backup,
+            &state_backups,
             build_managed_uv_usage_detail(&uv.program, uv_detail.clone()),
         );
         Ok(build_installed_bootstrap_item(
@@ -113,9 +114,75 @@ pub(crate) async fn execute_uv_tool_item(
 
 fn build_uv_tool_success_detail(
     backup: &ManagedDestinationBackup,
+    state_backups: &ManagedUvToolStateBackups,
     detail: Option<String>,
 ) -> Option<String> {
-    merge_detail(detail, backup.discard_with_warning())
+    merge_detail(
+        merge_detail(detail, state_backups.discard_with_warning()),
+        backup.discard_with_warning(),
+    )
+}
+
+fn restore_failed_uv_tool_install(
+    backup: &ManagedDestinationBackup,
+    state_backups: &ManagedUvToolStateBackups,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    if let Err(err) = backup.restore() {
+        errors.push(err);
+    }
+    if let Err(err) = state_backups.restore() {
+        errors.push(err);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" | "))
+    }
+}
+
+struct ManagedUvToolStateBackups {
+    backups: Vec<ManagedDestinationBackup>,
+}
+
+impl ManagedUvToolStateBackups {
+    fn stash(managed_dir: &Path, active_uv: &Path) -> Result<Self, String> {
+        let bootstrap_root = bootstrap_uv_root(managed_dir);
+        let backups = [
+            (managed_uv_tool_dir(managed_dir), "managed uv tool state"),
+            (managed_uv_cache_dir(managed_dir), "managed uv cache"),
+            (bootstrap_root.clone(), "managed uv bootstrap"),
+            (
+                managed_python_installation_dir(managed_dir),
+                "managed uv python state",
+            ),
+        ]
+        .into_iter()
+        .filter(|(path, _)| !path.starts_with(&bootstrap_root) || !active_uv.starts_with(path))
+        .map(|(path, label)| ManagedDestinationBackup::stash(&path, label))
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { backups })
+    }
+
+    fn restore(&self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        for backup in self.backups.iter().rev() {
+            if let Err(err) = backup.restore() {
+                errors.push(err);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join(" | "))
+        }
+    }
+
+    fn discard_with_warning(&self) -> Option<String> {
+        self.backups.iter().fold(None, |detail, backup| {
+            merge_detail(detail, backup.discard_with_warning())
+        })
+    }
 }
 
 fn merge_detail(first: Option<String>, second: Option<String>) -> Option<String> {

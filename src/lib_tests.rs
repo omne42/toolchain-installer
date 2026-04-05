@@ -5449,6 +5449,23 @@ async fn execute_uv_tool_item_restores_previous_binary_when_install_fails() -> a
     let destination = managed_dir.join("ruff-lsp");
     let stale_binary = "#!/bin/sh\necho stale-uv-tool\n";
     write_executable(&destination, stale_binary)?;
+    let tool_state = managed_dir.join(".uv-tools");
+    let cache_state = managed_dir.join(".uv-cache");
+    let bootstrap_state = managed_dir.join(".uv-bootstrap");
+    let python_state = managed_dir.join(".uv-python");
+    for (root, relative, contents) in [
+        (&tool_state, "tool-state.txt", "existing-tool-state"),
+        (&cache_state, "cache-state.txt", "existing-cache-state"),
+        (
+            &bootstrap_state,
+            "bootstrap-state.txt",
+            "existing-bootstrap-state",
+        ),
+        (&python_state, "python-state.txt", "existing-python-state"),
+    ] {
+        std::fs::create_dir_all(root)?;
+        std::fs::write(root.join(relative), contents)?;
+    }
     write_executable(
         &managed_dir.join("uv"),
         r#"#!/bin/sh
@@ -5457,6 +5474,12 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 if [ "$1" = "tool" ] && [ "$2" = "install" ]; then
+  mkdir -p "$UV_TOOL_DIR" "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR"
+  mkdir -p "$(dirname "$UV_TOOL_DIR")/.uv-bootstrap"
+  printf '%s\n' "new-tool-state" > "$UV_TOOL_DIR/tool-state.txt"
+  printf '%s\n' "new-cache-state" > "$UV_CACHE_DIR/cache-state.txt"
+  printf '%s\n' "new-bootstrap-state" > "$(dirname "$UV_TOOL_DIR")/.uv-bootstrap/bootstrap-state.txt"
+  printf '%s\n' "new-python-state" > "$UV_PYTHON_INSTALL_DIR/python-state.txt"
   exit 7
 fi
 echo "unexpected args: $*" >&2
@@ -5500,6 +5523,22 @@ exit 2
 
     assert!(err.to_string().contains("failed"));
     assert_eq!(std::fs::read_to_string(&destination)?, stale_binary);
+    assert_eq!(
+        std::fs::read_to_string(tool_state.join("tool-state.txt"))?,
+        "existing-tool-state"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cache_state.join("cache-state.txt"))?,
+        "existing-cache-state"
+    );
+    assert_eq!(
+        std::fs::read_to_string(bootstrap_state.join("bootstrap-state.txt"))?,
+        "existing-bootstrap-state"
+    );
+    assert_eq!(
+        std::fs::read_to_string(python_state.join("python-state.txt"))?,
+        "existing-python-state"
+    );
     assert!(
         !destination
             .with_file_name("ruff-lsp.toolchain-installer-backup")

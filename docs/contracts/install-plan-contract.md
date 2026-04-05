@@ -180,6 +180,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_python` 当请求 `3` 或 `3.13` 这类 family selector 时，会在所有匹配的托管解释器里选择版本最高的那个，不会因为目录字典序或旧安装残留而回退到更老的 patch 版本。
 - `uv_python`、`uv_tool` 的托管 `uv` 安装子进程都会带 hard timeout，并对 stdout/stderr 做有界捕获；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。installer 不会因为挂起进程或无限输出把自身卡死或无限占用内存。
 - `uv_tool` 若目标路径上已有同名旧二进制，installer 会先把旧文件挪到临时备份；只有本次 `uv tool install` 真正产出新的目标二进制，且该入口还能通过一次带超时上限的 `--version` 健康探测后才算成功，失败时会恢复旧文件。
+- `uv_tool` 在失败回滚时不只恢复最终 binary，也会恢复同次安装里可能被改写的 `.uv-tools`、`.uv-cache`、`.uv-bootstrap` 和共享 `.uv-python` 状态根，避免 launcher 恢复了但托管环境仍停在半更新状态。
 
 ## 来源探测与回退
 
