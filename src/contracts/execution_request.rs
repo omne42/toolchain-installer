@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::error::{InstallerError, InstallerResult};
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExecutionRequest {
     pub target_triple: Option<String>,
@@ -18,6 +20,17 @@ pub struct ExecutionRequest {
 }
 
 impl ExecutionRequest {
+    pub fn normalized_plan_base_dir(&self) -> InstallerResult<Option<PathBuf>> {
+        match self.plan_base_dir.as_ref() {
+            None => Ok(None),
+            Some(path) if path.is_absolute() => Ok(Some(path.clone())),
+            Some(path) => Err(InstallerError::usage(format!(
+                "`ExecutionRequest.plan_base_dir` must be absolute, got `{}`",
+                path.display()
+            ))),
+        }
+    }
+
     pub fn with_process_environment_fallbacks(mut self) -> Self {
         if self.mirror_prefixes.is_empty() {
             self.mirror_prefixes = parse_csv_env("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES");
@@ -99,6 +112,7 @@ pub struct BootstrapCommand {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
 
     use super::ExecutionRequest;
@@ -248,5 +262,17 @@ mod tests {
         assert_eq!(request.http_timeout_seconds, Some(29));
         assert_eq!(request.max_download_bytes, Some(31));
         assert_eq!(request.uv_timeout_seconds, Some(37));
+    }
+
+    #[test]
+    fn normalized_plan_base_dir_rejects_relative_paths() {
+        let err = ExecutionRequest {
+            plan_base_dir: Some(PathBuf::from("relative-plan-root")),
+            ..ExecutionRequest::default()
+        }
+        .normalized_plan_base_dir()
+        .expect_err("relative plan base dir should be rejected");
+
+        assert!(err.to_string().contains("must be absolute"));
     }
 }

@@ -151,6 +151,42 @@ fn tool_and_plan_file_conflict_returns_usage_error() {
     assert!(stderr.contains("`--tool` cannot be used with `--plan-file`"));
 }
 
+#[cfg(unix)]
+#[test]
+fn apt_method_uses_canonical_apt_get_recipe() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_apt_get = fake_bin_dir.join("apt-get");
+    write_executable(
+        &fake_apt_get,
+        r#"#!/bin/sh
+exit 0
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args([
+            "--json",
+            "--method",
+            "apt",
+            "--id",
+            "apt-demo",
+            "--package",
+            "curl",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(json["items"][0]["source"], "system:apt-get");
+    assert_eq!(json["items"][0]["source_kind"], "system_package");
+}
+
 #[test]
 fn method_without_id_returns_failure() {
     let mut cmd = bootstrap_cmd();
@@ -2929,18 +2965,26 @@ fn conflicting_nested_plan_destinations_return_usage_exit_code() {
 }
 
 #[test]
-fn legacy_apt_method_returns_usage_error() {
+fn apt_method_rejects_non_apt_get_manager() {
     let mut cmd = bootstrap_cmd();
-    cmd.args([
-        "--method",
-        "apt",
-        "--id",
-        "demo-apt",
-        "--package",
-        "demo-package",
-    ])
-    .assert()
-    .code(2);
+    let stderr = cmd
+        .args([
+            "--method",
+            "apt",
+            "--id",
+            "demo-apt",
+            "--package",
+            "demo-package",
+            "--manager",
+            "brew",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("only supports manager `apt-get`"));
 }
 
 #[cfg_attr(
