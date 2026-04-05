@@ -558,6 +558,9 @@ fn node_package_spec_has_embedded_version(package: &str) -> bool {
 }
 
 fn node_package_spec_uses_explicit_source(package: &str) -> bool {
+    if npm_alias_source_target(package).is_some() {
+        return true;
+    }
     if node_package_spec_is_local_path(package) {
         return true;
     }
@@ -574,6 +577,7 @@ fn node_package_spec_uses_explicit_source(package: &str) -> bool {
     ]
     .iter()
     .any(|prefix| package.starts_with(prefix))
+        || package.contains("@npm:")
 }
 
 fn node_package_spec_is_local_path(package: &str) -> bool {
@@ -840,6 +844,9 @@ fn resolve_host_package_local_path(
 
 fn looks_like_explicit_host_local_path(package: &str) -> bool {
     let package = package.trim();
+    if npm_alias_source_target(package).is_some() {
+        return false;
+    }
     if package.contains("://")
         || package.starts_with("git+")
         || package.starts_with("git:")
@@ -847,6 +854,7 @@ fn looks_like_explicit_host_local_path(package: &str) -> bool {
         || package.starts_with("workspace:")
         || package.starts_with("link:")
         || package.starts_with("npm:")
+        || package.contains("@npm:")
     {
         return false;
     }
@@ -881,6 +889,9 @@ fn reject_non_native_windows_local_path(
 
 fn source_spec_leaf_name(package: &str) -> Option<String> {
     let package = package.trim();
+    if let Some(target) = npm_alias_source_target(package) {
+        return package_leaf_name(npm_package_name(target));
+    }
     if let Some(rest) = package.strip_prefix("npm:") {
         return package_leaf_name(npm_package_name(rest));
     }
@@ -901,6 +912,14 @@ fn trim_source_spec_suffix(raw: &str) -> &str {
         .trim()
         .trim_end_matches(".git")
         .trim_end_matches('/')
+}
+
+fn npm_alias_source_target(package: &str) -> Option<&str> {
+    package
+        .trim()
+        .split_once("@npm:")
+        .map(|(_, target)| target.trim())
+        .filter(|target| !target.is_empty())
 }
 
 fn require_uv_python_version(item_id: &str, raw_version: Option<&str>) -> InstallerResult<String> {
@@ -1078,6 +1097,37 @@ mod tests {
             panic!("expected npm_global plan item");
         };
         assert_eq!(item.binary_name, "cli");
+    }
+
+    #[test]
+    fn resolve_npm_global_defaults_binary_name_for_npm_alias_source_spec() {
+        let item = InstallPlanItem {
+            id: "scope-tool".to_string(),
+            method: "npm_global".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("company-cli@npm:@scope/cli@1.2.3".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::NpmGlobal(item) = resolved else {
+            panic!("expected npm_global plan item");
+        };
+        assert_eq!(item.binary_name, "cli");
+        assert_eq!(item.package_spec, "company-cli@npm:@scope/cli@1.2.3");
     }
 
     #[test]

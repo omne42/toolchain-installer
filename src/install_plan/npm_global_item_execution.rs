@@ -844,6 +844,7 @@ fn node_package_spec_is_local_path(package: &str) -> bool {
         || package.starts_with("link:")
         || package.starts_with("npm:")
         || package.starts_with("file:")
+        || package.contains("@npm:")
         || package.contains("://")
     {
         return false;

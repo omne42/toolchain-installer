@@ -1559,6 +1559,74 @@ ln -sfn ../lib/node_modules/http-server/bin/http-server "$npm_config_prefix/bin/
 
 #[cfg(unix)]
 #[test]
+fn npm_global_accepts_noop_repeat_install_for_npm_alias_source_spec() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+package_dir="$npm_config_prefix/lib/node_modules/company-cli"
+if [ ! -f "$package_dir/package.json" ]; then
+  mkdir -p "$package_dir/bin" "$npm_config_prefix/bin"
+  cat > "$package_dir/package.json" <<'EOF'
+{"name":"@scope/http-server","bin":{"http-server":"bin/http-server"}}
+EOF
+  cat > "$package_dir/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "fresh alias"
+EOF
+  chmod +x "$package_dir/bin/http-server"
+  ln -sfn ../lib/node_modules/company-cli/bin/http-server "$npm_config_prefix/bin/http-server"
+fi
+exit 0
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let args = [
+        "--json",
+        "--managed-dir",
+        managed_dir.to_str().expect("utf8 path"),
+        "--method",
+        "npm_global",
+        "--id",
+        "company-cli",
+        "--package",
+        "company-cli@npm:@scope/http-server@14.1.1",
+    ];
+
+    let mut first = bootstrap_cmd();
+    first
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args(args)
+        .assert()
+        .success();
+
+    let mut second = bootstrap_cmd();
+    let output = second
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir
+            .join("bin")
+            .join("http-server")
+            .display()
+            .to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn npm_global_rejects_stale_manifest_binary_when_install_did_not_refresh_it() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
