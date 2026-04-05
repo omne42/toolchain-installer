@@ -65,10 +65,15 @@ impl BootstrapArgs {
             mirror_prefixes: self.mirror_prefixes.clone(),
             package_indexes: self.package_indexes.clone(),
             python_install_mirrors: self.python_install_mirrors.clone(),
+            github_api_bases: Vec::new(),
+            github_token: None,
             gateway_base: self.gateway_base.clone(),
             country: self.country.clone(),
+            http_timeout_seconds: None,
             max_download_bytes: self.max_download_bytes,
+            uv_timeout_seconds: None,
         }
+        .with_process_environment_fallbacks()
     }
 
     fn build_bootstrap_command(&self) -> BootstrapCommand {

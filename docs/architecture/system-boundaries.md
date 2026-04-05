@@ -9,7 +9,7 @@
 - 二进制入口：`src/main.rs`
   - 负责启动 CLI，并把参数解析交给二进制专属模块。
 - 二进制专属 CLI：`src/cli.rs`
-  - 负责 CLI 参数模型、文件输入读取和对库用例的命令分发，不承载安装策略。
+  - 负责 CLI 参数模型、文件输入读取、进程环境到 `ExecutionRequest` 的显式收敛，以及对库用例的命令分发，不承载安装策略。
 - 库入口：`src/lib.rs`
   - 只做模块装配与公开导出，不承载流程细节。
 - 应用编排域：`src/application/`
@@ -21,7 +21,7 @@
 - 外部网关集成域：`src/external_gateway/`
   - 承载 installer 对外部 edge gateway 的资产路由契约与产品策略，例如 `git-for-windows` release 到 gateway 候选的推断。
 - 契约域：`src/contracts/`、`src/error.rs`、`src/installer_runtime_config.rs`
-  - 负责外部输入/输出、退出码、环境变量和运行期配置边界。
+  - 负责外部输入/输出、退出码和运行期配置边界；进程环境只允许在 CLI 边界被收敛成显式输入，不允许在库内继续偷偷读取改变同一个 request 的行为。
 - Shared foundation 依赖：`../omne_foundation/crates/http-kit/`
   - 提供通用 HTTP client、bounded body read / preview、bounded response streaming、URL 校验 / 脱敏、untrusted outbound policy 与 endpoint 探测。
 - Shared foundation 依赖：`../omne_foundation/crates/github-kit/`
@@ -71,7 +71,7 @@
   - 负责 `install_plan` 与 `managed_toolchain` 共享的强类型安装项模型。
   - 只定义领域数据，不负责 plan 方法归一化、校验、下载候选或执行。
 - `installer_runtime_config`
-  - 负责把 `ExecutionRequest` / env 输入归一化成内部运行期策略对象。
+  - 负责把显式 `ExecutionRequest` 归一化成内部运行期策略对象。
   - 当前已经明确拆成 `github_releases`、`download_sources`、`download`、`package_indexes`、`python_mirrors`、`gateway` 六类策略，而不是让 GitHub API、镜像候选、索引、gateway、国家码和下载限制继续平铺混放。
 - `omne-host-info-primitives`
   - 负责宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀推断。
