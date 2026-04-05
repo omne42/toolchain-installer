@@ -29,6 +29,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
 - 纯库 API `validate_install_plan()` 只做 schema、字段组合、宿主/目标约束和重复 `id` 校验；它不知道 `managed_dir`，因此不会擅自猜测依赖目标目录的全局路径冲突。
 - CLI 与 `validate_install_plan_with_request()` 会在结构校验通过后，再结合真实 `managed_dir` 做全局目标路径冲突校验；若解析后的目标路径发生冲突，会在执行前返回退出码 `2`，不会依赖执行顺序“碰巧覆盖”。
+- 真正进入 bootstrap 或 plan 执行时，installer 还会对目标 `managed_dir` 获取进程级 advisory lock；命中同一托管根的并发调用会串行等待，直到前一个执行释放锁后才继续，避免共享 state root、固定 staging 名或回滚逻辑互相踩坏。
 - `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
 
 ## 方法清单
