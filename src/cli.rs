@@ -97,7 +97,7 @@ impl BootstrapArgs {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| InstallerError::usage("`--method` cannot be empty"))?;
         Ok(InstallPlan {
-            schema_version: Some(toolchain_installer::PLAN_SCHEMA_VERSION),
+            schema_version: toolchain_installer::PLAN_SCHEMA_VERSION,
             items: vec![InstallPlanItem {
                 id,
                 method,

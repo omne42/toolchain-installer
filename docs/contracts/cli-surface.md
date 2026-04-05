@@ -17,6 +17,7 @@
   - 未知值会在参数校验阶段直接返回 usage error，而不是继续把任意字符串带进执行链路。
 - `--managed-dir <path>`
   - 安装输出目录；未指定时默认使用 `~/.omne_data/toolchain/<target>/bin`。
+  - 只有会写入或预留托管根的方法才要求这个目录可解析；纯宿主方法如 `system_package`、`pip`、`workspace_package`、`rustup_component` 不会因为默认托管根不可解析而提前失败。
   - 传给 `npm` / `pnpm` / `bun` / `cargo` / `go` / `uv` 这类宿主命令时，会保留宿主机原生路径字节；Unix 下的非 UTF-8 路径不会在 argv/env 拼装阶段被提前改写。
 - `--mirror-prefix <prefix>`
   - 为 `release` / `archive_tree_release` 显式指定下载镜像前缀。
@@ -43,6 +44,7 @@
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
   - 单个安装项标识。
+  - 对 `npm_global` / `uv_tool` 这类可能出现“包名不等于实际 CLI 名”的方法，若未显式提供 `--binary-name`，installer 也会把 `id` 当作实际 launcher 名的回退提示参与结果解析。
 - `--tool-version <value>`
   - direct-plan 模式里的通用 `version` 字段入口；当前用于 `cargo_install`、`go_install`、`uv_python`。
   - 对 `uv_python` 而言，当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
@@ -135,6 +137,8 @@
   ]
 }
 ```
+
+当一次 plan 只包含不依赖托管根的方法，且默认 `managed_dir` 又无法从 `--managed-dir`、`TOOLCHAIN_INSTALLER_MANAGED_DIR`、`OMNE_DATA_DIR` 或 `HOME` 推导时，结果里的 `managed_dir` 会返回空字符串；这表示本次执行没有实际使用托管根。
 
 `error_code` 当前取值：
 

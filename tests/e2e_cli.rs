@@ -656,6 +656,55 @@ fn unsupported_plan_schema_returns_usage_exit_code() {
 }
 
 #[test]
+fn missing_plan_schema_returns_usage_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plan_path = temp.path().join("plan.json");
+    std::fs::write(
+        &plan_path,
+        r#"{
+  "items": [
+    { "id": "demo", "method": "uv" }
+  ]
+}"#,
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
+#[test]
+fn pip_direct_plan_does_not_require_managed_dir_resolution() {
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env_remove("HOME")
+        .env_remove("OMNE_DATA_DIR")
+        .env_remove("TOOLCHAIN_INSTALLER_MANAGED_DIR")
+        .args([
+            "--json",
+            "--method",
+            "pip",
+            "--id",
+            "demo-pip",
+            "--package",
+            "demo-package",
+            "--python",
+            "/tmp/definitely-missing-python",
+        ])
+        .assert()
+        .code(4)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert_ne!(
+        json["items"][0]["detail"],
+        "cannot resolve managed toolchain directory"
+    );
+}
+
+#[test]
 fn relative_release_destination_is_resolved_under_managed_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
     let managed_dir = temp.path().join("managed");

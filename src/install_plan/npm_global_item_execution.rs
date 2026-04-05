@@ -28,6 +28,13 @@ struct FileFingerprint {
     len: u64,
 }
 
+#[derive(Clone, Copy)]
+struct PackageInstallRequest<'a> {
+    item_id: &'a str,
+    package: &'a str,
+    binary_name: &'a str,
+}
+
 pub(crate) fn execute_npm_global_item(
     item: &NpmGlobalPlanItem,
     target_triple: &str,
@@ -81,9 +88,11 @@ pub(crate) fn execute_npm_global_item(
     if !installation_result_is_acceptable_with_item_id(
         &preinstall_state,
         &destination,
-        &item.id,
-        &item.package_spec,
-        &item.binary_name,
+        PackageInstallRequest {
+            item_id: &item.id,
+            package: &item.package_spec,
+            binary_name: &item.binary_name,
+        },
         recipe.fallback_package_dir.as_deref(),
         recipe.package_search_root.as_deref(),
         recipe.fallback_search_root.as_deref(),
@@ -418,9 +427,11 @@ fn installation_result_is_acceptable(
     installation_result_is_acceptable_with_item_id(
         preinstall_state,
         destination,
-        binary_name,
-        package,
-        binary_name,
+        PackageInstallRequest {
+            item_id: binary_name,
+            package,
+            binary_name,
+        },
         fallback_package_dir,
         package_search_root,
         fallback_search_root,
@@ -430,9 +441,7 @@ fn installation_result_is_acceptable(
 fn installation_result_is_acceptable_with_item_id(
     preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>,
     destination: &Path,
-    item_id: &str,
-    package: &str,
-    binary_name: &str,
+    request: PackageInstallRequest<'_>,
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
     fallback_search_root: Option<&Path>,
@@ -443,9 +452,7 @@ fn installation_result_is_acceptable_with_item_id(
 
     destination_preexisted(preinstall_state, destination)
         && managed_package_matches_request(
-            item_id,
-            package,
-            binary_name,
+            request,
             fallback_package_dir,
             package_search_root,
             fallback_search_root,
@@ -473,33 +480,33 @@ fn path_changed(preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>, pa
 }
 
 fn managed_package_matches_request(
-    item_id: &str,
-    package: &str,
-    binary_name: &str,
+    request: PackageInstallRequest<'_>,
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
     fallback_search_root: Option<&Path>,
 ) -> bool {
     for package_dir in
-        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
+        resolve_installed_package_dirs(request.package, fallback_package_dir, package_search_root)
     {
         let manifest_path = package_dir.join("package.json");
-        if !manifest_satisfies_package_request(&manifest_path, package, binary_name) {
+        if !manifest_satisfies_package_request(&manifest_path, request.package, request.binary_name)
+        {
             continue;
         }
 
-        if let Some(path) = resolve_package_bin_script(&package_dir, package, binary_name) {
-            if command_path_exists(&path) {
-                return true;
-            }
+        if let Some(path) =
+            resolve_package_bin_script(&package_dir, request.package, request.binary_name)
+            && command_path_exists(&path)
+        {
+            return true;
         }
 
         if let Some(binary_dir) =
             fallback_binary_dir_from_package_dir(&package_dir, package_search_root)
             && choose_existing_binary_path(
                 &binary_dir,
-                &preferred_binary_names(item_id, binary_name),
-                &manifest_binary_names(&package_dir, package, binary_name),
+                &preferred_binary_names(request.item_id, request.binary_name),
+                &manifest_binary_names(&package_dir, request.package, request.binary_name),
             )
             .is_some()
         {
@@ -1191,8 +1198,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        NpmPackageRequest, build_npm_global_recipe, capture_installation_state, file_fingerprint,
-        find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
+        NpmPackageRequest, PackageInstallRequest, build_npm_global_recipe,
+        capture_installation_state, file_fingerprint, find_binary_at_path,
+        find_matching_binary_paths_under_dir, find_package_dirs_under_root,
         installation_result_is_acceptable, installation_result_is_acceptable_with_item_id,
         npm_global_package_dir, npm_package_request, package_bin_relative_path,
         parse_pnpm_root_stdout, path_has_no_symlink_components, resolve_npm_global_destination,
@@ -1739,9 +1747,11 @@ mod tests {
         assert!(installation_result_is_acceptable_with_item_id(
             &preinstall_state,
             &actual_binary_path,
-            "tsc",
-            "typescript@5.6.3",
-            "typescript",
+            PackageInstallRequest {
+                item_id: "tsc",
+                package: "typescript@5.6.3",
+                binary_name: "typescript",
+            },
             Some(&package_dir),
             Some(&package_root),
             None,

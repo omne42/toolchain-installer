@@ -1336,7 +1336,7 @@ exit 2
 fn installer_errors_preserve_freeform_user_text() {
     let err = validate_plan(
         &InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![InstallPlanItem {
                 id: "demo".to_string(),
                 method: "unknown".to_string(),
@@ -2127,7 +2127,7 @@ async fn apply_install_plan_rejects_download_over_configured_size_limit() -> any
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-release".to_string(),
             method: "release".to_string(),
@@ -2181,7 +2181,7 @@ async fn apply_install_plan_installs_non_archive_release_with_sha256() -> anyhow
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-release".to_string(),
             method: "release".to_string(),
@@ -2238,7 +2238,7 @@ async fn apply_install_plan_installs_archive_release_and_reports_archive_match()
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-release".to_string(),
             method: "release".to_string(),
@@ -2301,7 +2301,7 @@ async fn apply_install_plan_installs_archive_release_when_url_has_query() -> any
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-release".to_string(),
             method: "release".to_string(),
@@ -2357,7 +2357,7 @@ async fn apply_install_plan_redacts_release_source_url_in_result() -> anyhow::Re
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-release".to_string(),
             method: "release".to_string(),
@@ -2405,7 +2405,7 @@ async fn apply_install_plan_installs_archive_release_with_relative_archive_binar
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "node-release".to_string(),
             method: "release".to_string(),
@@ -2468,7 +2468,7 @@ async fn apply_install_plan_redacts_archive_tree_release_source_url_in_result() 
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-tree".to_string(),
             method: "archive_tree_release".to_string(),
@@ -2516,7 +2516,7 @@ async fn apply_install_plan_installs_archive_release_with_leaf_archive_binary_hi
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "7zip-release".to_string(),
             method: "release".to_string(),
@@ -2569,7 +2569,7 @@ async fn apply_install_plan_installs_archive_release_with_leaf_archive_binary_hi
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "just-release".to_string(),
             method: "release".to_string(),
@@ -2632,7 +2632,7 @@ async fn apply_install_plan_installs_archive_tree_release_when_url_has_query() -
     let tmp = tempfile::tempdir()?;
     let managed_dir = tmp.path().join("managed");
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-tree".to_string(),
             method: "archive_tree_release".to_string(),
@@ -2863,7 +2863,7 @@ fn default_managed_dir_under_data_root_uses_omne_layout() {
 #[test]
 fn validate_plan_rejects_unknown_schema_version() {
     let plan = InstallPlan {
-        schema_version: Some(999),
+        schema_version: 999,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "unknown".to_string(),
@@ -2890,7 +2890,7 @@ fn validate_plan_rejects_unknown_schema_version() {
 #[test]
 fn validate_plan_rejects_empty_items() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: Vec::new(),
     };
     let err = validate_plan(
@@ -2905,7 +2905,7 @@ fn validate_plan_rejects_empty_items() {
 #[test]
 fn validate_plan_rejects_unknown_method() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "unknown".to_string(),
@@ -2932,7 +2932,7 @@ fn validate_plan_rejects_unknown_method() {
 #[test]
 fn validate_plan_rejects_cross_target_for_host_bound_method() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "pip".to_string(),
@@ -2955,7 +2955,7 @@ fn validate_plan_rejects_cross_target_for_host_bound_method() {
 #[test]
 fn validate_plan_rejects_parent_components_in_destination() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "release".to_string(),
@@ -2982,7 +2982,7 @@ fn validate_plan_rejects_parent_components_in_destination() {
 #[test]
 fn validate_plan_rejects_absolute_destination() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "release".to_string(),
@@ -3009,7 +3009,7 @@ fn validate_plan_rejects_absolute_destination() {
 #[test]
 fn validate_plan_rejects_windows_absolute_destination_on_non_windows_host() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "release".to_string(),
@@ -3034,7 +3034,7 @@ fn validate_plan_rejects_windows_absolute_destination_on_non_windows_host() {
 #[test]
 fn validate_plan_resolves_workspace_package_destination_against_plan_base_dir() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "workspace-react".to_string(),
             method: "workspace_package".to_string(),
@@ -3070,7 +3070,7 @@ fn validate_plan_resolves_workspace_package_destination_against_plan_base_dir() 
 #[test]
 fn validate_plan_rejects_duplicate_item_ids() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "demo".to_string(),
@@ -3112,7 +3112,7 @@ fn validate_plan_rejects_duplicate_item_ids() {
 #[test]
 fn validate_plan_rejects_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "demo-a".to_string(),
@@ -3155,7 +3155,7 @@ fn validate_plan_rejects_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_parent_child_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "archive-demo".to_string(),
@@ -3198,7 +3198,7 @@ fn validate_plan_rejects_parent_child_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_equivalent_destinations_after_normalization() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "demo-a".to_string(),
@@ -3241,7 +3241,7 @@ fn validate_plan_rejects_equivalent_destinations_after_normalization() {
 #[test]
 fn validate_plan_rejects_npm_global_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "release-demo".to_string(),
@@ -3284,7 +3284,7 @@ fn validate_plan_rejects_npm_global_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_windows_pnpm_global_cmd_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "release-demo".to_string(),
@@ -3327,7 +3327,7 @@ fn validate_plan_rejects_windows_pnpm_global_cmd_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_windows_bun_global_cmd_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "release-demo".to_string(),
@@ -3370,7 +3370,7 @@ fn validate_plan_rejects_windows_bun_global_cmd_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_go_install_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "release-demo".to_string(),
@@ -3413,7 +3413,7 @@ fn validate_plan_rejects_go_install_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "demo-a".to_string(),
@@ -3458,7 +3458,7 @@ fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_windows_absolute_destination_for_release() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "release".to_string(),
@@ -3488,7 +3488,7 @@ fn validate_plan_rejects_windows_absolute_destination_for_release() {
 #[test]
 fn validate_plan_rejects_nested_destination_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "sdk-tree".to_string(),
@@ -3532,7 +3532,7 @@ fn validate_plan_rejects_nested_destination_conflicts() {
 #[test]
 fn validate_plan_rejects_uv_python_install_root_conflicts() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "python-demo".to_string(),
@@ -3575,7 +3575,7 @@ fn validate_plan_rejects_uv_python_install_root_conflicts() {
 #[test]
 fn validate_plan_rejects_non_archive_tree_asset_during_structure_validation() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "archive-demo".to_string(),
             method: "archive_tree_release".to_string(),
@@ -3603,7 +3603,7 @@ fn validate_plan_rejects_non_archive_tree_asset_during_structure_validation() {
 #[test]
 fn public_validate_install_plan_stays_structure_only_without_managed_dir_context() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
             InstallPlanItem {
                 id: "release-demo".to_string(),
@@ -3641,7 +3641,7 @@ fn public_validate_install_plan_stays_structure_only_without_managed_dir_context
 #[test]
 fn validate_plan_resolves_cargo_install_local_paths_against_plan_base_dir() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "cargo-demo".to_string(),
             method: "cargo_install".to_string(),
@@ -3682,7 +3682,7 @@ fn validate_plan_resolves_cargo_install_local_paths_against_plan_base_dir() {
 #[test]
 fn validate_plan_resolves_go_install_local_paths_against_plan_base_dir() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "go-demo".to_string(),
             method: "go_install".to_string(),
@@ -3721,7 +3721,7 @@ fn validate_plan_resolves_go_install_local_paths_against_plan_base_dir() {
 #[test]
 fn validate_plan_resolves_go_install_bare_local_paths_against_plan_base_dir() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "go-demo".to_string(),
             method: "go_install".to_string(),
@@ -3824,7 +3824,7 @@ fn explicit_windows_binary_names_do_not_duplicate_target_suffixes() {
 #[test]
 fn validate_plan_rejects_non_http_release_url() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "release".to_string(),
@@ -3851,7 +3851,7 @@ fn validate_plan_rejects_non_http_release_url() {
 #[test]
 fn validate_plan_rejects_release_with_package_field() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "release".to_string(),
@@ -3878,7 +3878,7 @@ fn validate_plan_rejects_release_with_package_field() {
 #[test]
 fn validate_plan_rejects_pip_destination_field() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "pip".to_string(),
@@ -3905,7 +3905,7 @@ fn validate_plan_rejects_pip_destination_field() {
 #[test]
 fn validate_plan_accepts_system_package_method_with_explicit_apt_get_manager() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "system_package".to_string(),
@@ -3938,7 +3938,7 @@ fn validate_plan_accepts_system_package_method_with_explicit_apt_get_manager() {
 #[test]
 fn validate_plan_rejects_legacy_apt_method() {
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo".to_string(),
             method: "apt".to_string(),
@@ -4731,7 +4731,7 @@ async fn apply_install_plan_rejects_destination_escape_via_symlink() -> anyhow::
     symlink(&outside, managed_dir.join("escape"))?;
 
     let plan = InstallPlan {
-        schema_version: Some(PLAN_SCHEMA_VERSION),
+        schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
             id: "demo-release".to_string(),
             method: "release".to_string(),

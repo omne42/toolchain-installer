@@ -14,7 +14,8 @@ use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
 use crate::plan_items::ResolvedPlanItem;
 
 use super::item_destination_resolution::{
-    effective_destination_for_item, npm_global_internal_state_roots,
+    effective_destination_for_item, effective_destination_for_item_without_managed_dir,
+    npm_global_internal_state_roots,
 };
 use super::resolved_plan_item::resolve_plan_item;
 
@@ -43,9 +44,13 @@ pub fn validate_install_plan_with_request(
         &target_triple,
         request.plan_base_dir.as_deref(),
     )?;
-    let managed_dir = resolve_managed_toolchain_dir(request.managed_dir.as_deref(), &target_triple)
-        .ok_or_else(|| InstallerError::install("cannot resolve managed toolchain directory"))?;
-    validate_destination_conflicts(&resolved_items, &target_triple, &managed_dir)
+    let managed_dir = resolve_managed_toolchain_dir(request.managed_dir.as_deref(), &target_triple);
+    if plan_requires_managed_dir(&resolved_items) && managed_dir.is_none() {
+        return Err(InstallerError::install(
+            "cannot resolve managed toolchain directory",
+        ));
+    }
+    validate_destination_conflicts(&resolved_items, &target_triple, managed_dir.as_deref())
 }
 
 #[cfg(test)]
@@ -75,7 +80,7 @@ pub(crate) fn validate_plan_with_managed_dir(
     managed_dir: &Path,
 ) -> InstallerResult<Vec<ResolvedPlanItem>> {
     let resolved_items = validate_plan_structure(plan, host_triple, target_triple, None)?;
-    validate_destination_conflicts(&resolved_items, target_triple, managed_dir)?;
+    validate_destination_conflicts(&resolved_items, target_triple, Some(managed_dir))?;
     Ok(resolved_items)
 }
 
@@ -85,11 +90,10 @@ pub(crate) fn validate_plan_structure(
     target_triple: &str,
     plan_base_dir: Option<&Path>,
 ) -> InstallerResult<Vec<ResolvedPlanItem>> {
-    if let Some(schema_version) = plan.schema_version
-        && schema_version != PLAN_SCHEMA_VERSION
-    {
+    if plan.schema_version != PLAN_SCHEMA_VERSION {
         return Err(InstallerError::usage(format!(
-            "unsupported plan schema_version `{schema_version}`; expected `{PLAN_SCHEMA_VERSION}`"
+            "unsupported plan schema_version `{}`; expected `{PLAN_SCHEMA_VERSION}`",
+            plan.schema_version
         )));
     }
     if plan.items.is_empty() {
@@ -105,6 +109,20 @@ pub(crate) fn validate_plan_structure(
         .collect::<InstallerResult<Vec<_>>>()?;
     validate_unique_ids(&resolved_items)?;
     Ok(resolved_items)
+}
+
+pub(crate) fn plan_requires_managed_dir(items: &[ResolvedPlanItem]) -> bool {
+    items.iter().any(item_requires_managed_dir)
+}
+
+fn item_requires_managed_dir(item: &ResolvedPlanItem) -> bool {
+    !matches!(
+        item,
+        ResolvedPlanItem::SystemPackage(_)
+            | ResolvedPlanItem::Pip(_)
+            | ResolvedPlanItem::WorkspacePackage(_)
+            | ResolvedPlanItem::RustupComponent(_)
+    )
 }
 
 fn validate_unique_ids(items: &[ResolvedPlanItem]) -> InstallerResult<()> {
@@ -123,7 +141,7 @@ fn validate_unique_ids(items: &[ResolvedPlanItem]) -> InstallerResult<()> {
 pub(crate) fn validate_destination_conflicts(
     items: &[ResolvedPlanItem],
     target_triple: &str,
-    managed_dir: &Path,
+    managed_dir: Option<&Path>,
 ) -> InstallerResult<()> {
     let mut destinations: Vec<ReservedDestination<'_>> = Vec::new();
     for item in items {
@@ -193,15 +211,25 @@ struct ReservedDestination<'a> {
 fn reserved_destinations_for_item(
     item: &ResolvedPlanItem,
     target_triple: &str,
-    managed_dir: &Path,
+    managed_dir: Option<&Path>,
 ) -> Vec<ReservedDestinationSpec> {
-    let mut destinations = effective_destination_for_item(item, target_triple, managed_dir)
+    let mut destinations = managed_dir
+        .and_then(|managed_dir| effective_destination_for_item(item, target_triple, managed_dir))
+        .or_else(|| effective_destination_for_item_without_managed_dir(item))
         .into_iter()
         .map(|path| ReservedDestinationSpec {
             path,
             sharing: None,
         })
         .collect::<Vec<_>>();
+    let Some(managed_dir) = managed_dir else {
+        if matches!(item, ResolvedPlanItem::WorkspacePackage(_))
+            && let Some(primary) = destinations.first_mut()
+        {
+            primary.sharing = Some(SharedReservation::Workspace);
+        }
+        return destinations;
+    };
     match item {
         ResolvedPlanItem::UvPython(item) => {
             let managed_python_root = managed_python_installation_dir(managed_dir);
@@ -418,7 +446,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_matches_darwin_case_sensitivity_of_host_filesystem() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 release_item("ruff-upper", "bin/Ruff"),
                 release_item("ruff-lower", "bin/ruff"),
@@ -448,7 +476,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_rejects_overlapping_default_archive_tree_destination() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 archive_tree_release_item("python-tree", None),
                 release_item("python-bin", "python-tree/bin/python3"),
@@ -472,7 +500,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_rejects_uv_python_install_root_overlap() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 uv_python_item("python", "3.13.12"),
                 release_item("python-shim", ".uv-python/cpython-3.13.12/bin/python3"),
@@ -496,7 +524,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_rejects_uv_python_top_level_shim_overlap() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 uv_python_item("python", "3.13.12"),
                 release_item("python-shim", "python3.13"),
@@ -517,7 +545,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_rejects_uv_tool_internal_state_overlap() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 uv_tool_item("ruff", "ruff"),
                 archive_tree_release_item("tool-cache", Some(".uv-tools/ruff")),
@@ -541,7 +569,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_allows_uv_python_and_uv_tool_shared_managed_state() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 uv_python_item("python", "3.13.12"),
                 uv_tool_item("ruff", "ruff"),
@@ -560,7 +588,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_rejects_npm_global_internal_state_overlap() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 npm_global_item("http-server", "http-server@14.1.1", "npm"),
                 archive_tree_release_item(
@@ -587,7 +615,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_allows_multiple_npm_global_items_to_share_state_root() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 npm_global_item("http-server", "http-server@14.1.1", "npm"),
                 npm_global_item("prettier", "prettier@3.4.2", "npm"),
@@ -606,7 +634,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_allows_workspace_package_reuse_with_same_manager() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 workspace_package_item_with_manager(
                     "react",
@@ -632,7 +660,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_rejects_workspace_package_reuse_with_different_managers() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 workspace_package_item_with_manager(
                     "react",
@@ -660,7 +688,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_rejects_case_only_overlaps_on_windows() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 archive_tree_release_item("python-tree", Some("Bin/Python")),
                 release_item("python-bin", "bin/python/python.exe"),
@@ -684,7 +712,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_allows_multiple_uv_python_versions() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 uv_python_item("python-312", "3.12.11"),
                 uv_python_item("python-313", "3.13.2"),
@@ -703,7 +731,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_allows_shared_uv_state_between_python_and_tools() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 uv_python_item("python", "3.13.12"),
                 uv_tool_item("ruff", "ruff"),
@@ -723,7 +751,7 @@ mod tests {
     #[test]
     fn validate_destination_conflicts_allows_workspace_package_reuse_of_same_workspace() {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 workspace_package_item("eslint", "/tmp/repo"),
                 workspace_package_item("prettier", "/tmp/repo"),
@@ -740,10 +768,28 @@ mod tests {
     }
 
     #[test]
+    fn validate_destination_conflicts_allows_workspace_only_plan_without_managed_dir() {
+        let plan = InstallPlan {
+            schema_version: PLAN_SCHEMA_VERSION,
+            items: vec![workspace_package_item("eslint", "/tmp/repo")],
+        };
+
+        let resolved_items = super::validate_plan(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect("workspace-only plan should resolve");
+
+        super::validate_destination_conflicts(&resolved_items, "x86_64-unknown-linux-gnu", None)
+            .expect("workspace-only plan should not require a managed_dir for conflict validation");
+    }
+
+    #[test]
     fn validate_destination_conflicts_rejects_workspace_overlap_after_plan_base_dir_normalization()
     {
         let plan = InstallPlan {
-            schema_version: Some(PLAN_SCHEMA_VERSION),
+            schema_version: PLAN_SCHEMA_VERSION,
             items: vec![
                 workspace_package_item("eslint", "repo"),
                 workspace_package_item("prettier", "/tmp/root/repo/tools"),
@@ -761,7 +807,7 @@ mod tests {
         let err = super::validate_destination_conflicts(
             &resolved_items,
             "x86_64-unknown-linux-gnu",
-            Path::new("/tmp/managed"),
+            Some(Path::new("/tmp/managed")),
         )
         .expect_err("normalized workspace destinations should still participate in overlap checks");
 
@@ -769,6 +815,20 @@ mod tests {
             err.to_string()
                 .contains("resolve to overlapping destinations")
         );
+    }
+
+    #[test]
+    fn validate_plan_structure_requires_schema_version() {
+        let err = serde_json::from_str::<InstallPlan>(
+            r#"{
+  "items": [
+    { "id": "eslint", "method": "workspace_package", "package": "eslint", "destination": "/tmp/repo" }
+  ]
+}"#,
+        )
+        .expect_err("missing schema_version should be rejected at parse time");
+
+        assert!(err.to_string().contains("schema_version"));
     }
 
     fn release_item(id: &str, destination: &str) -> InstallPlanItem {
