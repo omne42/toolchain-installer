@@ -6000,7 +6000,7 @@ fn with_path_entries<T>(entries: Vec<PathBuf>, f: impl FnOnce() -> T) -> T {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("lock env guard");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let original = std::env::var_os("PATH");
     let joined = std::env::join_paths(entries).expect("join PATH");
     let restore = EnvVarRestore::new("PATH", original);
