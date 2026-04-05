@@ -39,8 +39,6 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 下载 archive 资产并把完整目录树解到目标路径。
 - `system_package`
   - 通过宿主系统包管理器安装。
-- `apt`
-  - 显式通过 canonical `apt-get` 安装。
 - `pip`
   - 通过 `python -m pip install` 安装。
 - `npm_global`
@@ -65,7 +63,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `release`
   - `archive_tree_release`
   - 归属于 release 安装域。
-- `system_package`、`apt`
+- `system_package`
   - 归属于宿主系统包安装域。
 - `pip`
   - 归属于 Python 包安装域。
@@ -92,8 +90,6 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 允许 `url`、`sha256`、`destination`。
 - `system_package`
   - 允许 `package`、可选 `manager`。
-- `apt`
-  - 允许 `package`、可选 `manager=apt-get`。
 - `pip`
   - 允许 `package`、可选 `python`。
 - `npm_global`
@@ -122,7 +118,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `bootstrap` 仅支持当前宿主机，即 `target_triple` 必须等于自动探测到的 `host_triple`。
 - `method=release` 支持显式跨目标平台下载与落盘。
 - `method=archive_tree_release` 支持显式跨目标平台下载与解包。
-- `method=system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool` 仅作用于当前宿主机。
+- `method=system_package|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool` 仅作用于当前宿主机。
 - 若宿主机方法出现 `target_triple != host_triple`，执行前直接返回退出码 `2`。
 
 ## 路径与 URL 约束
@@ -141,8 +137,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
 - `workspace_package` 不接受独立 `version` 字段；如需锁定版本，应直接把版本写进 `package` 自身。
-- `system_package`、`apt` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
-- `method=apt` 会固定收敛到 canonical `apt-get` recipe；若显式传 `manager`，当前只接受 `apt-get`，不会静默退回其他系统包管理器。
+- `system_package` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
+- `system_package.manager` 若显式提供 `apt-get`，installer 会固定使用 canonical `apt-get`；不再对外承诺独立 `apt` 方法别名。
 - `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的 `package` 不允许是 `-r`、`--editable`、`--workspace`、`--git`、`--toolchain`、`--index-url` 这类看起来像命令行选项的值；installer 会在 resolve 阶段直接返回 usage error，而不是把额外语义透传给底层包管理器。
 - `pip` 成功结果里的 `source` 只会记录实际使用的解释器标识（例如 `pip:python3` 或 `pip:/abs/path/python3.13`），不会把它包装成 artifact 坐标；同时 `destination` 会保持为空，因为底层 site-packages / script 落点由被选中的 Python 环境决定，而不是 installer 自己拥有的托管输出。
 - 多个 `workspace_package` item 可以指向同一个 workspace；这表示对同一工作区重复执行依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
