@@ -12,7 +12,7 @@ use omne_integrity_primitives::{Sha256Digest, parse_sha256_digest};
 use crate::artifact::InstallSource;
 use crate::contracts::{BootstrapArchiveFormat, BootstrapArchiveMatch};
 use crate::download_sources::{
-    build_download_candidates, result_source_kind_for_download_candidate,
+    build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::gateway_candidate_for_git_release_asset;
@@ -69,7 +69,7 @@ pub(crate) async fn install_gh_from_public_release(
         archive_match,
     } = downloaded;
     Ok(InstallSource::new(
-        source.url,
+        redact_source_url(&source.url),
         result_source_kind_for_download_candidate(source.kind),
     )
     .with_archive_match(archive_match.into()))
@@ -133,7 +133,7 @@ pub(crate) async fn install_git_from_public_release(
         archive_match,
     } = downloaded;
     Ok(InstallSource::new(
-        source.url,
+        redact_source_url(&source.url),
         result_source_kind_for_download_candidate(source.kind),
     )
     .with_archive_match(archive_match.into()))
@@ -238,7 +238,7 @@ async fn download_and_install_mingit_bundle(
     )?;
 
     Ok(InstallSource::new(
-        selected.url,
+        redact_source_url(&selected.url),
         result_source_kind_for_download_candidate(selected.kind),
     )
     .with_archive_match(BootstrapArchiveMatch {

@@ -1639,6 +1639,83 @@ async fn install_gh_from_public_release_windows_zip_uses_bin_hint() -> anyhow::R
 }
 
 #[tokio::test]
+async fn install_gh_from_public_release_redacts_mirror_source_url() -> anyhow::Result<()> {
+    let archive_name = "gh_9.9.9_linux_amd64.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[(
+        "gh_9.9.9_linux_amd64/bin/gh",
+        b"#!/bin/sh\necho mock-gh\n".as_slice(),
+        0o755,
+    )])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "v9.9.9",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": "https://github.com/cli/cli/releases/download/v9.9.9/gh_9.9.9_linux_amd64.tar.gz",
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/cli/cli/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(
+        format!(
+            "/mirror/https://github.com/cli/cli/releases/download/v9.9.9/{archive_name}?token=abc"
+        ),
+        archive_bytes,
+    );
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: vec![format!(
+                "http://user:secret@{addr}/mirror/{{url}}?token=abc#frag"
+            )],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("gh");
+
+    let source =
+        install_gh_from_public_release("x86_64-unknown-linux-gnu", "", &destination, &cfg, &client)
+            .await?;
+    assert!(
+        source
+            .locator
+            .starts_with(&format!("http://{addr}/mirror/"))
+    );
+    assert!(
+        source
+            .locator
+            .ends_with(&format!("/releases/download/v9.9.9/{archive_name}"))
+    );
+    assert!(!source.locator.contains("user:secret"));
+    assert!(!source.locator.contains("?token=abc"));
+    assert!(!source.locator.contains("#frag"));
+    assert_eq!(source.source_kind, BootstrapSourceKind::Mirror);
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
 async fn install_git_from_public_release_windows_zip_builds_cmd_launcher() -> anyhow::Result<()> {
     let archive_name = "MinGit-2.53.0-busybox-64-bit.zip";
     let archive_bytes = make_zip_archive(&[
@@ -1713,6 +1790,84 @@ async fn install_git_from_public_release_windows_zip_builds_cmd_launcher() -> an
             .join("msys-2.0.dll")
             .exists()
     );
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_git_from_public_release_redacts_mirror_source_url() -> anyhow::Result<()> {
+    let archive_name = "MinGit-2.53.0-busybox-64-bit.zip";
+    let archive_bytes = make_zip_archive(&[
+        ("PortableGit/cmd/git.exe", b"MZ".as_slice(), 0o755),
+        (
+            "PortableGit/mingw64/bin/msys-2.0.dll",
+            b"dll".as_slice(),
+            0o644,
+        ),
+    ])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "v2.53.0.windows.1",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": "https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.1/MinGit-2.53.0-busybox-64-bit.zip",
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/git-for-windows/git/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(
+        "/mirror/https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.1/MinGit-2.53.0-busybox-64-bit.zip?token=abc".to_string(),
+        archive_bytes,
+    );
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: vec![format!(
+                "http://user:secret@{addr}/mirror/{{url}}?token=abc#frag"
+            )],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("git.cmd");
+
+    let source =
+        install_git_from_public_release("x86_64-pc-windows-msvc", &destination, &cfg, &client)
+            .await?;
+    assert_eq!(source.source_kind, BootstrapSourceKind::Mirror);
+    assert!(
+        source
+            .locator
+            .starts_with(&format!("http://{addr}/mirror/"))
+    );
+    assert!(
+        source
+            .locator
+            .ends_with("/releases/download/v2.53.0.windows.1/MinGit-2.53.0-busybox-64-bit.zip")
+    );
+    assert!(!source.locator.contains("user:secret"));
+    assert!(!source.locator.contains("?token=abc"));
+    assert!(!source.locator.contains("#frag"));
 
     handle.join().expect("mock server thread join");
     Ok(())
@@ -1971,6 +2126,81 @@ async fn install_uv_from_mock_release_api() -> anyhow::Result<()> {
     );
     let installed = std::fs::read_to_string(&destination)?;
     assert!(installed.contains("uv 0.11.0"));
+
+    handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_uv_from_public_release_redacts_mirror_source_url() -> anyhow::Result<()> {
+    let archive_name = "uv-x86_64-unknown-linux-gnu.tar.gz";
+    let archive_bytes = make_tar_gz_archive(&[(
+        "uv-x86_64-unknown-linux-gnu/uv",
+        b"#!/bin/sh\necho uv 0.7.0\n".as_slice(),
+        0o755,
+    )])?;
+    let digest = sha256_hex(&archive_bytes);
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let base = format!("http://{addr}");
+    let release_body = serde_json::json!({
+        "tag_name": "0.7.0",
+        "assets": [{
+            "name": archive_name,
+            "browser_download_url": "https://github.com/astral-sh/uv/releases/download/0.7.0/uv-x86_64-unknown-linux-gnu.tar.gz",
+            "digest": format!("sha256:{digest}")
+        }]
+    })
+    .to_string()
+    .into_bytes();
+
+    let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
+    routes.insert(
+        "/api/repos/astral-sh/uv/releases/latest".to_string(),
+        release_body,
+    );
+    routes.insert(
+        "/mirror/https://github.com/astral-sh/uv/releases/download/0.7.0/uv-x86_64-unknown-linux-gnu.tar.gz?token=abc".to_string(),
+        archive_bytes,
+    );
+    let handle = spawn_mock_http_server(listener, routes, 2);
+
+    let cfg = InstallerRuntimeConfig {
+        github_releases: GitHubReleasePolicy {
+            api_bases: vec![format!("{base}/api")],
+            token: None,
+        },
+        download_sources: DownloadSourcePolicy {
+            mirror_prefixes: vec![format!(
+                "http://user:secret@{addr}/mirror/{{url}}?token=abc#frag"
+            )],
+        },
+        ..test_runtime_config()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let tmp = tempfile::tempdir()?;
+    let destination = tmp.path().join("uv");
+
+    let source =
+        install_uv_from_public_release("x86_64-unknown-linux-gnu", &destination, &cfg, &client)
+            .await?;
+    assert_eq!(source.source_kind, BootstrapSourceKind::Mirror);
+    assert!(
+        source
+            .locator
+            .starts_with(&format!("http://{addr}/mirror/"))
+    );
+    assert!(
+        source
+            .locator
+            .ends_with("/releases/download/0.7.0/uv-x86_64-unknown-linux-gnu.tar.gz")
+    );
+    assert!(!source.locator.contains("user:secret"));
+    assert!(!source.locator.contains("?token=abc"));
+    assert!(!source.locator.contains("#frag"));
 
     handle.join().expect("mock server thread join");
     Ok(())
