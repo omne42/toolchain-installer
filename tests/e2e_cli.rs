@@ -176,15 +176,30 @@ exit 0
             "--package",
             "curl",
         ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+        .assert();
+    let output = if cfg!(target_os = "linux") {
+        output.success()
+    } else {
+        output.code(4)
+    }
+    .get_output()
+    .stdout
+    .clone();
     let json: Value = serde_json::from_slice(&output).expect("valid json");
-    assert_eq!(json["items"][0]["status"], "installed");
-    assert_eq!(json["items"][0]["source"], "system:apt-get");
-    assert_eq!(json["items"][0]["source_kind"], "system_package");
+    if cfg!(target_os = "linux") {
+        assert_eq!(json["items"][0]["status"], "installed");
+        assert_eq!(json["items"][0]["source"], "system:apt-get");
+        assert_eq!(json["items"][0]["source_kind"], "system_package");
+    } else {
+        assert_eq!(json["items"][0]["status"], "failed");
+        assert_eq!(json["items"][0]["error_code"], "install_failed");
+        assert!(
+            json["items"][0]["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("apt-get")
+        );
+    }
 }
 
 #[test]
