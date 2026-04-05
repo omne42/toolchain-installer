@@ -20,8 +20,10 @@ pub(crate) fn execute_workspace_package_item(
     }
     let (program, args) = build_workspace_package_command(item)?;
     let manager = item.manager.command_name();
-    run_host_recipe(&HostRecipeRequest::new(program.as_os_str(), &args))
-        .map_err(OperationError::from_host_recipe)?;
+    run_host_recipe(
+        &HostRecipeRequest::new(program.as_os_str(), &args).with_working_directory(&workspace_dir),
+    )
+    .map_err(OperationError::from_host_recipe)?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),

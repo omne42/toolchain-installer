@@ -138,6 +138,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
+- `workspace_package` 执行时会把底层包管理器的工作目录锚定到该 workspace；即使调用 CLI 时的当前目录不同，`npm` 的 `file:`、相对路径和其他依赖解析也按目标 workspace 解析，而不是按 installer 进程当前目录漂移。
 - `workspace_package` 不接受独立 `version` 字段；如需锁定版本，应直接把版本写进 `package` 自身。
 - `system_package` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
 - `method=system_package` 若显式传 `manager=apt-get`，会固定收敛到 canonical `apt-get` recipe；其他 manager 值则按 shared runtime 的受支持系统包管理器集合解析，不会把 `apt` 当作独立方法名。

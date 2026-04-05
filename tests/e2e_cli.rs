@@ -1128,14 +1128,19 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$workspace" ] || exit 9
+[ "$PWD" = "$workspace" ] || exit 11
 [ -f "$workspace/package.json" ] || exit 10
+[ -d "./local-dep" ] || exit 12
 mkdir -p "$workspace/node_modules/react"
 exit 0
 "#,
     );
 
     let workspace_dir = temp.path().join("workspace");
+    let other_cwd = temp.path().join("other-cwd");
     std::fs::create_dir_all(&workspace_dir).expect("create workspace dir");
+    std::fs::create_dir_all(workspace_dir.join("local-dep")).expect("create local dependency dir");
+    std::fs::create_dir_all(&other_cwd).expect("create other cwd");
     std::fs::write(
         workspace_dir.join("package.json"),
         r#"{"name":"demo-workspace","private":true}"#,
@@ -1144,6 +1149,7 @@ exit 0
 
     let mut cmd = bootstrap_cmd();
     let output = cmd
+        .current_dir(&other_cwd)
         .env("PATH", path_with_prepend(&fake_bin_dir))
         .args([
             "--json",
