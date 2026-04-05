@@ -5,7 +5,8 @@ use crate::contracts::{
 use crate::error::InstallerResult;
 use crate::error::OperationError;
 use crate::install_plan::install_plan_validation::{
-    plan_requires_managed_dir, validate_destination_conflicts, validate_plan_structure,
+    plan_requires_managed_dir, resolve_requested_target_triple, validate_destination_conflicts,
+    validate_plan_structure,
 };
 use crate::install_plan::item_destination_resolution::{
     allow_leaf_symlink_in_managed_destination, effective_destination_for_item,
@@ -15,7 +16,7 @@ use crate::install_plan::item_method_dispatch::execute_plan_item;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::managed_root_dir::resolve_managed_toolchain_dir;
 use omne_fs_primitives::AdvisoryLockGuard;
-use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
+use omne_host_info_primitives::detect_host_target_triple;
 
 use super::execution_context::acquire_managed_dir_execution_lock;
 
@@ -26,7 +27,8 @@ pub async fn apply_install_plan(
     let host_triple = detect_host_target_triple()
         .map(str::to_string)
         .ok_or_else(|| crate::error::InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
+    let target_triple =
+        resolve_requested_target_triple(request.target_triple.as_deref(), &host_triple)?;
     let resolved_items = validate_plan_structure(
         plan,
         &host_triple,

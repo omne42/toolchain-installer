@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use omne_fs_primitives::{AdvisoryLockGuard, lock_advisory_file_in_ambient_root};
-use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
+use omne_host_info_primitives::{detect_host_target_triple, try_resolve_target_triple};
 
 use crate::contracts::ExecutionRequest;
 use crate::error::{InstallerError, InstallerResult};
@@ -31,7 +31,8 @@ impl ExecutionContext {
         let host_triple = detect_host_target_triple()
             .map(str::to_string)
             .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-        let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
+        let target_triple =
+            resolve_execution_target_triple(request.target_triple.as_deref(), &host_triple)?;
         if matches!(constraint, TargetConstraint::HostOnly) && target_triple != host_triple {
             return Err(InstallerError::usage(format!(
                 "bootstrap only supports the current host triple `{host_triple}`; use `--method release` or `--plan-file` for cross-target downloads"
@@ -80,6 +81,14 @@ pub(crate) fn acquire_managed_dir_execution_lock(
             managed_dir.display()
         ))
     })
+}
+
+fn resolve_execution_target_triple(
+    requested_target_triple: Option<&str>,
+    host_triple: &str,
+) -> InstallerResult<String> {
+    try_resolve_target_triple(requested_target_triple, host_triple)
+        .map_err(|err| InstallerError::usage(err.to_string()))
 }
 
 fn managed_dir_lock_file_name(managed_dir: &Path) -> String {

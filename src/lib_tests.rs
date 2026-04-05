@@ -2835,9 +2835,9 @@ fn resolve_target_triple_accepts_supported_trimmed_override() {
 }
 
 #[test]
-fn resolve_target_triple_preserves_unknown_trimmed_override() {
+fn resolve_target_triple_falls_back_for_unknown_trimmed_override() {
     let detected = resolve_target_triple(Some("  custom-target  "), "x86_64-unknown-linux-gnu");
-    assert_eq!(detected, "custom-target".to_string());
+    assert_eq!(detected, "x86_64-unknown-linux-gnu".to_string());
 }
 
 #[test]
@@ -3636,6 +3636,31 @@ fn public_validate_install_plan_stays_structure_only_without_managed_dir_context
 
     crate::validate_install_plan(&plan, None)
         .expect("public validator should not guess managed_dir-dependent conflicts");
+}
+
+#[test]
+fn public_validate_install_plan_rejects_unknown_target_triple() {
+    let plan = InstallPlan {
+        schema_version: PLAN_SCHEMA_VERSION,
+        items: vec![InstallPlanItem {
+            id: "release-demo".to_string(),
+            method: "release".to_string(),
+            version: None,
+            url: Some("https://example.com/demo.tar.gz".to_string()),
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some("demo".to_string()),
+            package: None,
+            manager: None,
+            python: None,
+        }],
+    };
+
+    let err = crate::validate_install_plan(&plan, Some("custom-target"))
+        .expect_err("unknown target triple should be rejected before structure validation");
+    assert_eq!(err.exit_code(), ExitCode::Usage);
+    assert!(err.to_string().contains("unsupported target triple"));
 }
 
 #[test]
