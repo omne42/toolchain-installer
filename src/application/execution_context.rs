@@ -22,6 +22,7 @@ impl ExecutionContext {
         Self::build(request, TargetConstraint::HostOnly)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn for_install_plan(request: &ExecutionRequest) -> InstallerResult<Self> {
         Self::build(request, TargetConstraint::AllowCrossTarget)
     }
@@ -62,7 +63,9 @@ impl ExecutionContext {
     }
 }
 
-fn acquire_managed_dir_execution_lock(managed_dir: &Path) -> InstallerResult<AdvisoryLockGuard> {
+pub(crate) fn acquire_managed_dir_execution_lock(
+    managed_dir: &Path,
+) -> InstallerResult<AdvisoryLockGuard> {
     let lock_root = managed_dir.parent().unwrap_or_else(|| Path::new("."));
     let lock_file = managed_dir_lock_file_name(managed_dir);
     lock_advisory_file_in_ambient_root(
@@ -99,6 +102,7 @@ fn sanitize_lock_component(value: &str) -> String {
         .collect()
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TargetConstraint {
     HostOnly,

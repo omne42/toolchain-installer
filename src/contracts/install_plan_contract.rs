@@ -5,8 +5,7 @@ pub const PLAN_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallPlan {
-    #[serde(default)]
-    pub schema_version: Option<u32>,
+    pub schema_version: u32,
     pub items: Vec<InstallPlanItem>,
 }
 

@@ -55,6 +55,15 @@ pub(crate) fn effective_destination_for_item(
     }
 }
 
+pub(crate) fn effective_destination_for_item_without_managed_dir(
+    item: &ResolvedPlanItem,
+) -> Option<PathBuf> {
+    match item {
+        ResolvedPlanItem::WorkspacePackage(item) => Some(item.destination.clone()),
+        _ => None,
+    }
+}
+
 pub(crate) fn allow_leaf_symlink_in_managed_destination(item: &ResolvedPlanItem) -> bool {
     matches!(item, ResolvedPlanItem::NpmGlobal(_))
 }

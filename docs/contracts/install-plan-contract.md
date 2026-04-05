@@ -20,7 +20,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 
 规则：
 
-- `schema_version` 当前固定为 `1`。
+- `schema_version` 是必填字段，当前固定为 `1`。
 - `plan.items` 不能为空。
 - 顶层对象和每个 `items[]` 对象都启用严格未知字段校验；拼错字段名会在反序列化阶段直接失败，不会被静默吞掉。
 - `plan.items[*].id` 必须全局唯一；重复 `id` 会在执行前返回退出码 `2`。
@@ -28,7 +28,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `method` 必须是受支持的方法名；未知方法会在执行前直接返回退出码 `2`。
 - 不属于该方法的字段组合会在执行前返回退出码 `2`，不会静默忽略。
 - 纯库 API `validate_install_plan()` 只做 schema、字段组合、宿主/目标约束和重复 `id` 校验；它不知道 `managed_dir`，因此不会擅自猜测依赖目标目录的全局路径冲突。
-- CLI 与 `validate_install_plan_with_request()` 会在结构校验通过后，再结合真实 `managed_dir` 做全局目标路径冲突校验；若解析后的目标路径发生冲突，会在执行前返回退出码 `2`，不会依赖执行顺序“碰巧覆盖”。
+- CLI 与 `validate_install_plan_with_request()` 会在结构校验通过后，再结合真实 `managed_dir` 做需要托管根的方法的全局目标路径冲突校验；如果整份 plan 只包含 `system_package`、`pip`、`workspace_package`、`rustup_component` 这类不依赖托管根的方法，即使默认 `managed_dir` 不可解析也不会提前失败。
 - 真正进入 bootstrap 或 plan 执行时，installer 还会对目标 `managed_dir` 获取进程级 advisory lock；命中同一托管根的并发调用会串行等待，直到前一个执行释放锁后才继续，避免共享 state root、固定 staging 名或回滚逻辑互相踩坏。
 - `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
 
@@ -149,6 +149,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `npm_global` 使用 `bun` 时，若 `managed_dir` 本身已经是 `.../bin`，installer 会直接把它当作 bun 的全局 binary 目录，而不是再额外套一层 `bin/` 形成 `.../bin/bin/<tool>`。
 - `npm_global`、`cargo_install`、`go_install`、`uv_tool` 若未显式提供 `binary_name`，installer 会优先从 `package` 或解析后的本地/远端来源推导默认二进制名；只有确实推不出来时才回退到 `id`。
+- `npm_global` 若未显式提供 `binary_name`，且包名推导出的默认入口在托管 bin 目录里并不存在，installer 会继续结合 item `id` 与已安装包的 manifest/bin 元数据解析真实 CLI 入口；像 `typescript -> tsc` 这类“包名不等于命令名”的安装不会再被误判成失败。
 - `npm_global` 若 `package` 使用 `npm:` alias source spec，默认 `binary_name` 会从 alias 指向的真实包名推导，并剥离 `@1.2.3` 这类内嵌版本片段；`github:`、`git:`、`file:` 等 source spec 则只取仓库或路径叶子名，不会把整段 source spec 当成文件名。
 - `cargo_install`、`go_install` 若显式提供 `binary_name`，它表示最终托管目标文件名；installer 会先在隔离 staging 目录执行安装，再把本次实际产出的目标二进制提升到该文件名。只要 staging 产物里没有名字直接匹配请求的 `binary_name`，整项就会返回失败而不是猜测，即使 staging 里只剩一个名字不匹配的二进制也一样。
 - `cargo_install` 若显式提供 `binary_name`，installer 还会把它传给 `cargo install --bin <binary_name>`；如果上游 crate 根本不导出这个可执行文件，整项会直接失败，而不是靠旧文件误报成功。
@@ -165,6 +166,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 当目标是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；`bin\\tool.exe` 和 `bin/tool.exe` 会落到同一个托管相对路径，不再依赖当前宿主机是否把反斜杠当普通字符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - `uv_tool` 若显式提供 `binary_name`，installer 会改用 `uv tool install --from <package> <binary_name>`，把请求的可执行文件名直接纳入上游安装契约，而不是只在安装后被动检查结果路径。
+- `uv_tool` 若未显式提供 `binary_name`，且按包名推导出的默认入口不存在，installer 会优先检查 item `id` 对应的托管入口，再在本次新建/更新的托管 launcher 里按稳定顺序选择实际 CLI；像 `httpie -> http` 这类 distribution 名与命令名不同的包不会再被误判成失败。
 - `cargo_install`、`go_install`、`uv_tool` 在替换同名目标路径时，会先按最终 `destination` 获取同级 advisory lock，再把旧路径整体暂存到 canonical backup；并发 installer 命中同一目标时会串行等待，不会因为共享固定备份名而互相删掉对方的新产物。旧路径无论原先是文件还是目录，安装成功后都会清理备份，失败时恢复原状，不会把目录误当文件导致残留 `.toolchain-installer-backup`。
 - 如果上一次安装在 stash 之后异常中断，下一次 `cargo_install`、`go_install`、`uv_tool` 重试会先用 canonical backup 自愈恢复旧目标，再重新暂存；如果成功路径上的旧 backup 已经只剩清理残留，则会自动移到同级 `*.stale-*` 隔离名，避免后续重试继续被固定备份名卡死。
 - `go_install` 若 `package` 解析成本地目录，会先校验该目录真实存在且是目录，再去探测 `go` 命令、创建 staging root 或暂存现有目标；无效输入不会先破坏已有托管 binary。
