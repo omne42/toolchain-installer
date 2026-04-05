@@ -239,11 +239,38 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
-    use super::reusable_bootstrap_item;
+    use super::{bootstrap_builtin_tool, reusable_bootstrap_item};
     use crate::builtin_tools::bootstrap_tool_health::ManagedBootstrapState;
-    use crate::contracts::{BootstrapSourceKind, BootstrapStatus};
+    use crate::contracts::{BootstrapSourceKind, BootstrapStatus, ExecutionRequest};
+    use crate::installer_runtime_config::InstallerRuntimeConfig;
+
+    #[tokio::test]
+    async fn unsupported_tool_with_managed_binary_still_reports_unsupported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = tmp.path().join("managed");
+        fs::create_dir_all(&managed_dir).expect("create managed dir");
+        let destination = managed_dir.join("custom-tool");
+        fs::write(&destination, b"#!/bin/sh\necho custom-tool 1.0.0\n")
+            .expect("write managed binary");
+
+        let item = bootstrap_builtin_tool(
+            "custom-tool",
+            "x86_64-unknown-linux-gnu",
+            "",
+            &destination,
+            &managed_dir,
+            &InstallerRuntimeConfig::from_execution_request(&ExecutionRequest::default()),
+            &reqwest::Client::new(),
+        )
+        .await;
+
+        assert_eq!(item.status, BootstrapStatus::Unsupported);
+        assert_eq!(item.source, None);
+        assert_eq!(item.source_kind, None);
+    }
 
     #[test]
     fn broken_managed_install_blocks_host_present_shortcut() {
