@@ -145,7 +145,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `method=apt` 会固定收敛到 canonical `apt-get` recipe；若显式传 `manager`，当前只接受 `apt-get`，不会静默退回其他系统包管理器。
 - `pip`、`npm_global`、`workspace_package`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 的 `package` 不允许是 `-r`、`--editable`、`--workspace`、`--git`、`--toolchain`、`--index-url` 这类看起来像命令行选项的值；installer 会在 resolve 阶段直接返回 usage error，而不是把额外语义透传给底层包管理器。
 - `pip` 成功结果里的 `source` 只会记录实际使用的解释器标识（例如 `pip:python3` 或 `pip:/abs/path/python3.13`），不会把它包装成 artifact 坐标；同时 `destination` 会保持为空，因为底层 site-packages / script 落点由被选中的 Python 环境决定，而不是 installer 自己拥有的托管输出。
-- 多个 `workspace_package` item 可以指向同一个 workspace；这表示对同一工作区重复执行依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
+- 多个 `workspace_package` item 只有在 `manager` 相同的前提下才可以指向同一个 workspace；这表示对同一工作区重复执行同一套包管理器的依赖安装，不会因为“目标目录相同”在执行前被当成互斥输出拦下。
+- 如果同一个 workspace 在一份 plan 里混用 `npm`、`pnpm`、`bun`，installer 会在执行前直接返回退出码 `2`，避免把不同 lockfile / store 语义叠到同一工作区里。
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `npm_global` 使用 `bun` 时，若 `managed_dir` 本身已经是 `.../bin`，installer 会直接把它当作 bun 的全局 binary 目录，而不是再额外套一层 `bin/` 形成 `.../bin/bin/<tool>`。
 - `npm_global`、`cargo_install`、`go_install`、`uv_tool` 若未显式提供 `binary_name`，installer 会优先从 `package` 或解析后的本地/远端来源推导默认二进制名；只有确实推不出来时才回退到 `id`。

@@ -1248,6 +1248,51 @@ exit 0
     assert!(!managed_dir.join("apps").join("demo-web").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_package_plan_file_rejects_same_workspace_with_different_managers() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_dir = temp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).expect("create workspace dir");
+    std::fs::write(
+        workspace_dir.join("package.json"),
+        r#"{"name":"demo-workspace","private":true}"#,
+    )
+    .expect("write package.json");
+
+    let plan_path = temp.path().join("workspace-plan.json");
+    std::fs::write(
+        &plan_path,
+        format!(
+            r#"{{
+  "schema_version": 1,
+  "items": [
+    {{
+      "id": "react",
+      "method": "workspace_package",
+      "package": "react@18.3.1",
+      "manager": "npm",
+      "destination": "{}"
+    }},
+    {{
+      "id": "vite",
+      "method": "workspace_package",
+      "package": "vite@5.4.0",
+      "manager": "pnpm",
+      "destination": "{}"
+    }}
+  ]
+}}"#,
+            workspace_dir.display(),
+            workspace_dir.display()
+        ),
+    )
+    .expect("write plan");
+
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--plan-file"]).arg(&plan_path).assert().code(2);
+}
+
 #[test]
 fn npm_global_rejects_destination_field() {
     let mut cmd = bootstrap_cmd();

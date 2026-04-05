@@ -294,8 +294,12 @@ fn destination_conflict_is_allowed(
 
     match (existing.item, candidate_item) {
         (ResolvedPlanItem::UvPython(_), ResolvedPlanItem::UvPython(_)) => true,
-        (ResolvedPlanItem::WorkspacePackage(_), ResolvedPlanItem::WorkspacePackage(_)) => {
+        (
+            ResolvedPlanItem::WorkspacePackage(existing_item),
+            ResolvedPlanItem::WorkspacePackage(candidate_item),
+        ) => {
             existing.normalized == candidate_destination
+                && existing_item.manager == candidate_item.manager
         }
         _ => false,
     }
@@ -307,10 +311,13 @@ fn shared_reservation_overlap_is_allowed(
     candidate_item: &ResolvedPlanItem,
 ) -> bool {
     match sharing {
-        SharedReservation::Workspace => {
-            matches!(existing_item, ResolvedPlanItem::WorkspacePackage(_))
-                && matches!(candidate_item, ResolvedPlanItem::WorkspacePackage(_))
-        }
+        SharedReservation::Workspace => match (existing_item, candidate_item) {
+            (
+                ResolvedPlanItem::WorkspacePackage(existing_item),
+                ResolvedPlanItem::WorkspacePackage(candidate_item),
+            ) => existing_item.manager == candidate_item.manager,
+            _ => false,
+        },
         SharedReservation::ManagedPython
         | SharedReservation::ManagedUvBootstrap
         | SharedReservation::ManagedUvCache => {
@@ -597,6 +604,60 @@ mod tests {
     }
 
     #[test]
+    fn validate_destination_conflicts_allows_workspace_package_reuse_with_same_manager() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                workspace_package_item_with_manager(
+                    "react",
+                    "react@18.3.1",
+                    "npm",
+                    "/tmp/workspace",
+                ),
+                workspace_package_item_with_manager("vite", "vite@5.4.0", "npm", "/tmp/workspace"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect(
+            "workspace_package items should be allowed to reuse a workspace with the same manager",
+        );
+    }
+
+    #[test]
+    fn validate_destination_conflicts_rejects_workspace_package_reuse_with_different_managers() {
+        let plan = InstallPlan {
+            schema_version: Some(PLAN_SCHEMA_VERSION),
+            items: vec![
+                workspace_package_item_with_manager(
+                    "react",
+                    "react@18.3.1",
+                    "npm",
+                    "/tmp/workspace",
+                ),
+                workspace_package_item_with_manager("vite", "vite@5.4.0", "pnpm", "/tmp/workspace"),
+            ],
+        };
+
+        let err = validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Path::new("/tmp/managed"),
+        )
+        .expect_err(
+            "workspace_package should reject reusing a workspace across different managers",
+        );
+
+        assert!(err.to_string().contains("resolve to the same destination"));
+    }
+
+    #[test]
     fn validate_destination_conflicts_rejects_case_only_overlaps_on_windows() {
         let plan = InstallPlan {
             schema_version: Some(PLAN_SCHEMA_VERSION),
@@ -800,6 +861,27 @@ mod tests {
             archive_binary: None,
             binary_name: Some(id.to_string()),
             destination: None,
+            package: Some(package.to_string()),
+            manager: Some(manager.to_string()),
+            python: None,
+        }
+    }
+
+    fn workspace_package_item_with_manager(
+        id: &str,
+        package: &str,
+        manager: &str,
+        destination: &str,
+    ) -> InstallPlanItem {
+        InstallPlanItem {
+            id: id.to_string(),
+            method: "workspace_package".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: Some(destination.to_string()),
             package: Some(package.to_string()),
             manager: Some(manager.to_string()),
             python: None,
