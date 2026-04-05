@@ -585,6 +585,34 @@ fn bootstrap_rejects_cross_target_override() {
 }
 
 #[test]
+fn bootstrap_rejects_unknown_target_override() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args(["--target-triple", "custom-target", "--tool", "git"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn direct_method_rejects_unknown_target_override() {
+    let mut cmd = bootstrap_cmd();
+    cmd.args([
+        "--json",
+        "--target-triple",
+        "custom-target",
+        "--method",
+        "release",
+        "--id",
+        "demo-release",
+        "--url",
+        "https://example.com/demo.tar.gz",
+        "--destination",
+        "demo",
+    ])
+    .assert()
+    .code(2);
+}
+
+#[test]
 fn plan_file_rejects_unknown_fields() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plan_path = temp.path().join("plan.json");

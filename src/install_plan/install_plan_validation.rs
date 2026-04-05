@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use omne_fs_primitives::filesystem_is_case_sensitive;
-use omne_host_info_primitives::{detect_host_target_triple, resolve_target_triple};
+use omne_host_info_primitives::{detect_host_target_triple, try_resolve_target_triple};
 
 use crate::contracts::{ExecutionRequest, InstallPlan, PLAN_SCHEMA_VERSION};
 use crate::error::{InstallerError, InstallerResult};
@@ -26,7 +26,7 @@ pub fn validate_install_plan(
     let host_triple = detect_host_target_triple()
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(requested_target_triple, &host_triple);
+    let target_triple = resolve_requested_target_triple(requested_target_triple, &host_triple)?;
     validate_plan_structure(plan, &host_triple, &target_triple, None).map(|_| ())
 }
 
@@ -37,7 +37,8 @@ pub fn validate_install_plan_with_request(
     let host_triple = detect_host_target_triple()
         .map(str::to_string)
         .ok_or_else(|| InstallerError::install("unsupported host platform/arch"))?;
-    let target_triple = resolve_target_triple(request.target_triple.as_deref(), &host_triple);
+    let target_triple =
+        resolve_requested_target_triple(request.target_triple.as_deref(), &host_triple)?;
     let resolved_items = validate_plan_structure(
         plan,
         &host_triple,
@@ -82,6 +83,14 @@ pub(crate) fn validate_plan_with_managed_dir(
     let resolved_items = validate_plan_structure(plan, host_triple, target_triple, None)?;
     validate_destination_conflicts(&resolved_items, target_triple, Some(managed_dir))?;
     Ok(resolved_items)
+}
+
+pub(crate) fn resolve_requested_target_triple(
+    requested_target_triple: Option<&str>,
+    host_triple: &str,
+) -> InstallerResult<String> {
+    try_resolve_target_triple(requested_target_triple, host_triple)
+        .map_err(|err| InstallerError::usage(err.to_string()))
 }
 
 pub(crate) fn validate_plan_structure(
