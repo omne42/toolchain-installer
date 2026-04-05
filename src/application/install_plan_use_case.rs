@@ -57,7 +57,8 @@ pub async fn apply_install_plan(
         .await
         {
             Ok(bootstrap_item) => {
-                if let Some(path) = destination_path.as_ref()
+                if allow_leaf_symlink
+                    && let Some(path) = destination_path.as_ref()
                     && let Err(detail) =
                         validate_managed_path_boundary(path, &ctx.managed_dir, allow_leaf_symlink)
                 {
