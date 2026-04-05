@@ -979,7 +979,7 @@ mod tests {
         find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
         installation_result_is_acceptable, npm_global_package_dir, npm_package_request,
         package_bin_relative_path, parse_pnpm_root_stdout, path_has_no_symlink_components,
-        resolve_npm_global_destination, resolve_package_bin_script,
+        resolve_installed_package_dirs, resolve_npm_global_destination, resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
 
@@ -1460,6 +1460,25 @@ mod tests {
             Some(temp.path().join("global").as_path()),
             None,
         ));
+    }
+
+    #[test]
+    fn resolve_installed_package_dirs_finds_versioned_pnpm_global_package_from_reported_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_root = temp.path().join("global").join("5").join("node_modules");
+        let package_dir = package_root.join("http-server");
+        write_package_with_binary(
+            &package_dir,
+            &temp.path().join("http-server"),
+            "http-server",
+            "14.1.1",
+            "bin/http-server",
+        );
+
+        assert_eq!(
+            resolve_installed_package_dirs("http-server@14.1.1", None, Some(&package_root)),
+            vec![package_dir]
+        );
     }
 
     #[test]
