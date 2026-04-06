@@ -280,6 +280,12 @@ fn validate_destination_path(
     _target_triple: &str,
     policy: DestinationPolicy,
 ) -> InstallerResult<PathBuf> {
+    if host_triple.contains("windows") && raw_destination.starts_with('/') {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` destination `{raw_destination}` cannot use a Windows root-relative path such as `\\foo`"
+        )));
+    }
+
     if raw_destination.starts_with('/') {
         if matches!(policy, DestinationPolicy::Managed) {
             return Err(InstallerError::usage(format!(
@@ -789,7 +795,7 @@ mod tests {
             "x86_64-pc-windows-msvc",
         )
         .expect_err("should reject");
-        assert!(err.to_string().contains("cannot be an absolute path"));
+        assert!(err.to_string().contains("Windows root-relative path"));
     }
 
     #[test]
@@ -838,6 +844,18 @@ mod tests {
         )
         .expect("absolute workspace");
         assert_eq!(destination, PathBuf::from("/workspace/app"));
+    }
+
+    #[test]
+    fn validate_workspace_destination_rejects_forward_slash_root_path_on_windows_host() {
+        let err = validate_workspace_destination(
+            "demo",
+            "/workspace/app",
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+        )
+        .expect_err("windows root-relative workspace path should be rejected");
+        assert!(err.to_string().contains("Windows root-relative path"));
     }
 
     #[test]
