@@ -174,9 +174,10 @@ mod tests {
             r#"emit_repeat() {{
   local size="$1"
   local char="$2"
-  local payload
-  printf -v payload '%*s' "$size" ''
-  printf '%s' "${{payload// /$char}}"
+  if [ "$size" -le 0 ]; then
+    return 0
+  fi
+  yes "$char" | tr -d '\n' | head -c "$size"
 }}
 if [ "$1" != "--version" ]; then
   exit 2
