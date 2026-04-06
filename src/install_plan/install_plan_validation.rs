@@ -48,7 +48,12 @@ pub fn validate_install_plan_with_request(
             "cannot resolve managed toolchain directory",
         ));
     }
-    validate_destination_conflicts(&resolved_items, &target_triple, managed_dir.as_deref())
+    validate_destination_conflicts(
+        &resolved_items,
+        &host_triple,
+        &target_triple,
+        managed_dir.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -78,7 +83,12 @@ pub(crate) fn validate_plan_with_managed_dir(
     managed_dir: &Path,
 ) -> InstallerResult<Vec<ResolvedPlanItem>> {
     let resolved_items = validate_plan_structure(plan, host_triple, target_triple, None)?;
-    validate_destination_conflicts(&resolved_items, target_triple, Some(managed_dir))?;
+    validate_destination_conflicts(
+        &resolved_items,
+        host_triple,
+        target_triple,
+        Some(managed_dir),
+    )?;
     Ok(resolved_items)
 }
 
@@ -146,6 +156,7 @@ fn validate_unique_ids(items: &[ResolvedPlanItem]) -> InstallerResult<()> {
 
 pub(crate) fn validate_destination_conflicts(
     items: &[ResolvedPlanItem],
+    host_triple: &str,
     target_triple: &str,
     managed_dir: Option<&Path>,
 ) -> InstallerResult<()> {
@@ -153,7 +164,7 @@ pub(crate) fn validate_destination_conflicts(
     for item in items {
         for reserved in reserved_destinations_for_item(item, target_triple, managed_dir) {
             let normalized_destination =
-                normalize_destination_components(&reserved.path, target_triple);
+                normalize_destination_components(&reserved.path, host_triple);
             for existing in &destinations {
                 if destination_conflict_is_allowed(
                     existing,
@@ -374,12 +385,12 @@ fn shared_reservation_overlap_is_allowed(
     }
 }
 
-fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<String> {
-    let windows_target = target_triple.contains("windows");
-    let case_insensitive_target = windows_target
-        || (target_triple.contains("darwin") && path_uses_case_insensitive_filesystem(path));
+fn normalize_destination_components(path: &Path, host_triple: &str) -> Vec<String> {
+    let windows_host = host_triple.contains("windows");
+    let case_insensitive_host = windows_host
+        || (host_triple.contains("darwin") && path_uses_case_insensitive_filesystem(path));
     let windows_path;
-    let comparable_path = if windows_target {
+    let comparable_path = if windows_host {
         windows_path = path.to_string_lossy().replace('\\', "/");
         Path::new(&windows_path)
     } else {
@@ -396,7 +407,7 @@ fn normalize_destination_components(path: &Path, target_triple: &str) -> Vec<Str
             }
             std::path::Component::Normal(segment) => {
                 let value = segment.to_string_lossy();
-                Some(if case_insensitive_target {
+                Some(if case_insensitive_host {
                     value.to_ascii_lowercase()
                 } else {
                     value.into_owned()
@@ -477,6 +488,25 @@ mod tests {
             result
                 .expect("case-sensitive filesystem should allow case-only destination differences");
         }
+    }
+
+    #[test]
+    fn validate_destination_conflicts_uses_host_case_rules_for_cross_target_release_paths() {
+        let plan = InstallPlan {
+            schema_version: PLAN_SCHEMA_VERSION,
+            items: vec![
+                release_item("ruff-upper", "bin/Ruff.exe"),
+                release_item("ruff-lower", "bin/ruff.exe"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+            Path::new("/tmp/managed"),
+        )
+        .expect("linux host should not case-fold paths only because target is Windows");
     }
 
     #[test]
@@ -707,11 +737,32 @@ mod tests {
             "x86_64-pc-windows-msvc",
             Path::new(r"C:\managed"),
         )
-        .expect_err("Windows targets should reject case-only overlapping destinations");
+        .expect_err("Windows hosts should reject case-only overlapping destinations");
 
         assert!(
             err.to_string()
                 .contains("resolve to overlapping destinations")
+        );
+    }
+
+    #[test]
+    fn validate_destination_conflicts_allows_cross_target_windows_case_difference_on_linux_host() {
+        let plan = InstallPlan {
+            schema_version: PLAN_SCHEMA_VERSION,
+            items: vec![
+                archive_tree_release_item("python-tree", Some("Bin/Python")),
+                release_item("python-bin", "bin/python/python.exe"),
+            ],
+        };
+
+        validate_plan_with_managed_dir(
+            &plan,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+            Path::new("/tmp/managed"),
+        )
+        .expect(
+            "cross-target Windows downloads should follow the host filesystem case rules, not Windows-only case folding",
         );
     }
 
@@ -787,8 +838,13 @@ mod tests {
         )
         .expect("workspace-only plan should resolve");
 
-        super::validate_destination_conflicts(&resolved_items, "x86_64-unknown-linux-gnu", None)
-            .expect("workspace-only plan should not require a managed_dir for conflict validation");
+        super::validate_destination_conflicts(
+            &resolved_items,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect("workspace-only plan should not require a managed_dir for conflict validation");
     }
 
     #[test]
@@ -812,6 +868,7 @@ mod tests {
 
         let err = super::validate_destination_conflicts(
             &resolved_items,
+            "x86_64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
             Some(Path::new("/tmp/managed")),
         )

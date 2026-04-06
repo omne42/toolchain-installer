@@ -48,7 +48,12 @@ pub async fn apply_install_plan(
         .map_err(|err| {
             crate::error::InstallerError::download(format!("build http client failed: {err}"))
         })?;
-    validate_destination_conflicts(&resolved_items, &target_triple, managed_dir.as_deref())?;
+    validate_destination_conflicts(
+        &resolved_items,
+        &host_triple,
+        &target_triple,
+        managed_dir.as_deref(),
+    )?;
 
     let mut items = Vec::new();
     for item in &resolved_items {

@@ -3513,7 +3513,7 @@ fn validate_plan_rejects_go_install_destination_conflicts() {
 }
 
 #[test]
-fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
+fn validate_plan_rejects_windows_host_case_folded_destination_conflicts() {
     let plan = InstallPlan {
         schema_version: PLAN_SCHEMA_VERSION,
         items: vec![
@@ -3548,11 +3548,11 @@ fn validate_plan_rejects_windows_case_folded_destination_conflicts() {
 
     let err = validate_plan_with_managed_dir(
         &plan,
-        "x86_64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc",
-        Path::new("/tmp/toolchain"),
+        "x86_64-pc-windows-msvc",
+        Path::new(r"C:\toolchain"),
     )
-    .expect_err("windows targets should treat case-folded destinations as conflicts");
+    .expect_err("windows hosts should treat case-folded destinations as conflicts");
     assert_eq!(err.exit_code(), ExitCode::Usage);
     assert!(err.to_string().contains("same destination"));
 }
