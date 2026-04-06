@@ -154,8 +154,11 @@ fn python_version_matches_requirement(reported_version: &str, expected_version: 
 mod tests {
     use std::fs;
     use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
 
     use super::VERSION_PROBE_TIMEOUT;
+    use super::VersionProbeOutput;
     use super::python_version_matches_requirement;
     use super::{
         binary_reports_version, python_binary_matches_version, run_version_probe_with_timeout,
@@ -177,7 +180,16 @@ mod tests {
   if [ "$size" -le 0 ]; then
     return 0
   fi
-  yes "$char" | tr -d '\n' | head -c "$size"
+  while [ "$size" -gt 0 ]; do
+    local chunk_size="$size"
+    if [ "$chunk_size" -gt 4096 ]; then
+      chunk_size=4096
+    fi
+    local chunk
+    printf -v chunk '%*s' "$chunk_size" ''
+    printf '%s' "${{chunk// /$char}}"
+    size=$((size - chunk_size))
+  done
 }}
 if [ "$1" != "--version" ]; then
   exit 2
@@ -189,6 +201,18 @@ emit_repeat {stderr_len} y >&2
 printf '\n' >&2
 "#
         )
+    }
+
+    fn run_probe_for_test(path: &Path, timeout: Duration) -> VersionProbeOutput {
+        for attempt in 0..3 {
+            if let Some(probe) = run_version_probe_with_timeout(path, timeout) {
+                return probe;
+            }
+            if attempt < 2 {
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+        panic!("probe output");
     }
 
     #[test]
@@ -272,8 +296,7 @@ echo "Python 3.13.12"
 
         // CI runners, especially macOS, can be heavily oversubscribed. Keep this comfortably
         // above the default timeout and only write enough data to overrun typical pipe buffers.
-        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 30)
-            .expect("probe output");
+        let probe = run_probe_for_test(&script_path, VERSION_PROBE_TIMEOUT * 30);
         assert!(probe.success);
         assert!(
             String::from_utf8_lossy(&probe.stderr)
@@ -310,8 +333,7 @@ echo "Python 3.13.12"
         // Full `cargo test --all-targets` can contend heavily with compile jobs on CI and
         // shared runners. Keep this probe comfortably above the default timeout so we only fail
         // on an actual pipe-drain regression, not on transient scheduler starvation.
-        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 30)
-            .expect("probe output");
+        let probe = run_probe_for_test(&script_path, VERSION_PROBE_TIMEOUT * 30);
 
         assert!(probe.success);
         assert!(probe.stdout.len() >= output_len);
