@@ -9,8 +9,8 @@ use crate::contracts::InstallPlanItem;
 use crate::error::{InstallerError, InstallerResult};
 use crate::plan_items::{
     ArchiveTreeReleasePlanItem, CargoInstallPlanItem, CargoInstallSource, GoInstallPlanItem,
-    GoInstallSource, ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem, PipPlanItem,
-    ReleasePlanItem, ResolvedPlanItem, RustupComponentPlanItem, SystemPackageMode,
+    GoInstallSource, HostPackageInput, ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem,
+    PipPlanItem, ReleasePlanItem, ResolvedPlanItem, RustupComponentPlanItem, SystemPackageMode,
     SystemPackagePlanItem, UvPythonPlanItem, UvToolPlanItem, WorkspacePackagePlanItem,
 };
 
@@ -68,7 +68,7 @@ pub(crate) fn resolve_plan_item(
             resolve_go_install_plan_item(item, id, host_triple, target_triple, plan_base_dir)
         }
         PlanMethod::ManagedToolchain(method) => {
-            resolve_managed_toolchain_plan_item(item, id, target_triple, method)
+            resolve_managed_toolchain_plan_item(item, id, target_triple, plan_base_dir, method)
         }
         PlanMethod::Unknown => unreachable!("unsupported method should fail before resolve"),
     }
@@ -441,6 +441,7 @@ fn resolve_managed_toolchain_plan_item(
     item: &InstallPlanItem,
     id: String,
     target_triple: &str,
+    plan_base_dir: Option<&Path>,
     method: ManagedToolchainMethod,
 ) -> InstallerResult<ResolvedPlanItem> {
     match method {
@@ -493,19 +494,18 @@ fn resolve_managed_toolchain_plan_item(
                 ],
             )?;
             let binary_name_explicit = optional_trimmed(item.binary_name.as_deref()).is_some();
+            let package = resolve_host_package_input(
+                item.package.as_deref().unwrap_or_default(),
+                "uv_tool",
+                item.id.as_str(),
+                Some(target_triple),
+                plan_base_dir,
+            )?;
             Ok(ResolvedPlanItem::UvTool(UvToolPlanItem {
-                package: require_host_package_input(
-                    item.package.as_deref().unwrap_or_default(),
-                    "uv_tool",
-                    item.id.as_str(),
-                )?,
+                package: package.clone(),
                 python: optional_trimmed_owned(item.python.as_deref()),
                 binary_name: parse_optional_binary_name(&id, item.binary_name.as_deref())?
-                    .or_else(|| {
-                        item.package
-                            .as_deref()
-                            .and_then(default_binary_name_for_python_package)
-                    })
+                    .or_else(|| default_binary_name_for_python_package(&package))
                     .unwrap_or_else(|| default_binary_name_for_target(target_triple, &id)),
                 binary_name_explicit,
                 id,
@@ -516,20 +516,26 @@ fn resolve_managed_toolchain_plan_item(
 
 fn reject_conflicting_npm_global_version(
     item_id: &str,
-    package: &str,
+    package: &HostPackageInput,
     version: Option<&str>,
 ) -> InstallerResult<()> {
     let Some(version) = version else {
         return Ok(());
     };
-    if node_package_spec_has_embedded_version(package) {
+    let package_display = package.render();
+    let Some(package_spec) = package.as_package_spec() else {
         return Err(InstallerError::usage(format!(
-            "plan item `{item_id}` with method `npm_global` cannot set `version` to `{version}` because `package` already encodes a version: `{package}`"
+            "plan item `{item_id}` with method `npm_global` cannot set `version` to `{version}` because `package` already encodes an explicit source or local path: `{package_display}`"
+        )));
+    };
+    if node_package_spec_has_embedded_version(package_spec) {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `npm_global` cannot set `version` to `{version}` because `package` already encodes a version: `{package_display}`"
         )));
     }
-    if node_package_spec_uses_explicit_source(package) {
+    if node_package_spec_uses_explicit_source(package_spec) {
         return Err(InstallerError::usage(format!(
-            "plan item `{item_id}` with method `npm_global` cannot set `version` to `{version}` because `package` already encodes an explicit source or local path: `{package}`"
+            "plan item `{item_id}` with method `npm_global` cannot set `version` to `{version}` because `package` already encodes an explicit source or local path: `{package_display}`"
         )));
     }
     Ok(())
@@ -588,16 +594,22 @@ fn parse_node_package_manager(
     }
 }
 
-fn build_versioned_package_spec(package: &str, version: Option<&str>) -> String {
+fn build_versioned_package_spec(
+    package: &HostPackageInput,
+    version: Option<&str>,
+) -> HostPackageInput {
+    let Some(package_spec) = package.as_package_spec() else {
+        return package.clone();
+    };
     if let Some(version) = version {
-        if node_package_spec_has_embedded_version(package)
-            || node_package_spec_uses_explicit_source(package)
+        if node_package_spec_has_embedded_version(package_spec)
+            || node_package_spec_uses_explicit_source(package_spec)
         {
-            return package.to_string();
+            return package.clone();
         }
-        return format!("{package}@{version}");
+        return HostPackageInput::package_spec(format!("{package_spec}@{version}"));
     }
-    package.to_string()
+    package.clone()
 }
 
 fn resolve_cargo_install_source(
@@ -806,10 +818,11 @@ fn default_binary_name_for_target(_target_triple: &str, fallback: &str) -> Strin
     fallback.to_string()
 }
 
-fn default_binary_name_for_node_package(package: &str) -> Option<String> {
-    if node_package_spec_is_local_path(package) {
-        return path_leaf_name(Path::new(package));
+fn default_binary_name_for_node_package(package: &HostPackageInput) -> Option<String> {
+    if let Some(path) = package.as_local_path() {
+        return path_leaf_name(path);
     }
+    let package = package.as_package_spec()?;
     if node_package_spec_uses_explicit_source(package) {
         return source_spec_leaf_name(package);
     }
@@ -841,7 +854,10 @@ fn default_binary_name_for_rustup_component(component: &str) -> Option<&'static 
     }
 }
 
-fn default_binary_name_for_python_package(package: &str) -> Option<String> {
+fn default_binary_name_for_python_package(package: &HostPackageInput) -> Option<String> {
+    let Some(package) = package.as_package_spec() else {
+        return package.as_local_path().and_then(path_leaf_name);
+    };
     let trimmed = package.trim();
     let package = trimmed
         .split_once(" @ ")
@@ -922,12 +938,19 @@ fn resolve_host_package_input(
     item_id: &str,
     host_triple: Option<&str>,
     plan_base_dir: Option<&Path>,
-) -> InstallerResult<String> {
+) -> InstallerResult<HostPackageInput> {
     let package = require_host_package_input(raw_package, method, item_id)?;
     Ok(
-        resolve_host_package_local_path(&package, plan_base_dir, host_triple, item_id, method)?
-            .unwrap_or(package)
-            .to_string(),
+        match resolve_host_package_local_path(
+            &package,
+            plan_base_dir,
+            host_triple,
+            item_id,
+            method,
+        )? {
+            Some(path) => HostPackageInput::LocalPath(path),
+            None => HostPackageInput::PackageSpec(package),
+        },
     )
 }
 
@@ -960,7 +983,7 @@ fn resolve_host_package_local_path(
     host_triple: Option<&str>,
     item_id: &str,
     method: &str,
-) -> InstallerResult<Option<String>> {
+) -> InstallerResult<Option<PathBuf>> {
     if let Some(local_path) = package
         .strip_prefix("file:")
         .filter(|value| !value.trim().is_empty() && !value.starts_with("//"))
@@ -969,14 +992,14 @@ fn resolve_host_package_local_path(
             reject_non_native_windows_local_path(local_path, host_triple, item_id, method)?;
         }
         let resolved = resolve_plan_relative_path(Path::new(local_path), plan_base_dir);
-        return Ok(Some(resolved.display().to_string()));
+        return Ok(Some(resolved));
     }
     if looks_like_explicit_host_local_path(package) {
         if let Some(host_triple) = host_triple {
             reject_non_native_windows_local_path(package, host_triple, item_id, method)?;
         }
         let resolved = resolve_plan_relative_path(Path::new(package), plan_base_dir);
-        return Ok(Some(resolved.display().to_string()));
+        return Ok(Some(resolved));
     }
     Ok(None)
 }
@@ -1144,7 +1167,10 @@ mod tests {
             panic!("expected npm_global plan item");
         };
         assert_eq!(item.binary_name, "ruff");
-        assert_eq!(item.package_spec, "ruff@0.1.0");
+        assert_eq!(
+            item.package_spec,
+            HostPackageInput::package_spec("ruff@0.1.0")
+        );
         assert_eq!(item.manager, NodePackageManager::Npm);
     }
 
@@ -1205,7 +1231,10 @@ mod tests {
         let ResolvedPlanItem::NpmGlobal(item) = resolved else {
             panic!("expected npm_global plan item");
         };
-        assert_eq!(item.package_spec, "@scope/pkg@1.2.3");
+        assert_eq!(
+            item.package_spec,
+            HostPackageInput::package_spec("@scope/pkg@1.2.3")
+        );
     }
 
     #[test]
@@ -1377,7 +1406,10 @@ mod tests {
             panic!("expected npm_global plan item");
         };
         assert_eq!(item.binary_name, "cli");
-        assert_eq!(item.package_spec, "company-cli@npm:@scope/cli@1.2.3");
+        assert_eq!(
+            item.package_spec,
+            HostPackageInput::package_spec("company-cli@npm:@scope/cli@1.2.3")
+        );
     }
 
     #[test]
@@ -1465,8 +1497,8 @@ mod tests {
             panic!("expected pip plan item");
         };
         assert_eq!(
-            Path::new(&item.package),
-            plan_base.join("packages").join("demo").as_path()
+            item.package.as_local_path(),
+            Some(plan_base.join("packages").join("demo").as_path())
         );
     }
 
@@ -1551,8 +1583,43 @@ mod tests {
             panic!("expected npm_global plan item");
         };
         assert_eq!(
-            Path::new(&item.package_spec),
-            plan_base.join("packages").join("demo").as_path()
+            item.package_spec.as_local_path(),
+            Some(plan_base.join("packages").join("demo").as_path())
+        );
+        assert_eq!(item.binary_name, "demo");
+    }
+
+    #[test]
+    fn resolve_uv_tool_uses_plan_base_dir_for_relative_local_path() {
+        let plan_base = Path::new("/repo/plans");
+        let item = InstallPlanItem {
+            id: "uv-tool-demo".to_string(),
+            method: "uv_tool".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("./packages/demo".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let resolved = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            Some(plan_base),
+        )
+        .expect("resolved");
+
+        let ResolvedPlanItem::UvTool(item) = resolved else {
+            panic!("expected uv_tool plan item");
+        };
+        assert_eq!(
+            item.package.as_local_path(),
+            Some(plan_base.join("packages").join("demo").as_path())
         );
         assert_eq!(item.binary_name, "demo");
     }

@@ -92,7 +92,7 @@ pub(crate) async fn execute_uv_tool_item(
             return Err(crate::error::OperationError::install(format!(
                 "{} installed package `{}` but expected managed binary at {}",
                 candidate.label,
-                item.package,
+                item.package.render(),
                 destination.display()
             )));
         };
@@ -102,7 +102,7 @@ pub(crate) async fn execute_uv_tool_item(
             return Err(crate::error::OperationError::install(format!(
                 "{} installed package `{}` but managed binary at {} failed --version health check",
                 candidate.label,
-                item.package,
+                item.package.render(),
                 installed_destination.display()
             )));
         }
@@ -342,10 +342,10 @@ fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {
     }
     if item.binary_name_explicit {
         args.push(OsString::from("--from"));
-        args.push(OsString::from(&item.package));
+        args.push(item.package.install_arg());
         args.push(OsString::from(&item.binary_name));
     } else {
-        args.push(OsString::from(&item.package));
+        args.push(item.package.install_arg());
     }
     args
 }
@@ -358,13 +358,13 @@ mod tests {
         build_uv_tool_install_args, capture_managed_uv_tool_state, merge_detail,
         resolve_uv_tool_destination,
     };
-    use crate::plan_items::UvToolPlanItem;
+    use crate::plan_items::{HostPackageInput, UvToolPlanItem};
 
     #[test]
     fn explicit_binary_name_enters_uv_tool_install_args() {
         let item = UvToolPlanItem {
             id: "ruff-installer".to_string(),
-            package: "ruff-lsp".to_string(),
+            package: HostPackageInput::package_spec("ruff-lsp"),
             python: Some("3.13".to_string()),
             binary_name: "ruff-lsp".to_string(),
             binary_name_explicit: true,
@@ -386,7 +386,7 @@ mod tests {
     fn inferred_binary_name_keeps_plain_uv_tool_install_args() {
         let item = UvToolPlanItem {
             id: "ruff-installer".to_string(),
-            package: "ruff-lsp".to_string(),
+            package: HostPackageInput::package_spec("ruff-lsp"),
             python: None,
             binary_name: "ruff-lsp".to_string(),
             binary_name_explicit: false,
@@ -418,6 +418,28 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn local_path_package_keeps_os_path_install_args() {
+        let item = UvToolPlanItem {
+            id: "demo-installer".to_string(),
+            package: HostPackageInput::LocalPath("/tmp/demo-tool".into()),
+            python: None,
+            binary_name: "demo-tool".to_string(),
+            binary_name_explicit: false,
+        };
+
+        assert_eq!(
+            build_uv_tool_install_args(&item),
+            vec![
+                OsString::from("tool"),
+                OsString::from("install"),
+                OsString::from("--force"),
+                OsString::from("/tmp/demo-tool"),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn resolve_uv_tool_destination_prefers_new_binary_matching_item_id() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -435,7 +457,7 @@ mod tests {
 
         let item = UvToolPlanItem {
             id: "http".to_string(),
-            package: "httpie".to_string(),
+            package: HostPackageInput::package_spec("httpie"),
             python: None,
             binary_name: "httpie".to_string(),
             binary_name_explicit: false,
@@ -469,7 +491,7 @@ mod tests {
 
         let item = UvToolPlanItem {
             id: "http".to_string(),
-            package: "httpie".to_string(),
+            package: HostPackageInput::package_spec("httpie"),
             python: None,
             binary_name: "httpie".to_string(),
             binary_name_explicit: false,

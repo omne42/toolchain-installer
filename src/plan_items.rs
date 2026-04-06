@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 use omne_integrity_primitives::Sha256Digest;
 use omne_system_package_primitives::SystemPackageManager;
@@ -42,6 +44,64 @@ pub(crate) enum CargoInstallSource {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HostPackageInput {
+    PackageSpec(String),
+    LocalPath(PathBuf),
+}
+
+impl HostPackageInput {
+    pub(crate) fn package_spec(value: impl Into<String>) -> Self {
+        Self::PackageSpec(value.into())
+    }
+
+    pub(crate) fn as_package_spec(&self) -> Option<&str> {
+        match self {
+            Self::PackageSpec(spec) => Some(spec),
+            Self::LocalPath(_) => None,
+        }
+    }
+
+    pub(crate) fn as_local_path(&self) -> Option<&Path> {
+        match self {
+            Self::PackageSpec(_) => None,
+            Self::LocalPath(path) => Some(path),
+        }
+    }
+
+    pub(crate) fn install_arg(&self) -> OsString {
+        match self {
+            Self::PackageSpec(spec) => OsString::from(spec),
+            Self::LocalPath(path) => path.as_os_str().to_os_string(),
+        }
+    }
+
+    pub(crate) fn render(&self) -> String {
+        match self {
+            Self::PackageSpec(spec) => spec.clone(),
+            Self::LocalPath(path) => path.display().to_string(),
+        }
+    }
+}
+
+impl AsRef<OsStr> for HostPackageInput {
+    fn as_ref(&self) -> &OsStr {
+        match self {
+            Self::PackageSpec(spec) => spec.as_ref(),
+            Self::LocalPath(path) => path.as_os_str(),
+        }
+    }
+}
+
+impl fmt::Display for HostPackageInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PackageSpec(spec) => f.write_str(spec),
+            Self::LocalPath(path) => write!(f, "{}", path.display()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ReleasePlanItem {
     pub(crate) id: String,
@@ -70,14 +130,14 @@ pub(crate) struct SystemPackagePlanItem {
 #[derive(Debug, Clone)]
 pub(crate) struct PipPlanItem {
     pub(crate) id: String,
-    pub(crate) package: String,
+    pub(crate) package: HostPackageInput,
     pub(crate) python: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct NpmGlobalPlanItem {
     pub(crate) id: String,
-    pub(crate) package_spec: String,
+    pub(crate) package_spec: HostPackageInput,
     pub(crate) manager: NodePackageManager,
     pub(crate) binary_name: String,
 }
@@ -126,7 +186,7 @@ pub(crate) struct UvPythonPlanItem {
 #[derive(Debug, Clone)]
 pub(crate) struct UvToolPlanItem {
     pub(crate) id: String,
-    pub(crate) package: String,
+    pub(crate) package: HostPackageInput,
     pub(crate) python: Option<String>,
     pub(crate) binary_name: String,
     pub(crate) binary_name_explicit: bool,

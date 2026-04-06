@@ -55,7 +55,7 @@ use crate::managed_toolchain::{
     find_managed_python_executable, install_uv_from_public_release, managed_uv_is_healthy,
 };
 use crate::plan_items::{
-    CargoInstallPlanItem, CargoInstallSource, GoInstallPlanItem, GoInstallSource,
+    CargoInstallPlanItem, CargoInstallSource, GoInstallPlanItem, GoInstallSource, HostPackageInput,
     ManagedUvPlanItem, NodePackageManager, NpmGlobalPlanItem, ResolvedPlanItem, SystemPackageMode,
     UvPythonPlanItem, UvToolPlanItem,
 };
@@ -4216,7 +4216,7 @@ fn explicit_windows_binary_names_do_not_duplicate_target_suffixes() {
         crate::install_plan::item_destination_resolution::resolve_npm_global_destination(
             &NpmGlobalPlanItem {
                 id: "npm-demo".to_string(),
-                package_spec: "http-server@14.1.1".to_string(),
+                package_spec: HostPackageInput::package_spec("http-server@14.1.1"),
                 manager: NodePackageManager::Pnpm,
                 binary_name: "http-server.cmd".to_string(),
             },
@@ -4229,7 +4229,7 @@ fn explicit_windows_binary_names_do_not_duplicate_target_suffixes() {
         crate::install_plan::item_destination_resolution::resolve_uv_tool_destination(
             &UvToolPlanItem {
                 id: "ruff".to_string(),
-                package: "ruff".to_string(),
+                package: HostPackageInput::package_spec("ruff"),
                 python: None,
                 binary_name: "ruff.exe".to_string(),
                 binary_name_explicit: true,
@@ -5226,7 +5226,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff".to_string(),
-        package: "ruff".to_string(),
+        package: HostPackageInput::package_spec("ruff"),
         python: Some("3.13.12".to_string()),
         binary_name: "ruff".to_string(),
         binary_name_explicit: false,
@@ -5342,7 +5342,7 @@ exit 2
         runtime.block_on(async {
             let item = UvToolPlanItem {
                 id: "ruff".to_string(),
-                package: "ruff".to_string(),
+                package: HostPackageInput::package_spec("ruff"),
                 python: None,
                 binary_name: "ruff".to_string(),
                 binary_name_explicit: false,
@@ -5469,7 +5469,7 @@ async fn execute_uv_tool_item_ignores_inherited_uv_environment_helper() -> anyho
 
     let item = UvToolPlanItem {
         id: "ruff".to_string(),
-        package: "ruff".to_string(),
+        package: HostPackageInput::package_spec("ruff"),
         python: None,
         binary_name: "ruff".to_string(),
         binary_name_explicit: false,
@@ -5534,7 +5534,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff".to_string(),
-        package: "ruff".to_string(),
+        package: HostPackageInput::package_spec("ruff"),
         python: None,
         binary_name: "ruff".to_string(),
         binary_name_explicit: false,
@@ -5615,7 +5615,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff".to_string(),
-        package: "ruff".to_string(),
+        package: HostPackageInput::package_spec("ruff"),
         python: None,
         binary_name: "ruff".to_string(),
         binary_name_explicit: false,
@@ -5700,7 +5700,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: true,
@@ -5767,7 +5767,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: false,
@@ -5834,7 +5834,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: false,
@@ -5919,7 +5919,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: false,
@@ -6005,7 +6005,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: false,
@@ -6081,7 +6081,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: false,
@@ -6166,7 +6166,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: false,
@@ -6269,7 +6269,7 @@ exit 2
 
     let item = UvToolPlanItem {
         id: "ruff-installer".to_string(),
-        package: "ruff-lsp".to_string(),
+        package: HostPackageInput::package_spec("ruff-lsp"),
         python: None,
         binary_name: "ruff-lsp".to_string(),
         binary_name_explicit: false,
