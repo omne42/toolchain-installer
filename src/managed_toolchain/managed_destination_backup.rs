@@ -106,6 +106,13 @@ impl ManagedDestinationBackup {
     }
 }
 
+pub(crate) fn lock_managed_destination(
+    destination: &Path,
+    label: &str,
+) -> Result<AdvisoryLockGuard, String> {
+    acquire_destination_lock(destination, label)
+}
+
 pub(crate) fn promote_staged_file(
     staged_file: &Path,
     destination: &Path,
