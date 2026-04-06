@@ -6,7 +6,7 @@ use omne_artifact_install_primitives::{
     ArchiveTreeInstallRequest, BinaryArchiveInstallRequest, InstalledArchiveBinary,
     download_and_install_archive_tree, download_and_install_binary_from_archive,
 };
-use omne_fs_primitives::{AtomicWriteOptions, write_file_atomically};
+use omne_fs_primitives::{AdvisoryLockGuard, AtomicWriteOptions, write_file_atomically};
 use omne_integrity_primitives::{Sha256Digest, parse_sha256_digest};
 
 use crate::artifact::InstallSource;
@@ -18,6 +18,7 @@ use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::gateway_candidate_for_git_release_asset;
 use crate::github_release_metadata::fetch_latest_release_metadata;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
+use crate::managed_toolchain::lock_managed_destination;
 pub(crate) async fn install_gh_from_public_release(
     target_triple: &str,
     binary_ext: &str,
@@ -206,6 +207,7 @@ async fn download_and_install_mingit_bundle(
     let portable_root = managed_dir.join("git-portable");
     let staging_root = managed_dir.join("git-portable.stage");
     let backup_root = managed_dir.join("git-portable.backup");
+    let _locks = lock_mingit_installation_paths(&portable_root, destination)?;
     remove_dir_if_exists(&staging_root)?;
 
     let candidates = build_download_candidates(canonical_url, mirror_prefixes, gateway_candidate);
@@ -243,6 +245,25 @@ async fn download_and_install_mingit_bundle(
         format: BootstrapArchiveFormat::Zip,
         path: matched_archive_path,
     }))
+}
+
+struct MingitInstallationLocks {
+    _portable_root: AdvisoryLockGuard,
+    _launcher_destination: AdvisoryLockGuard,
+}
+
+fn lock_mingit_installation_paths(
+    portable_root: &Path,
+    launcher_destination: &Path,
+) -> OperationResult<MingitInstallationLocks> {
+    let portable_lock = lock_managed_destination(portable_root, "portable git bundle")
+        .map_err(OperationError::install)?;
+    let launcher_lock = lock_managed_destination(launcher_destination, "git launcher")
+        .map_err(OperationError::install)?;
+    Ok(MingitInstallationLocks {
+        _portable_root: portable_lock,
+        _launcher_destination: launcher_lock,
+    })
 }
 
 fn remove_dir_if_exists(path: &Path) -> OperationResult<()> {
@@ -516,8 +537,49 @@ fn write_mingit_launcher(
 
 #[cfg(test)]
 mod tests {
-    use super::{finalize_mingit_installation_with_launcher_writer, mingit_launcher_backup_path};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    use super::{
+        finalize_mingit_installation_with_launcher_writer, lock_mingit_installation_paths,
+        mingit_launcher_backup_path,
+    };
     use crate::error::OperationError;
+
+    #[test]
+    fn mingit_installation_locks_serialize_fixed_state_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let launcher_destination = managed_dir.join("git.cmd");
+        let first = lock_mingit_installation_paths(&portable_root, &launcher_destination)
+            .expect("first lock");
+        let (sender, receiver) = mpsc::channel();
+        let portable_root_for_thread = portable_root.clone();
+        let launcher_destination_for_thread = launcher_destination.clone();
+
+        let worker = thread::spawn(move || {
+            let _second = lock_mingit_installation_paths(
+                &portable_root_for_thread,
+                &launcher_destination_for_thread,
+            )
+            .expect("second lock");
+            sender.send(()).expect("send second lock acquired");
+        });
+
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(100)).is_err(),
+            "competing MinGit transaction should wait for portable/launcher locks"
+        );
+
+        drop(first);
+
+        receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second lock should acquire after first is dropped");
+        worker.join().expect("join worker");
+    }
 
     #[test]
     fn mingit_finalize_restores_previous_installation_when_launcher_write_fails() {
