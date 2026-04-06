@@ -277,7 +277,7 @@ fn validate_destination_path(
     item_id: &str,
     raw_destination: &str,
     host_triple: &str,
-    target_triple: &str,
+    _target_triple: &str,
     policy: DestinationPolicy,
 ) -> InstallerResult<PathBuf> {
     if raw_destination.starts_with('/') {
@@ -309,11 +309,6 @@ fn validate_destination_path(
                     "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
                 )));
             }
-            if !target_triple.contains("windows") {
-                return Err(InstallerError::usage(format!(
-                    "plan item `{item_id}` destination `{raw_destination}` uses a Windows absolute path but target triple `{target_triple}` does not use Windows path semantics"
-                )));
-            }
             if !host_triple.contains("windows") {
                 return Err(InstallerError::usage(format!(
                     "plan item `{item_id}` destination `{raw_destination}` uses a Windows absolute path but host triple `{host_triple}` does not use Windows path semantics"
@@ -336,7 +331,7 @@ fn validate_destination_path(
         WindowsDestinationKind::NotWindows => {}
     }
 
-    let path = if target_triple.contains("windows") {
+    let path = if host_triple.contains("windows") {
         parse_windows_relative_path(raw_destination)
     } else {
         PathBuf::from(raw_destination)
@@ -858,6 +853,18 @@ mod tests {
     }
 
     #[test]
+    fn validate_workspace_destination_accepts_windows_absolute_path_for_windows_host_only() {
+        let destination = validate_workspace_destination(
+            "demo",
+            "C:\\workspace\\app",
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect("windows host should keep Windows absolute workspace path");
+        assert_eq!(destination, PathBuf::from("C:\\workspace\\app"));
+    }
+
+    #[test]
     fn validate_workspace_destination_rejects_windows_absolute_path_on_non_windows_host() {
         let err = validate_workspace_destination(
             "demo",
@@ -873,20 +880,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_workspace_destination_rejects_windows_absolute_path_on_non_windows_target() {
-        let err = validate_workspace_destination(
-            "demo",
-            "C:\\workspace\\app",
-            "x86_64-pc-windows-msvc",
-            "x86_64-unknown-linux-gnu",
-        )
-        .expect_err("should reject");
-        assert!(err.to_string().contains(
-            "target triple `x86_64-unknown-linux-gnu` does not use Windows path semantics"
-        ));
-    }
-
-    #[test]
     fn validate_destination_normalizes_windows_relative_path_for_windows_targets() {
         let destination = validate_destination(
             "demo",
@@ -895,6 +888,30 @@ mod tests {
             "x86_64-pc-windows-msvc",
         )
         .expect("windows relative destination");
+        assert_eq!(
+            destination,
+            PathBuf::from("bin").join("tools").join("demo.exe")
+        );
+    }
+
+    #[test]
+    fn validate_destination_uses_host_path_semantics_for_relative_paths() {
+        let destination = validate_destination(
+            "demo",
+            "bin\\tools\\demo.exe",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+        )
+        .expect("linux host should keep backslashes as literal characters");
+        assert_eq!(destination, PathBuf::from("bin\\tools\\demo.exe"));
+
+        let destination = validate_destination(
+            "demo",
+            "bin\\tools\\demo.exe",
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect("windows host should normalize backslashes as separators");
         assert_eq!(
             destination,
             PathBuf::from("bin").join("tools").join("demo.exe")

@@ -144,7 +144,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
-- `workspace_package` 若使用 Windows 绝对 `destination`，只有当 host triple 和 target triple 都使用 Windows 路径语义时才会接受；非 Windows target 不会再把 `C:\repo\app` 这类路径误当成合法工作区目录。
+- `workspace_package` 若使用 Windows 绝对 `destination`，只有当当前 host triple 使用 Windows 路径语义时才会接受；是否下载 Windows target 资产不改变宿主机文件系统的绝对/相对路径语义。
 - `workspace_package` 执行时会把底层包管理器的工作目录锚定到该 workspace；即使调用 CLI 时的当前目录不同，`npm` 的 `file:`、相对路径和其他依赖解析也按目标 workspace 解析，而不是按 installer 进程当前目录漂移。
 - `workspace_package` 不接受独立 `version` 字段；如需锁定版本，应直接把版本写进 `package` 自身。
 - `system_package`、`apt` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
@@ -172,7 +172,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - plan 文件中的本地相对路径输入（例如 `cargo_install` 的本地包路径、`go_install` 的 `./cmd/demo` 或 `cmd/demo` 这类裸相对源码路径、`workspace_package` 的相对工作区目录，以及 `pip`/`npm_global` 的本地 `package` 路径）按 plan 文件所在目录解析；解析时会先对 plan 基准目录做词法规范化，不会因为 `plans/../plans` 这类等价写法绕过后续目标冲突校验。
 - 这类“按本地路径解释”的 `package` 输入也只接受当前宿主机原生的绝对路径语法：非 Windows 宿主会在 resolve 阶段直接拒绝 `C:\repo\demo`、`\repo\demo`、`file:C:\repo\demo` 这类 Windows-local 路径，而不是把它们误当成相对路径继续执行。
 - `workspace_package` 的工作区目录、`cargo_install` / `go_install` / `npm_global` 的托管 staging 或 prefix 路径，以及 `uv_python` / `uv_tool` 注入的 `UV_*` 目录环境变量，都会按宿主机原生路径字节传给子进程；installer 不会先做 UTF-8 round-trip 再拼 argv 或 env。
-- 当目标是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；`bin\\tool.exe` 和 `bin/tool.exe` 会落到同一个托管相对路径，不再依赖当前宿主机是否把反斜杠当普通字符。
+- 当当前 host triple 是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；仅仅把 `target_triple` 设成 Windows，不会让 Unix 宿主机把反斜杠改解释成目录分隔符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - `uv_tool` 若显式提供 `binary_name`，installer 会改用 `uv tool install --from <package> <binary_name>`，把请求的可执行文件名直接纳入上游安装契约，而不是只在安装后被动检查结果路径。
 - `uv_tool` 若未显式提供 `binary_name`，且按包名推导出的默认入口不存在，installer 会优先检查 item `id` 对应的托管入口，再在本次新建/更新的托管 launcher 里按稳定顺序选择实际 CLI；像 `httpie -> http` 这类 distribution 名与命令名不同的包不会再被误判成失败。
@@ -181,7 +181,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 如果上一次安装在 stash 之后异常中断，下一次 `cargo_install`、`go_install`、`uv_tool` 重试会先用 canonical backup 自愈恢复旧目标，再重新暂存；如果成功路径上的旧 backup 已经只剩清理残留，则会自动移到同级 `*.stale-*` 隔离名，避免后续重试继续被固定备份名卡死。
 - `go_install` 若 `package` 解析成本地目录，会先校验该目录真实存在且是目录，再去探测 `go` 命令、创建 staging root 或暂存现有目标；无效输入不会先破坏已有托管 binary。
 - 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一路径，也不能形成父子路径重叠，避免后执行项覆盖先执行项目录树。
-- 对 Windows target，冲突校验始终按大小写不敏感语义比较路径；对 Darwin target，则按目标路径所在宿主文件系统的真实大小写语义比较，不再把所有 macOS 卷一律当成大小写不敏感。
+- 冲突校验的大小写语义跟随目标路径实际落盘的宿主文件系统，而不是只看 `target_triple`：Windows host 继续按大小写不敏感语义比较；Darwin host 则按目标路径所在卷的真实大小写语义比较；把 `target_triple` 设成 Windows 并不会让非 Windows 宿主提前按 Windows 文件系统规则拒绝本来合法的大小写不同路径。
 - `uv_python` 会占用 `managed_dir/.uv-python` 这块托管安装根，并预留它在 `managed_dir` 顶层实际可能写出的 `python` / `python3` / `python3.x` shim 名称；因此它会继续拦截其他方法写入这棵子树或这些顶层解释器入口，但多个 `uv_python` item 彼此不会仅因共享这些托管路径就在执行前互相冲突。
 - `uv_python`、`uv_tool` 的预检冲突校验还会保留共享托管状态根：`.uv-bootstrap`、`.uv-cache`、`.uv-python`，以及 `uv_tool` 额外使用的 `.uv-tools`。托管工具链方法之间允许共享这些根，但其他方法不能把目标写到这些树下。
 - `uv`、`uv_python`、`uv_tool` 只有在已有托管 `uv` 通过 `--version` 健康检查后才会直接复用；若托管 `uv` 文件存在但健康检查失败，会先自愈重装再继续执行。

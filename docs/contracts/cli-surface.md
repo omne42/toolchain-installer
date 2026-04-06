@@ -176,6 +176,7 @@
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
 - `pip` 成功结果里的 `source` 只表示“这次调用用了哪个 Python 解释器”，不表示可重放的 artifact 来源；对应项的 `destination` 会保持为空，调用方不能把它当作 installer 拥有的托管落点。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。
+- `gateway` 只会对 canonical `https://github.com/git-for-windows/git/releases/download/...` 下载 URL 生成候选；lookalike URL 不会被字符串匹配误改写。
 - `archive_tree_release` 会先把目录树解到 staging 目录，成功后再替换目标目录；失败时不会先删除现有目标内容。
 - Windows 上的 `bootstrap --tool git` 会把 MinGit payload 切换和 `git.cmd` launcher 更新作为同一个事务提交；如果 launcher 写入失败，会恢复旧的 `git-portable/` 与旧 launcher，而不是留下半更新状态。
 
