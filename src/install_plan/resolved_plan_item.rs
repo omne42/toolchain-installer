@@ -266,6 +266,7 @@ fn resolve_npm_global_plan_item(
         plan_base_dir,
     )?;
     let version = optional_trimmed(item.version.as_deref());
+    reject_conflicting_npm_global_version(&id, &package, version)?;
     let package_spec = build_versioned_package_spec(&package, version);
     Ok(ResolvedPlanItem::NpmGlobal(NpmGlobalPlanItem {
         package_spec,
@@ -403,6 +404,11 @@ fn resolve_go_install_plan_item(
         "go_install",
         item.id.as_str(),
     )?;
+    reject_conflicting_go_install_version(
+        &id,
+        &package,
+        optional_trimmed(item.version.as_deref()),
+    )?;
     let source = if looks_like_explicit_go_local_path(&package) {
         reject_non_native_windows_local_path(&package, host_triple, &id, "go_install")?;
         GoInstallSource::LocalPath(resolve_plan_relative_path(
@@ -500,6 +506,48 @@ fn resolve_managed_toolchain_plan_item(
             }))
         }
     }
+}
+
+fn reject_conflicting_npm_global_version(
+    item_id: &str,
+    package: &str,
+    version: Option<&str>,
+) -> InstallerResult<()> {
+    let Some(version) = version else {
+        return Ok(());
+    };
+    if node_package_spec_has_embedded_version(package) {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `npm_global` cannot set `version` to `{version}` because `package` already encodes a version: `{package}`"
+        )));
+    }
+    if node_package_spec_uses_explicit_source(package) {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `npm_global` cannot set `version` to `{version}` because `package` already encodes an explicit source or local path: `{package}`"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_conflicting_go_install_version(
+    item_id: &str,
+    package: &str,
+    version: Option<&str>,
+) -> InstallerResult<()> {
+    let Some(version) = version else {
+        return Ok(());
+    };
+    if looks_like_explicit_go_local_path(package) {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `go_install` cannot set `version` to `{version}` because local `package` paths must encode their own source: `{package}`"
+        )));
+    }
+    if package.contains('@') {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `go_install` cannot set `version` to `{version}` because `package` already encodes a version: `{package}`"
+        )));
+    }
+    Ok(())
 }
 
 fn parse_node_package_manager(
@@ -1107,6 +1155,63 @@ mod tests {
     }
 
     #[test]
+    fn resolve_npm_global_rejects_version_when_package_already_has_version() {
+        let item = InstallPlanItem {
+            id: "scope-tool".to_string(),
+            method: "npm_global".to_string(),
+            version: Some("9.9.9".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("@scope/pkg@1.2.3".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("conflicting versions should fail");
+
+        assert!(err.to_string().contains("already encodes a version"));
+    }
+
+    #[test]
+    fn resolve_npm_global_rejects_version_when_package_uses_explicit_source() {
+        let item = InstallPlanItem {
+            id: "scope-tool".to_string(),
+            method: "npm_global".to_string(),
+            version: Some("9.9.9".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("file:../packages/cli".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("explicit sources should reject separate version");
+
+        assert!(
+            err.to_string()
+                .contains("already encodes an explicit source or local path")
+        );
+    }
+
+    #[test]
     fn resolve_npm_global_defaults_binary_name_for_npm_source_spec() {
         let item = InstallPlanItem {
             id: "scope-tool".to_string(),
@@ -1134,6 +1239,60 @@ mod tests {
             panic!("expected npm_global plan item");
         };
         assert_eq!(item.binary_name, "cli");
+    }
+
+    #[test]
+    fn resolve_go_install_rejects_version_when_package_already_has_version() {
+        let item = InstallPlanItem {
+            id: "demo".to_string(),
+            method: "go_install".to_string(),
+            version: Some("latest".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("example.com/demo/cmd/demo@v1.2.3".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("conflicting go versions should fail");
+
+        assert!(err.to_string().contains("already encodes a version"));
+    }
+
+    #[test]
+    fn resolve_go_install_rejects_version_for_local_package_path() {
+        let item = InstallPlanItem {
+            id: "demo".to_string(),
+            method: "go_install".to_string(),
+            version: Some("latest".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("./cmd/demo".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("local go package path should reject separate version");
+
+        assert!(err.to_string().contains("local `package` paths"));
     }
 
     #[test]
@@ -1315,7 +1474,7 @@ mod tests {
         let item = InstallPlanItem {
             id: "npm-demo".to_string(),
             method: "npm_global".to_string(),
-            version: Some("1.2.3".to_string()),
+            version: None,
             url: None,
             sha256: None,
             archive_binary: None,
