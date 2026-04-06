@@ -282,7 +282,7 @@ fn validate_destination_path(
 ) -> InstallerResult<PathBuf> {
     if host_triple.contains("windows") && raw_destination.starts_with('/') {
         return Err(InstallerError::usage(format!(
-            "plan item `{item_id}` destination `{raw_destination}` cannot use a Windows root-relative path such as `\\foo`"
+            "plan item `{item_id}` destination `{raw_destination}` cannot use a Windows root-relative path such as `\\foo` or `/foo`"
         )));
     }
 
@@ -660,6 +660,21 @@ mod tests {
         let err = validate_destination(
             "demo",
             "\\tool.exe",
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+        )
+        .expect_err("should reject");
+        assert!(
+            err.to_string().contains("Windows root-relative path"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_workspace_destination_rejects_slash_prefixed_root_relative_path_on_windows_host() {
+        let err = validate_workspace_destination(
+            "demo",
+            "/workspace",
             "x86_64-pc-windows-msvc",
             "x86_64-pc-windows-msvc",
         )

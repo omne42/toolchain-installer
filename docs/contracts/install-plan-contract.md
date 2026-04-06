@@ -137,7 +137,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 对 `release`、`archive_tree_release` 等托管落盘方法，`destination` 若为相对路径，会解析到 `managed_dir` 下。
 - 托管落盘方法的 Unix 风格绝对路径如 `/tmp/demo` 会被拒绝，避免绕过托管目录边界。
 - 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
-- 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo` 这类 root-relative 路径。
+- 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo`、`/foo` 这类 root-relative 路径。
 - 托管落盘方法同样拒绝 `C:\tools\demo.exe` 这类 Windows 绝对路径；不能借“宿主机本身是 Windows”或“显式把 `target_triple` 设成 Windows”把写入绕出 `managed_dir`。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
 - `release.archive_binary` 表示 archive 内目标二进制的相对路径；installer 会先规范斜杠，并在常见“单一根目录” archive 上自动补齐该根目录，兼容 shared runtime 当前要求的精确 archive 路径匹配。
