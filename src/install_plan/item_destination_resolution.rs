@@ -309,6 +309,11 @@ fn validate_destination_path(
                     "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
                 )));
             }
+            if !target_triple.contains("windows") {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{item_id}` destination `{raw_destination}` uses a Windows absolute path but target triple `{target_triple}` does not use Windows path semantics"
+                )));
+            }
             if !host_triple.contains("windows") {
                 return Err(InstallerError::usage(format!(
                     "plan item `{item_id}` destination `{raw_destination}` uses a Windows absolute path but host triple `{host_triple}` does not use Windows path semantics"
@@ -865,6 +870,20 @@ mod tests {
             err.to_string()
                 .contains("does not use Windows path semantics")
         );
+    }
+
+    #[test]
+    fn validate_workspace_destination_rejects_windows_absolute_path_on_non_windows_target() {
+        let err = validate_workspace_destination(
+            "demo",
+            "C:\\workspace\\app",
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect_err("should reject");
+        assert!(err.to_string().contains(
+            "target triple `x86_64-unknown-linux-gnu` does not use Windows path semantics"
+        ));
     }
 
     #[test]
