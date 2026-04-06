@@ -40,6 +40,7 @@
   - 执行 plan 文件。
   - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
   - plan 中声明的本地相对路径按该 plan 文件所在目录解析，不按调用 CLI 时的当前工作目录解析；这同样适用于 `pip` / `npm_global` 的本地 `package` 路径。
+  - `go_install` 的本地 `package` 既接受 `./cmd/demo`，也接受 `cmd/demo` 这类 bare relative 路径；两者都会按 plan 目录解析，不会被当成远端 module spec。
 - `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
