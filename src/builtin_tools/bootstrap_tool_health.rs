@@ -96,17 +96,6 @@ fn managed_windows_git_state(managed_dir: &Path) -> ManagedBootstrapState {
             ),
         };
     }
-    if let Some(expected_dll) = expected_mingit_runtime_dll(&relative_target) {
-        let runtime_dll = managed_dir.join(expected_dll);
-        if !runtime_dll.exists() {
-            return ManagedBootstrapState::ManagedBroken {
-                detail: format!(
-                    "managed git payload is missing required runtime {}",
-                    runtime_dll.display()
-                ),
-            };
-        }
-    }
     if !managed_binary_reports_expected_version("git", &executable) {
         return ManagedBootstrapState::ManagedBroken {
             detail: format!(
@@ -170,33 +159,6 @@ fn managed_windows_git_payload_path(
     Ok(executable)
 }
 
-fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
-    let normalized = relative_target.to_string_lossy().replace('\\', "/");
-    if normalized.ends_with("PortableGit/cmd/git.exe") {
-        return relative_target
-            .parent()
-            .and_then(Path::parent)
-            .map(|portable_root| {
-                portable_root
-                    .join("mingw64")
-                    .join("bin")
-                    .join("msys-2.0.dll")
-            });
-    }
-    if normalized.ends_with("PortableGit/mingw64/bin/git.exe")
-        || normalized.ends_with("PortableGit/usr/bin/git.exe")
-        || normalized.ends_with("PortableGit/bin/git.exe")
-        || normalized.ends_with("mingw64/bin/git.exe")
-        || normalized.ends_with("usr/bin/git.exe")
-        || normalized.ends_with("bin/git.exe")
-    {
-        return relative_target
-            .parent()
-            .map(|parent| parent.join("msys-2.0.dll"));
-    }
-    None
-}
-
 fn managed_binary_reports_expected_version(tool: &str, path: &Path) -> bool {
     expected_version_prefix(tool)
         .is_some_and(|expected_prefix| binary_reports_version_with_prefix(path, expected_prefix))
@@ -216,8 +178,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        expected_mingit_runtime_dll, host_command_is_healthy_with_resolver,
-        launcher_target_from_script, managed_windows_git_payload_path,
+        host_command_is_healthy_with_resolver, launcher_target_from_script,
+        managed_windows_git_payload_path,
     };
 
     #[cfg(unix)]
@@ -261,15 +223,6 @@ mod tests {
             resolved,
             portable_root.join("mingw64").join("bin").join("git.exe")
         );
-        assert_eq!(
-            expected_mingit_runtime_dll(&relative_target),
-            Some(
-                PathBuf::from("git-portable")
-                    .join("mingw64")
-                    .join("bin")
-                    .join("msys-2.0.dll")
-            )
-        );
     }
 
     #[test]
@@ -291,16 +244,6 @@ mod tests {
                 .join("PortableGit")
                 .join("cmd")
                 .join("git.exe")
-        );
-        assert_eq!(
-            expected_mingit_runtime_dll(&relative_target),
-            Some(
-                PathBuf::from("git-portable")
-                    .join("PortableGit")
-                    .join("mingw64")
-                    .join("bin")
-                    .join("msys-2.0.dll")
-            )
         );
     }
 
