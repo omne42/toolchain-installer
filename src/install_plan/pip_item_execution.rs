@@ -72,29 +72,26 @@ fn pip_python_candidates(item: &PipPlanItem) -> Vec<String> {
 }
 
 fn pip_install_args(item: &PipPlanItem) -> Vec<OsString> {
-    vec![
-        "-m".to_string(),
-        "pip".to_string(),
-        "install".to_string(),
-        item.package.clone(),
-    ]
-    .into_iter()
-    .map(OsString::from)
-    .collect()
+    vec!["-m".to_string(), "pip".to_string(), "install".to_string()]
+        .into_iter()
+        .map(OsString::from)
+        .chain(std::iter::once(item.package.install_arg()))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::ffi::OsString;
 
     use super::{execute_pip_item_with, pip_install_args, pip_python_candidates};
-    use crate::plan_items::PipPlanItem;
+    use crate::plan_items::{HostPackageInput, PipPlanItem};
 
     #[test]
     fn explicit_python3_does_not_fall_back_to_python() {
         let item = PipPlanItem {
             id: "pip-demo".to_string(),
-            package: "ruff".to_string(),
+            package: HostPackageInput::package_spec("ruff"),
             python: Some("python3".to_string()),
         };
 
@@ -105,7 +102,7 @@ mod tests {
     fn default_python_candidates_keep_python3_then_python_fallback() {
         let item = PipPlanItem {
             id: "pip-demo".to_string(),
-            package: "ruff".to_string(),
+            package: HostPackageInput::package_spec("ruff"),
             python: None,
         };
 
@@ -119,7 +116,7 @@ mod tests {
     fn default_python_fallback_only_runs_when_python3_is_missing() {
         let item = PipPlanItem {
             id: "pip-demo".to_string(),
-            package: "ruff".to_string(),
+            package: HostPackageInput::package_spec("ruff"),
             python: None,
         };
         let attempts = RefCell::new(Vec::new());
@@ -148,7 +145,7 @@ mod tests {
     fn explicit_python_success_keeps_destination_unowned() {
         let item = PipPlanItem {
             id: "pip-demo".to_string(),
-            package: "ruff".to_string(),
+            package: HostPackageInput::package_spec("ruff"),
             python: Some("python3.13".to_string()),
         };
 
@@ -167,7 +164,7 @@ mod tests {
     fn default_python_fallback_stops_after_python3_install_failure() {
         let item = PipPlanItem {
             id: "pip-demo".to_string(),
-            package: "ruff".to_string(),
+            package: HostPackageInput::package_spec("ruff"),
             python: None,
         };
         let attempts = RefCell::new(Vec::new());
@@ -184,5 +181,24 @@ mod tests {
 
         assert_eq!(attempts.into_inner(), vec!["python3".to_string()]);
         assert!(err.to_string().contains("python3 failed: boom"));
+    }
+
+    #[test]
+    fn local_path_package_keeps_os_path_install_arg() {
+        let item = PipPlanItem {
+            id: "pip-demo".to_string(),
+            package: HostPackageInput::LocalPath("/tmp/demo-wheel".into()),
+            python: None,
+        };
+
+        assert_eq!(
+            pip_install_args(&item),
+            vec![
+                OsString::from("-m"),
+                OsString::from("pip"),
+                OsString::from("install"),
+                OsString::from("/tmp/demo-wheel"),
+            ]
+        );
     }
 }

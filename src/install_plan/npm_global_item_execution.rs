@@ -9,7 +9,7 @@ use omne_process_primitives::{
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
-use crate::plan_items::{NodePackageManager, NpmGlobalPlanItem};
+use crate::plan_items::{HostPackageInput, NodePackageManager, NpmGlobalPlanItem};
 
 struct NpmGlobalRecipe {
     program: OsString,
@@ -30,7 +30,7 @@ struct FileFingerprint {
 
 #[derive(Clone, Copy)]
 struct PackageInstallRequest<'a> {
-    package: &'a str,
+    package: &'a HostPackageInput,
     binary_name: &'a str,
 }
 
@@ -41,7 +41,7 @@ pub(crate) fn execute_npm_global_item(
 ) -> OperationResult<BootstrapItem> {
     let recipe = build_npm_global_recipe(
         item.manager,
-        item.package_spec.clone(),
+        &item.package_spec,
         &item.binary_name,
         target_triple,
         managed_dir,
@@ -97,7 +97,7 @@ pub(crate) fn execute_npm_global_item(
     ) {
         return Err(OperationError::install(format!(
             "npm_global install for `{}` did not update the expected binary path {}; refusing to treat a stale managed file as a fresh install",
-            item.package_spec,
+            item.package_spec.render(),
             destination.display()
         )));
     }
@@ -124,7 +124,7 @@ pub(crate) fn execute_npm_global_item(
 
 fn build_npm_global_recipe(
     manager: NodePackageManager,
-    package: String,
+    package: &HostPackageInput,
     binary_name: &str,
     target_triple: &str,
     managed_dir: &Path,
@@ -133,7 +133,9 @@ fn build_npm_global_recipe(
         NodePackageManager::Npm => {
             let prefix_root = npm_prefix_root_for_target(target_triple, managed_dir)?;
             let package_root = npm_global_package_root(&prefix_root, target_triple);
-            let fallback_package_dir = package_dir_with_root(&package_root, &package);
+            let fallback_package_dir = package
+                .as_package_spec()
+                .map(|package_spec| package_dir_with_root(&package_root, package_spec));
             let binary_path = if target_triple.contains("windows") {
                 prefix_root.join(global_binary_filename(binary_name, manager, target_triple))
             } else {
@@ -146,14 +148,14 @@ fn build_npm_global_recipe(
                     OsString::from("--global"),
                     OsString::from("--prefix"),
                     prefix_root.as_os_str().to_os_string(),
-                    OsString::from(package),
+                    package.install_arg(),
                 ],
                 env: vec![(
                     OsString::from("npm_config_prefix"),
                     prefix_root.as_os_str().to_os_string(),
                 )],
                 binary_path,
-                fallback_package_dir: Some(fallback_package_dir),
+                fallback_package_dir,
                 package_search_root: Some(package_root),
                 fallback_search_root: None,
                 source: "npm:npm".to_string(),
@@ -176,13 +178,15 @@ fn build_npm_global_recipe(
                 args: vec![
                     OsString::from("add"),
                     OsString::from("--global"),
-                    OsString::from(package.clone()),
+                    package.install_arg(),
                 ],
                 env,
                 binary_path,
-                fallback_package_dir: package_search_root
-                    .as_deref()
-                    .map(|root| package_dir_with_root(root, &package)),
+                fallback_package_dir: package_search_root.as_deref().and_then(|root| {
+                    package
+                        .as_package_spec()
+                        .map(|package_spec| package_dir_with_root(root, package_spec))
+                }),
                 package_search_root,
                 fallback_search_root: None,
                 source: "npm:pnpm".to_string(),
@@ -195,13 +199,15 @@ fn build_npm_global_recipe(
             let package_root = global_dir.join("node_modules");
             let binary_path =
                 binary_dir.join(global_binary_filename(binary_name, manager, target_triple));
-            let fallback_package_dir = package_dir_with_root(&package_root, &package);
+            let fallback_package_dir = package
+                .as_package_spec()
+                .map(|package_spec| package_dir_with_root(&package_root, package_spec));
             Ok(NpmGlobalRecipe {
                 program: resolved_package_manager_program("bun"),
                 args: vec![
                     OsString::from("add"),
                     OsString::from("--global"),
-                    OsString::from(package),
+                    package.install_arg(),
                 ],
                 env: vec![
                     (
@@ -215,7 +221,7 @@ fn build_npm_global_recipe(
                     (OsString::from("PATH"), prepend_path_env(&binary_dir)?),
                 ],
                 binary_path,
-                fallback_package_dir: Some(fallback_package_dir),
+                fallback_package_dir,
                 package_search_root: Some(package_root),
                 fallback_search_root: Some(global_dir.join("node_modules").join(".bin")),
                 source: "npm:bun".to_string(),
@@ -314,7 +320,7 @@ fn resolve_npm_global_destination(
     resolve_npm_global_destination_with_item_id(
         binary_path,
         binary_name,
-        package,
+        &HostPackageInput::package_spec(package),
         binary_name,
         fallback_package_dir,
         package_search_root,
@@ -325,7 +331,7 @@ fn resolve_npm_global_destination(
 fn resolve_npm_global_destination_with_item_id(
     binary_path: &Path,
     item_id: &str,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
@@ -357,7 +363,7 @@ fn capture_installation_state(
     capture_installation_state_with_item_id(
         binary_path,
         binary_name,
-        package,
+        &HostPackageInput::package_spec(package),
         binary_name,
         fallback_package_dir,
         package_search_root,
@@ -368,7 +374,7 @@ fn capture_installation_state(
 fn capture_installation_state_with_item_id(
     binary_path: &Path,
     item_id: &str,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
@@ -420,12 +426,29 @@ fn installation_result_is_acceptable(
         preinstall_state,
         destination,
         PackageInstallRequest {
-            package,
+            package: &HostPackageInput::package_spec(package),
             binary_name,
         },
         fallback_package_dir,
         package_search_root,
         fallback_search_root,
+    )
+}
+
+#[cfg(test)]
+fn build_npm_global_recipe_for_spec(
+    manager: NodePackageManager,
+    package: &str,
+    binary_name: &str,
+    target_triple: &str,
+    managed_dir: &Path,
+) -> OperationResult<NpmGlobalRecipe> {
+    build_npm_global_recipe(
+        manager,
+        &HostPackageInput::package_spec(package),
+        binary_name,
+        target_triple,
+        managed_dir,
     )
 }
 
@@ -490,7 +513,7 @@ fn managed_package_matches_request_for_destination(
 
 fn resolve_destination_from_package_metadata(
     binary_path: &Path,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
@@ -567,7 +590,7 @@ fn choose_existing_binary_path(
 }
 
 fn resolve_installed_package_dirs(
-    package: &str,
+    package: &HostPackageInput,
     direct_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
 ) -> Vec<PathBuf> {
@@ -697,7 +720,7 @@ fn find_matching_binary_paths_under_dir(root: &Path, binary_name: &str) -> Vec<P
 
 fn manifest_satisfies_package_request(
     manifest_path: &Path,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
 ) -> bool {
     let Ok(manifest) = std::fs::read_to_string(manifest_path) else {
@@ -749,7 +772,7 @@ fn create_windows_bun_global_launcher(
     manager: NodePackageManager,
     bun_program: &OsStr,
     managed_dir: &Path,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
 ) -> OperationResult<Option<PathBuf>> {
     if !matches!(manager, NodePackageManager::Bun) {
@@ -758,10 +781,14 @@ fn create_windows_bun_global_launcher(
 
     let layout = bun_install_layout(managed_dir)?;
     let global_dir = layout.global_dir;
+    let package_label = package
+        .as_package_spec()
+        .map(npm_package_name)
+        .unwrap_or(binary_name);
     let package_dir = resolve_bun_package_dir(&global_dir, package).ok_or_else(|| {
         OperationError::install(format!(
             "cannot locate bun global package `{}` under {}",
-            npm_package_name(package),
+            package_label,
             global_dir.display()
         ))
     })?;
@@ -769,7 +796,7 @@ fn create_windows_bun_global_launcher(
         .ok_or_else(|| {
             OperationError::install(format!(
                 "cannot resolve bun global binary `{binary_name}` for package `{}`",
-                npm_package_name(package)
+                package_label
             ))
         })?;
     if !script_path.exists() {
@@ -800,22 +827,24 @@ fn create_windows_bun_global_launcher(
     _manager: NodePackageManager,
     _bun_program: &OsStr,
     _managed_dir: &Path,
-    _package: &str,
+    _package: &HostPackageInput,
     _binary_name: &str,
 ) -> OperationResult<Option<PathBuf>> {
     Ok(None)
 }
 
 #[cfg(windows)]
-fn resolve_bun_package_dir(global_dir: &Path, package: &str) -> Option<PathBuf> {
-    let mut direct = global_dir.join("node_modules");
-    for segment in npm_package_name(package).split('/') {
-        direct.push(segment);
+fn resolve_bun_package_dir(global_dir: &Path, package: &HostPackageInput) -> Option<PathBuf> {
+    if let Some(package_name) = package_request_name_constraint(package) {
+        let mut direct = global_dir.join("node_modules");
+        for segment in package_name.split('/') {
+            direct.push(segment);
+        }
+        if direct.exists() {
+            return Some(direct);
+        }
     }
-    if direct.exists() {
-        return Some(direct);
-    }
-    find_package_dirs_under_root(global_dir, Some(npm_package_name(package)))
+    find_package_dirs_under_root(global_dir, package_request_name_constraint(package))
         .into_iter()
         .next()
 }
@@ -823,7 +852,7 @@ fn resolve_bun_package_dir(global_dir: &Path, package: &str) -> Option<PathBuf> 
 #[cfg(windows)]
 fn resolve_bun_package_bin_script(
     package_dir: &Path,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
 ) -> Option<PathBuf> {
     let manifest_path = package_dir.join("package.json");
@@ -835,18 +864,18 @@ fn resolve_bun_package_bin_script(
 
 fn package_bin_relative_path(
     manifest: &serde_json::Value,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
 ) -> Option<PathBuf> {
-    let package_name = npm_package_name(package);
-    let package_basename = package_name.rsplit('/').next().unwrap_or(package_name);
+    let package_basename = package_request_name_constraint(package)
+        .and_then(|package_name| package_name.rsplit('/').next());
     let bin = manifest.get("bin")?;
     match bin {
         serde_json::Value::String(path) => sanitize_package_bin_relative_path(path),
         serde_json::Value::Object(entries) => {
             if let Some(path) = entries
                 .get(binary_name)
-                .or_else(|| entries.get(package_basename))
+                .or_else(|| package_basename.and_then(|name| entries.get(name)))
                 .and_then(|value| value.as_str())
             {
                 return sanitize_package_bin_relative_path(path);
@@ -865,7 +894,11 @@ fn package_bin_relative_path(
     }
 }
 
-fn manifest_binary_names(package_dir: &Path, package: &str, binary_name: &str) -> Vec<String> {
+fn manifest_binary_names(
+    package_dir: &Path,
+    package: &HostPackageInput,
+    binary_name: &str,
+) -> Vec<String> {
     let Ok(manifest) = std::fs::read_to_string(package_dir.join("package.json")) else {
         return Vec::new();
     };
@@ -877,11 +910,11 @@ fn manifest_binary_names(package_dir: &Path, package: &str, binary_name: &str) -
 
 fn package_manifest_binary_names(
     manifest: &serde_json::Value,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
 ) -> Vec<String> {
-    let package_name = npm_package_name(package);
-    let package_basename = package_name.rsplit('/').next().unwrap_or(package_name);
+    let package_basename = package_request_name_constraint(package)
+        .and_then(|package_name| package_name.rsplit('/').next());
     let Some(bin) = manifest.get("bin") else {
         return Vec::new();
     };
@@ -896,7 +929,9 @@ fn package_manifest_binary_names(
             names.sort();
             if let Some(index) = names.iter().position(|name| name == binary_name) {
                 names.swap(0, index);
-            } else if let Some(index) = names.iter().position(|name| name == package_basename) {
+            } else if let Some(package_basename) = package_basename
+                && let Some(index) = names.iter().position(|name| name == package_basename)
+            {
                 names.swap(0, index);
             }
             names
@@ -922,7 +957,7 @@ fn sanitize_package_bin_relative_path(raw: &str) -> Option<PathBuf> {
 
 fn resolve_package_bin_script(
     package_dir: &Path,
-    package: &str,
+    package: &HostPackageInput,
     binary_name: &str,
 ) -> Option<PathBuf> {
     let manifest = std::fs::read_to_string(package_dir.join("package.json")).ok()?;
@@ -964,7 +999,10 @@ impl NpmPackageRequest<'_> {
     }
 }
 
-fn npm_package_request(package: &str) -> NpmPackageRequest<'_> {
+fn npm_package_request(package: &HostPackageInput) -> NpmPackageRequest<'_> {
+    let Some(package) = package.as_package_spec() else {
+        return NpmPackageRequest::ExplicitSource { package_name: None };
+    };
     if node_package_spec_uses_explicit_source(package) {
         return NpmPackageRequest::ExplicitSource {
             package_name: npm_package_name_from_explicit_source(package),
@@ -981,7 +1019,7 @@ fn npm_package_request(package: &str) -> NpmPackageRequest<'_> {
     }
 }
 
-fn package_request_name_constraint(package: &str) -> Option<&str> {
+fn package_request_name_constraint(package: &HostPackageInput) -> Option<&str> {
     match npm_package_request(package) {
         NpmPackageRequest::ExactVersion { package_name, .. }
         | NpmPackageRequest::Named { package_name } => Some(package_name),
@@ -1195,22 +1233,26 @@ mod tests {
 
     use super::{
         NpmPackageRequest, PackageInstallRequest, build_npm_global_recipe,
-        capture_installation_state, capture_installation_state_with_item_id, file_fingerprint,
-        find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
-        global_binary_filename, installation_result_is_acceptable,
-        installation_result_is_acceptable_with_item_id, npm_global_package_dir,
-        npm_package_request, package_bin_relative_path, parse_pnpm_root_stdout,
-        path_has_no_symlink_components, resolve_npm_global_destination,
+        build_npm_global_recipe_for_spec, capture_installation_state,
+        capture_installation_state_with_item_id, file_fingerprint, find_binary_at_path,
+        find_matching_binary_paths_under_dir, find_package_dirs_under_root, global_binary_filename,
+        installation_result_is_acceptable, installation_result_is_acceptable_with_item_id,
+        npm_global_package_dir, npm_package_request, package_bin_relative_path,
+        parse_pnpm_root_stdout, path_has_no_symlink_components, resolve_npm_global_destination,
         resolve_npm_global_destination_with_item_id, resolve_package_bin_script,
     };
-    use crate::plan_items::NodePackageManager;
+    use crate::plan_items::{HostPackageInput, NodePackageManager};
+
+    fn spec(package: &str) -> HostPackageInput {
+        HostPackageInput::package_spec(package)
+    }
 
     #[test]
     fn pnpm_recipe_prepends_pnpm_home_to_path() {
         let managed_dir = std::env::temp_dir().join("ti-pnpm-home");
-        let recipe = build_npm_global_recipe(
+        let recipe = build_npm_global_recipe_for_spec(
             NodePackageManager::Pnpm,
-            "http-server@14.1.1".to_string(),
+            "http-server@14.1.1",
             "http-server",
             host_target_triple(),
             &managed_dir,
@@ -1224,7 +1266,7 @@ mod tests {
             .env
             .iter()
             .find(|(name, _)| name == OsStr::new("PATH"))
-            .map(|(_, value)| value.as_os_str())
+            .map(|(_, value): &(OsString, OsString)| value.as_os_str())
             .expect("PATH env");
         let first = std::env::split_paths(path)
             .next()
@@ -1249,9 +1291,9 @@ mod tests {
     #[test]
     fn bun_recipe_configures_global_and_bin_dirs() {
         let managed_dir = std::env::temp_dir().join("ti-bun-root");
-        let recipe = build_npm_global_recipe(
+        let recipe = build_npm_global_recipe_for_spec(
             NodePackageManager::Bun,
-            "http-server@14.1.1".to_string(),
+            "http-server@14.1.1",
             "http-server",
             host_target_triple(),
             &managed_dir,
@@ -1274,7 +1316,7 @@ mod tests {
             .env
             .iter()
             .find(|(name, _)| name == OsStr::new("PATH"))
-            .map(|(_, value)| value.as_os_str())
+            .map(|(_, value): &(OsString, OsString)| value.as_os_str())
             .expect("PATH env");
         let first = std::env::split_paths(path)
             .next()
@@ -1285,9 +1327,9 @@ mod tests {
     #[test]
     fn bun_recipe_reuses_managed_bin_dir_when_managed_dir_already_is_bin() {
         let managed_dir = std::env::temp_dir().join("ti-bun-root").join("bin");
-        let recipe = build_npm_global_recipe(
+        let recipe = build_npm_global_recipe_for_spec(
             NodePackageManager::Bun,
-            "http-server@14.1.1".to_string(),
+            "http-server@14.1.1",
             "http-server",
             host_target_triple(),
             &managed_dir,
@@ -1314,9 +1356,9 @@ mod tests {
         use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
         let managed_dir = PathBuf::from(OsString::from_vec(b"/tmp/npm-managed-\xff".to_vec()));
-        let recipe = build_npm_global_recipe(
+        let recipe = build_npm_global_recipe_for_spec(
             NodePackageManager::Npm,
-            "http-server".to_string(),
+            "http-server",
             "http-server",
             host_target_triple(),
             &managed_dir,
@@ -1339,10 +1381,15 @@ mod tests {
         };
 
         assert_eq!(recipe.args[3].as_bytes(), expected_prefix);
-        assert!(recipe.env.iter().any(|(name, value)| {
-            name == OsStr::new("npm_config_prefix")
-                && value.as_bytes() == expected_prefix.as_slice()
-        }));
+        assert!(
+            recipe
+                .env
+                .iter()
+                .any(|(name, value): &(OsString, OsString)| {
+                    name == OsStr::new("npm_config_prefix")
+                        && value.as_bytes() == expected_prefix.as_slice()
+                })
+        );
     }
 
     #[test]
@@ -1352,7 +1399,7 @@ mod tests {
             "bin": "bin/http-server"
         });
 
-        let path = package_bin_relative_path(&manifest, "http-server@14.1.1", "http-server")
+        let path = package_bin_relative_path(&manifest, &spec("http-server@14.1.1"), "http-server")
             .expect("bin path");
         assert_eq!(path, PathBuf::from("bin/http-server"));
     }
@@ -1367,8 +1414,9 @@ mod tests {
             }
         });
 
-        let path = package_bin_relative_path(&manifest, "@scope/http-server@14.1.1", "http-server")
-            .expect("bin path");
+        let path =
+            package_bin_relative_path(&manifest, &spec("@scope/http-server@14.1.1"), "http-server")
+                .expect("bin path");
         assert_eq!(path, PathBuf::from("dist/http-server.js"));
     }
 
@@ -1380,7 +1428,8 @@ mod tests {
         });
 
         assert!(
-            package_bin_relative_path(&manifest, "http-server@14.1.1", "http-server").is_none()
+            package_bin_relative_path(&manifest, &spec("http-server@14.1.1"), "http-server")
+                .is_none()
         );
     }
 
@@ -1469,9 +1518,9 @@ mod tests {
     #[test]
     fn npm_recipe_uses_windows_metadata_layout_for_idempotency_checks() {
         let managed_dir = Path::new(r"C:\managed");
-        let recipe = build_npm_global_recipe(
+        let recipe = build_npm_global_recipe_for_spec(
             NodePackageManager::Npm,
-            "http-server@14.1.1".to_string(),
+            "http-server@14.1.1",
             "http-server",
             "x86_64-pc-windows-msvc",
             managed_dir,
@@ -1493,36 +1542,55 @@ mod tests {
     }
 
     #[test]
+    fn npm_recipe_keeps_local_path_install_arg_without_direct_package_guess() {
+        let managed_dir = Path::new("/tmp/managed");
+        let recipe = build_npm_global_recipe(
+            NodePackageManager::Npm,
+            &HostPackageInput::LocalPath(PathBuf::from("/tmp/packages/demo")),
+            "demo",
+            "x86_64-unknown-linux-gnu",
+            managed_dir,
+        )
+        .expect("build npm recipe");
+
+        assert_eq!(
+            recipe.args.last(),
+            Some(&OsString::from("/tmp/packages/demo"))
+        );
+        assert_eq!(recipe.fallback_package_dir, None);
+    }
+
+    #[test]
     fn npm_package_request_only_treats_exact_versions_as_exact() {
         assert_eq!(
-            npm_package_request("http-server@14.1.1"),
+            npm_package_request(&spec("http-server@14.1.1")),
             NpmPackageRequest::ExactVersion {
                 package_name: "http-server",
                 version: "14.1.1",
             }
         );
         assert_eq!(
-            npm_package_request("http-server@latest"),
+            npm_package_request(&spec("http-server@latest")),
             NpmPackageRequest::Named {
                 package_name: "http-server",
             }
         );
         assert_eq!(
-            npm_package_request("http-server@^14"),
+            npm_package_request(&spec("http-server@^14")),
             NpmPackageRequest::Named {
                 package_name: "http-server",
             }
         );
         assert_eq!(
-            npm_package_request("file:../packages/http-server"),
+            npm_package_request(&spec("file:../packages/http-server")),
             NpmPackageRequest::ExplicitSource { package_name: None }
         );
         assert_eq!(
-            npm_package_request("../packages/http-server"),
+            npm_package_request(&spec("../packages/http-server")),
             NpmPackageRequest::ExplicitSource { package_name: None }
         );
         assert_eq!(
-            npm_package_request("alias@npm:http-server@14.1.1"),
+            npm_package_request(&spec("alias@npm:http-server@14.1.1")),
             NpmPackageRequest::ExplicitSource {
                 package_name: Some("http-server"),
             }
@@ -1724,7 +1792,7 @@ mod tests {
             resolve_npm_global_destination_with_item_id(
                 &expected_binary_path,
                 "tsc",
-                "typescript@5.6.3",
+                &spec("typescript@5.6.3"),
                 "typescript",
                 Some(&package_dir),
                 Some(&package_root),
@@ -1758,7 +1826,7 @@ mod tests {
             resolve_npm_global_destination_with_item_id(
                 &stale_binary_path,
                 "tsc",
-                "typescript@5.6.3",
+                &spec("typescript@5.6.3"),
                 "typescript",
                 Some(&package_dir),
                 Some(&package_root),
@@ -1830,7 +1898,7 @@ mod tests {
             &preinstall_state,
             &actual_binary_path,
             PackageInstallRequest {
-                package: "typescript@5.6.3",
+                package: &spec("typescript@5.6.3"),
                 binary_name: "typescript",
             },
             Some(&package_dir),
@@ -1861,7 +1929,7 @@ mod tests {
         let preinstall_state = capture_installation_state_with_item_id(
             &stale_binary_path,
             "tsc",
-            "typescript@5.6.3",
+            &spec("typescript@5.6.3"),
             "typescript",
             Some(&package_dir),
             Some(&package_root),
@@ -1872,7 +1940,7 @@ mod tests {
             &preinstall_state,
             &stale_binary_path,
             PackageInstallRequest {
-                package: "typescript@5.6.3",
+                package: &spec("typescript@5.6.3"),
                 binary_name: "typescript",
             },
             Some(&package_dir),
@@ -2026,8 +2094,11 @@ mod tests {
             .expect("create package parent");
         symlink(&outside_dir, &package_dir).expect("create symlink");
 
-        let package_dirs =
-            super::resolve_installed_package_dirs("http-server@14.1.1", Some(&package_dir), None);
+        let package_dirs = super::resolve_installed_package_dirs(
+            &spec("http-server@14.1.1"),
+            Some(&package_dir),
+            None,
+        );
         assert!(package_dirs.is_empty());
         assert!(!path_has_no_symlink_components(
             &package_dir.join("package.json"),
@@ -2084,7 +2155,7 @@ mod tests {
         .expect("write manifest");
 
         let resolved =
-            resolve_package_bin_script(&package_dir, "http-server@14.1.1", "http-server")
+            resolve_package_bin_script(&package_dir, &spec("http-server@14.1.1"), "http-server")
                 .expect("resolved package bin path");
         assert_eq!(resolved, package_dir.join("dist").join("http-server.js"));
     }

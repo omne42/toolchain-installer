@@ -724,7 +724,7 @@ mod tests {
         let pnpm_destination = resolve_npm_global_destination(
             &NpmGlobalPlanItem {
                 id: "pnpm-demo".to_string(),
-                package_spec: "demo".to_string(),
+                package_spec: crate::plan_items::HostPackageInput::package_spec("demo"),
                 manager: NodePackageManager::Pnpm,
                 binary_name: "demo".to_string(),
             },
@@ -739,7 +739,7 @@ mod tests {
         let bun_destination = resolve_npm_global_destination(
             &NpmGlobalPlanItem {
                 id: "bun-demo".to_string(),
-                package_spec: "demo".to_string(),
+                package_spec: crate::plan_items::HostPackageInput::package_spec("demo"),
                 manager: NodePackageManager::Bun,
                 binary_name: "demo".to_string(),
             },
@@ -758,7 +758,7 @@ mod tests {
         let bun_destination = resolve_npm_global_destination(
             &NpmGlobalPlanItem {
                 id: "bun-demo".to_string(),
-                package_spec: "demo".to_string(),
+                package_spec: crate::plan_items::HostPackageInput::package_spec("demo"),
                 manager: NodePackageManager::Bun,
                 binary_name: "demo".to_string(),
             },
@@ -775,7 +775,7 @@ mod tests {
         let bun_destination = resolve_npm_global_destination(
             &NpmGlobalPlanItem {
                 id: "bun-demo".to_string(),
-                package_spec: "demo".to_string(),
+                package_spec: crate::plan_items::HostPackageInput::package_spec("demo"),
                 manager: NodePackageManager::Bun,
                 binary_name: "demo".to_string(),
             },
