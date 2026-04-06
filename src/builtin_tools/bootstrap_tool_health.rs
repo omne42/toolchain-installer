@@ -167,13 +167,6 @@ fn managed_windows_git_payload_path(
             relative_target.display()
         ));
     }
-    let portable_payload_root = portable_root.join("PortableGit");
-    if !executable.starts_with(&portable_payload_root) {
-        return Err(format!(
-            "managed git launcher points outside managed PortableGit payload root with payload target `{}`",
-            relative_target.display()
-        ));
-    }
     Ok(executable)
 }
 
@@ -193,6 +186,9 @@ fn expected_mingit_runtime_dll(relative_target: &Path) -> Option<PathBuf> {
     if normalized.ends_with("PortableGit/mingw64/bin/git.exe")
         || normalized.ends_with("PortableGit/usr/bin/git.exe")
         || normalized.ends_with("PortableGit/bin/git.exe")
+        || normalized.ends_with("mingw64/bin/git.exe")
+        || normalized.ends_with("usr/bin/git.exe")
+        || normalized.ends_with("bin/git.exe")
     {
         return relative_target
             .parent()
@@ -219,7 +215,10 @@ fn expected_version_prefix(tool: &str) -> Option<&'static str> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::host_command_is_healthy_with_resolver;
+    use super::{
+        expected_mingit_runtime_dll, host_command_is_healthy_with_resolver,
+        launcher_target_from_script, managed_windows_git_payload_path,
+    };
 
     #[cfg(unix)]
     fn write_executable(path: &std::path::Path, body: &str) {
@@ -243,5 +242,92 @@ mod tests {
         assert!(host_command_is_healthy_with_resolver("git", |_| Some(
             PathBuf::from(&git_path)
         )));
+    }
+
+    #[test]
+    fn windows_git_health_accepts_mingit_payload_under_git_portable_root() {
+        let managed_dir = PathBuf::from("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let relative_target = PathBuf::from("git-portable")
+            .join("mingw64")
+            .join("bin")
+            .join("git.exe");
+
+        let resolved =
+            managed_windows_git_payload_path(&managed_dir, &portable_root, &relative_target)
+                .expect("payload under git-portable root should be accepted");
+
+        assert_eq!(
+            resolved,
+            portable_root.join("mingw64").join("bin").join("git.exe")
+        );
+        assert_eq!(
+            expected_mingit_runtime_dll(&relative_target),
+            Some(
+                PathBuf::from("git-portable")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("msys-2.0.dll")
+            )
+        );
+    }
+
+    #[test]
+    fn windows_git_health_still_accepts_nested_portablegit_payload_layout() {
+        let managed_dir = PathBuf::from("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let relative_target = PathBuf::from("git-portable")
+            .join("PortableGit")
+            .join("cmd")
+            .join("git.exe");
+
+        let resolved =
+            managed_windows_git_payload_path(&managed_dir, &portable_root, &relative_target)
+                .expect("payload under nested PortableGit root should be accepted");
+
+        assert_eq!(
+            resolved,
+            portable_root
+                .join("PortableGit")
+                .join("cmd")
+                .join("git.exe")
+        );
+        assert_eq!(
+            expected_mingit_runtime_dll(&relative_target),
+            Some(
+                PathBuf::from("git-portable")
+                    .join("PortableGit")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("msys-2.0.dll")
+            )
+        );
+    }
+
+    #[test]
+    fn windows_git_health_rejects_parent_directory_escape() {
+        let managed_dir = PathBuf::from("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let relative_target = PathBuf::from("..").join("outside").join("git.exe");
+
+        let err = managed_windows_git_payload_path(&managed_dir, &portable_root, &relative_target)
+            .expect_err("parent directory escape should be rejected");
+
+        assert!(err.contains("outside managed root"));
+    }
+
+    #[test]
+    fn launcher_target_parser_reads_windows_relative_target() {
+        let script = "@echo off\r\n\"%~dp0git-portable\\mingw64\\bin\\git.exe\" %*\r\n";
+
+        assert_eq!(
+            launcher_target_from_script(script),
+            Some(
+                PathBuf::from("git-portable")
+                    .join("mingw64")
+                    .join("bin")
+                    .join("git.exe")
+            )
+        );
     }
 }

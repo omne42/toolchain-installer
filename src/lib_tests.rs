@@ -1019,7 +1019,7 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escap
 }
 
 #[test]
-fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escapes_portablegit_payload_root()
+fn assess_managed_bootstrap_state_reports_broken_windows_git_when_payload_under_git_portable_root_fails_version_check()
  {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
@@ -1037,9 +1037,10 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_launcher_escap
         assess_managed_bootstrap_state("git", "x86_64-pc-windows-msvc", &destination, &managed_dir);
     match state {
         ManagedBootstrapState::ManagedBroken { detail } => {
-            assert_eq!(
-                detail.replace('\\', "/"),
-                "managed git launcher points outside managed PortableGit payload root with payload target `git-portable/other/git.exe`"
+            assert!(
+                detail
+                    .replace('\\', "/")
+                    .contains("managed/git-portable/other/git.exe failed --version health check")
             );
         }
         other => panic!("expected ManagedBroken state, got {other:?}"),
