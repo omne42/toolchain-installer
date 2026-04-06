@@ -798,7 +798,9 @@ fn create_windows_bun_global_launcher(
         )));
     }
 
-    let launcher_path = layout.binary_dir.join(format!("{binary_name}.cmd"));
+    let launcher_path = layout
+        .binary_dir
+        .join(append_binary_suffix_if_missing(binary_name, ".cmd"));
     if let Some(parent) = launcher_path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| OperationError::install(err.to_string()))?;
     }
@@ -1133,9 +1135,22 @@ fn global_binary_filename(
         let extension = match manager {
             NodePackageManager::Npm | NodePackageManager::Pnpm | NodePackageManager::Bun => ".cmd",
         };
-        return format!("{binary_name}{extension}");
+        return append_binary_suffix_if_missing(binary_name, extension);
     }
     binary_name.to_string()
+}
+
+fn append_binary_suffix_if_missing(binary_name: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        return binary_name.to_string();
+    }
+    if binary_name
+        .to_ascii_lowercase()
+        .ends_with(&suffix.to_ascii_lowercase())
+    {
+        return binary_name.to_string();
+    }
+    format!("{binary_name}{suffix}")
 }
 
 #[cfg(test)]
@@ -1200,7 +1215,7 @@ mod tests {
     use super::{
         NpmPackageRequest, PackageInstallRequest, build_npm_global_recipe,
         capture_installation_state, file_fingerprint, find_binary_at_path,
-        find_matching_binary_paths_under_dir, find_package_dirs_under_root,
+        find_matching_binary_paths_under_dir, find_package_dirs_under_root, global_binary_filename,
         installation_result_is_acceptable, installation_result_is_acceptable_with_item_id,
         npm_global_package_dir, npm_package_request, package_bin_relative_path,
         parse_pnpm_root_stdout, path_has_no_symlink_components, resolve_npm_global_destination,
@@ -2337,6 +2352,18 @@ mod tests {
             None,
             None,
         ));
+    }
+
+    #[test]
+    fn global_binary_filename_does_not_duplicate_windows_cmd_suffix() {
+        assert_eq!(
+            global_binary_filename(
+                "http-server.cmd",
+                NodePackageManager::Bun,
+                "x86_64-pc-windows-msvc",
+            ),
+            "http-server.cmd"
+        );
     }
 
     fn host_target_triple() -> &'static str {

@@ -154,12 +154,42 @@ fn resolve_uv_tool_destination(
         return None;
     }
 
+    let candidates = candidate_uv_tool_binaries(managed_dir, target_triple);
+    let mut changed_candidates = candidates
+        .iter()
+        .filter(|path| path_changed(preinstall_state, path))
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_uv_tool_candidates(&mut changed_candidates, item, target_triple);
+    if let Some(path) = changed_candidates
+        .into_iter()
+        .find(|path| command_path_exists(path) && binary_reports_version(path))
+    {
+        return Some(path);
+    }
+
+    let mut stable_candidates = candidates
+        .into_iter()
+        .filter(|path| {
+            !path_changed(preinstall_state, path)
+                && path_file_name_matches(path, &item.id, target_triple)
+        })
+        .collect::<Vec<_>>();
+    sort_uv_tool_candidates(&mut stable_candidates, item, target_triple);
+    stable_candidates
+        .into_iter()
+        .find(|path| command_path_exists(path) && binary_reports_version(path))
+}
+
+fn candidate_uv_tool_binaries(managed_dir: &Path, target_triple: &str) -> Vec<PathBuf> {
     let mut candidates = discovered_uv_tool_binaries(managed_dir);
     candidates.retain(|path| {
-        path_changed(preinstall_state, path)
-            && !is_managed_uv_bootstrap_binary(path, target_triple)
-            && !is_backup_artifact(path)
+        !is_managed_uv_bootstrap_binary(path, target_triple) && !is_backup_artifact(path)
     });
+    candidates
+}
+
+fn sort_uv_tool_candidates(candidates: &mut [PathBuf], item: &UvToolPlanItem, target_triple: &str) {
     candidates.sort();
     candidates.sort_by_key(|path| {
         (
@@ -168,9 +198,6 @@ fn resolve_uv_tool_destination(
             path.clone(),
         )
     });
-    candidates
-        .into_iter()
-        .find(|path| command_path_exists(path) && binary_reports_version(path))
 }
 
 fn discovered_uv_tool_binaries(managed_dir: &Path) -> Vec<PathBuf> {
@@ -405,6 +432,40 @@ mod tests {
             .expect("chmod http");
         std::fs::set_permissions(&https, std::fs::Permissions::from_mode(0o755))
             .expect("chmod https");
+
+        let item = UvToolPlanItem {
+            id: "http".to_string(),
+            package: "httpie".to_string(),
+            python: None,
+            binary_name: "httpie".to_string(),
+            binary_name_explicit: false,
+        };
+        let expected = managed_dir.join("httpie");
+
+        let resolved = resolve_uv_tool_destination(
+            &expected,
+            &preinstall,
+            &item,
+            "x86_64-unknown-linux-gnu",
+            managed_dir,
+        )
+        .expect("resolved uv tool destination");
+
+        assert_eq!(resolved, http);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_uv_tool_destination_accepts_noop_reinstall_for_existing_item_id_binary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path();
+        let http = managed_dir.join("http");
+        std::fs::write(&http, "#!/bin/sh\necho http 1.0\n").expect("write http");
+        std::fs::set_permissions(&http, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod http");
+        let preinstall = capture_managed_uv_tool_state(managed_dir);
 
         let item = UvToolPlanItem {
             id: "http".to_string(),
