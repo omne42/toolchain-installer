@@ -55,7 +55,7 @@
   - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
   - `--archive-binary` 传的是 archive 内目标二进制的相对路径；installer 会规范斜杠，并在常见单根目录 archive 上自动补齐根目录后再做精确匹配。
   - 非 Windows 宿主会拒绝 `C:\tools\demo.exe` 这类 Windows 绝对 `--destination`，即使 `--target-triple` 是 Windows 也不例外；`destination` 必须符合当前宿主机的实际落盘语义。
-  - `uv_tool` 额外允许 `--binary-name`，用于声明托管目录下期望出现的可执行文件名。
+  - `npm_global`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 也允许 `--binary-name`；其中 `rustup_component` 只有在 installer 已知组件对应稳定 CLI 名时才接受这个字段，而且值必须与该 canonical CLI 名一致。安装成功后若该命令不可解析，整项失败，不会静默回退到组件默认二进制。
 - `--package`、`--manager`
   - `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install` 或 `uv_tool` 模式字段。
   - `--method apt` 会固定使用 canonical `apt-get`；若显式传 `--manager`，当前也只接受 `apt-get`。

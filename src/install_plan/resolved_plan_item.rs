@@ -370,14 +370,19 @@ fn resolve_rustup_component_plan_item(
             ("python", item.python.as_deref()),
         ],
     )?;
-    let binary_name = parse_optional_binary_name(&id, item.binary_name.as_deref())?;
+    let component = require_host_package_input(
+        item.package.as_deref().unwrap_or_default(),
+        "rustup_component",
+        item.id.as_str(),
+    )?;
+    let binary_name = validate_rustup_component_binary_name(
+        &id,
+        &component,
+        parse_optional_binary_name(&id, item.binary_name.as_deref())?,
+    )?;
     Ok(ResolvedPlanItem::RustupComponent(RustupComponentPlanItem {
         id,
-        component: require_host_package_input(
-            item.package.as_deref().unwrap_or_default(),
-            "rustup_component",
-            item.id.as_str(),
-        )?,
+        component,
         binary_name,
     }))
 }
@@ -828,6 +833,14 @@ fn default_binary_name_for_go_source(source: &GoInstallSource) -> Option<String>
     }
 }
 
+fn default_binary_name_for_rustup_component(component: &str) -> Option<&'static str> {
+    match component {
+        "rustfmt" => Some("rustfmt"),
+        "clippy" => Some("cargo-clippy"),
+        _ => None,
+    }
+}
+
 fn default_binary_name_for_python_package(package: &str) -> Option<String> {
     let trimmed = package.trim();
     let package = trimmed
@@ -861,6 +874,30 @@ fn path_leaf_name(path: &Path) -> Option<String> {
     path.file_name()
         .and_then(|value| value.to_str())
         .map(ToString::to_string)
+}
+
+fn validate_rustup_component_binary_name(
+    item_id: &str,
+    component: &str,
+    binary_name: Option<String>,
+) -> InstallerResult<Option<String>> {
+    let Some(binary_name) = binary_name else {
+        return Ok(None);
+    };
+
+    let Some(expected_binary) = default_binary_name_for_rustup_component(component) else {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `rustup_component` does not support `binary_name` for component `{component}` because installer cannot verify a stable CLI entrypoint"
+        )));
+    };
+
+    if binary_name != expected_binary {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `rustup_component` requires `binary_name={expected_binary}` for component `{component}`, got `{binary_name}`"
+        )));
+    }
+
+    Ok(Some(binary_name))
 }
 
 fn npm_package_name(package: &str) -> &str {
@@ -2051,6 +2088,64 @@ mod tests {
         )
         .expect_err("option-like rustup component should be rejected");
         assert!(err.to_string().contains("look like a command-line option"));
+    }
+
+    #[test]
+    fn resolve_rustup_component_rejects_unknown_component_binary_name_override() {
+        let item = InstallPlanItem {
+            id: "rust-src-demo".to_string(),
+            method: "rustup_component".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: Some("rust-src".to_string()),
+            destination: None,
+            package: Some("rust-src".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("unknown rustup component binary should be rejected");
+        assert!(
+            err.to_string()
+                .contains("does not support `binary_name` for component `rust-src`")
+        );
+    }
+
+    #[test]
+    fn resolve_rustup_component_rejects_mismatched_binary_name_override() {
+        let item = InstallPlanItem {
+            id: "rustfmt-demo".to_string(),
+            method: "rustup_component".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: Some("cargo-rustfmt".to_string()),
+            destination: None,
+            package: Some("rustfmt".to_string()),
+            manager: None,
+            python: None,
+        };
+
+        let err = resolve_plan_item(
+            &item,
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            None,
+        )
+        .expect_err("mismatched rustup component binary should be rejected");
+        assert!(
+            err.to_string()
+                .contains("requires `binary_name=rustfmt` for component `rustfmt`")
+        );
     }
 
     #[test]
