@@ -56,6 +56,43 @@ pub(crate) async fn bootstrap_builtin_tool(
 
     match install_builtin_tool(tool, target_triple, binary_ext, destination, cfg, client).await {
         Ok(source) => {
+            if let Err(err) = verify_bootstrap_installation(
+                tool,
+                target_triple,
+                destination,
+                managed_dir,
+                source.source_kind,
+            ) {
+                let status = if supported_tool {
+                    BootstrapStatus::Failed
+                } else {
+                    BootstrapStatus::Unsupported
+                };
+                let detail = match &managed_state {
+                    ManagedBootstrapState::ManagedBroken {
+                        detail: broken_detail,
+                    } => format!("{broken_detail}; reinstall failed: {}", err.detail()),
+                    _ => err.detail(),
+                };
+                let error_code =
+                    if matches!(managed_state, ManagedBootstrapState::ManagedBroken { .. }) {
+                        "managed_install_broken".to_string()
+                    } else {
+                        err.error_code().to_string()
+                    };
+                let exit_code = err.exit_code();
+                return BootstrapItem {
+                    tool: tool.to_string(),
+                    status,
+                    source: None,
+                    source_kind: None,
+                    archive_match: None,
+                    destination: Some(destination.display().to_string()),
+                    detail: Some(detail),
+                    error_code: (status == BootstrapStatus::Failed).then_some(error_code),
+                    failure_code: (status == BootstrapStatus::Failed).then_some(exit_code),
+                };
+            }
             let InstallSource {
                 locator,
                 source_kind,
@@ -111,6 +148,34 @@ pub(crate) async fn bootstrap_builtin_tool(
                 failure_code: (status == BootstrapStatus::Failed).then_some(exit_code),
             }
         }
+    }
+}
+
+fn verify_bootstrap_installation(
+    tool: &str,
+    target_triple: &str,
+    destination: &Path,
+    managed_dir: &Path,
+    source_kind: BootstrapSourceKind,
+) -> OperationResult<()> {
+    if source_kind == BootstrapSourceKind::SystemPackage {
+        if host_command_is_healthy_including_standard_locations(tool) {
+            return Ok(());
+        }
+        return Err(OperationError::install(format!(
+            "bootstrap install reported success but `{tool}` still failed the post-install health check"
+        )));
+    }
+
+    match assess_managed_bootstrap_state(tool, target_triple, destination, managed_dir) {
+        ManagedBootstrapState::ManagedHealthy { .. } => Ok(()),
+        ManagedBootstrapState::NeedsInstall => Err(OperationError::install(format!(
+            "bootstrap install reported success but managed destination {} is still missing",
+            destination.display()
+        ))),
+        ManagedBootstrapState::ManagedBroken { detail } => Err(OperationError::install(format!(
+            "bootstrap install reported success but managed install is unhealthy: {detail}"
+        ))),
     }
 }
 
@@ -241,52 +306,81 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
 mod tests {
     use std::path::Path;
 
-    use super::reusable_bootstrap_item;
-    use crate::builtin_tools::bootstrap_tool_health::ManagedBootstrapState;
-    use crate::contracts::{BootstrapSourceKind, BootstrapStatus};
+    use super::verify_bootstrap_installation;
+    use crate::contracts::BootstrapSourceKind;
 
+    fn write_executable(path: &Path, body: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent");
+        }
+        std::fs::write(path, body).expect("write executable");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(path)
+                .expect("stat executable")
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(path, perms).expect("chmod executable");
+        }
+    }
+
+    #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
     #[test]
-    fn broken_managed_install_blocks_host_present_shortcut() {
-        let item = reusable_bootstrap_item(
-            "uv",
-            Path::new("/tmp/managed/uv"),
-            &ManagedBootstrapState::ManagedBroken {
-                detail: "managed binary failed --version health check".to_string(),
-            },
-            true,
+    fn verify_bootstrap_installation_accepts_healthy_managed_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let destination = managed_dir.join("uv");
+        write_executable(
+            &destination,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.8.0"
+  exit 0
+fi
+exit 1
+"#,
         );
 
-        assert!(item.is_none());
+        verify_bootstrap_installation(
+            "uv",
+            "x86_64-unknown-linux-gnu",
+            &destination,
+            &managed_dir,
+            BootstrapSourceKind::Canonical,
+        )
+        .expect("healthy managed bootstrap install");
     }
 
+    #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
     #[test]
-    fn healthy_managed_install_wins_over_host_present() {
-        let item = reusable_bootstrap_item(
+    fn verify_bootstrap_installation_rejects_broken_managed_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let destination = managed_dir.join("uv");
+        write_executable(
+            &destination,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "not uv"
+  exit 0
+fi
+exit 1
+"#,
+        );
+
+        let err = verify_bootstrap_installation(
             "uv",
-            Path::new("/tmp/managed/uv"),
-            &ManagedBootstrapState::ManagedHealthy {
-                detail: "managed binary passed --version health check".to_string(),
-            },
-            true,
+            "x86_64-unknown-linux-gnu",
+            &destination,
+            &managed_dir,
+            BootstrapSourceKind::Canonical,
         )
-        .expect("managed install should be reused");
+        .expect_err("broken managed bootstrap install should fail");
 
-        assert_eq!(item.status, BootstrapStatus::Installed);
-        assert_eq!(item.source_kind, Some(BootstrapSourceKind::Managed));
-        assert_eq!(item.destination.as_deref(), Some("/tmp/managed/uv"));
-    }
-
-    #[test]
-    fn healthy_host_returns_present_when_managed_install_is_missing() {
-        let item = reusable_bootstrap_item(
-            "uv",
-            Path::new("/tmp/managed/uv"),
-            &ManagedBootstrapState::NeedsInstall,
-            true,
-        )
-        .expect("healthy host should satisfy bootstrap");
-
-        assert_eq!(item.status, BootstrapStatus::Present);
-        assert_eq!(item.destination, None);
+        assert!(
+            err.detail()
+                .contains("bootstrap install reported success but managed install is unhealthy")
+        );
     }
 }
