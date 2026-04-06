@@ -14,6 +14,7 @@
 
 - `bootstrap` 只解决当前宿主机的工具链补齐，不支持跨目标平台安装。
 - 如果 `managed_dir` 里已有同名内置工具但健康检查失败，`bootstrap` 会优先修复托管副本，而不会因为宿主 PATH 上碰巧存在健康同名命令就把结果降级成 `present`。
+- `bootstrap` 只有在本次安装后的目标工具再次通过同等级健康检查后，才会返回 `status=installed`；下载、解压或系统包命令本身成功但产物仍不可用时，会返回失败而不是误报成功。
 - 只有 `release` 与 `archive_tree_release` 支持显式跨目标平台下载。
 - `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
 - `apt` 是 `system_package` 域下的显式 alias：它固定执行 canonical `apt-get`，并且只接受可选 `manager=apt-get`。
