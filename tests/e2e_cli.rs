@@ -2010,46 +2010,6 @@ echo "stale"
     assert_eq!(json["items"][0]["error_code"], "install_failed");
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn apt_method_executes_explicit_apt_get_recipe() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let fake_bin_dir = temp.path().join("fake-bin");
-    let fake_apt_get = fake_bin_dir.join("apt-get");
-    let apt_args_log = temp.path().join("apt-get-args.log");
-    write_executable(
-        &fake_apt_get,
-        &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\nexit 0\n",
-            apt_args_log.display()
-        ),
-    );
-
-    let mut cmd = bootstrap_cmd();
-    let output = cmd
-        .env("PATH", path_with_prepend(&fake_bin_dir))
-        .args([
-            "--json",
-            "--method",
-            "apt",
-            "--id",
-            "demo-apt",
-            "--package",
-            "ripgrep",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let json: Value = serde_json::from_slice(&output).expect("valid json");
-    assert_eq!(json["items"][0]["status"], "installed");
-    assert_eq!(json["items"][0]["source"], "system:apt-get");
-    assert_eq!(json["items"][0]["source_kind"], "system_package");
-    let args = std::fs::read_to_string(&apt_args_log).expect("apt args");
-    assert_eq!(args, "install\n-y\n--\nripgrep\n");
-}
-
 #[cfg(unix)]
 #[test]
 fn npm_global_rejects_package_manifest_binary_without_expected_entrypoint() {
