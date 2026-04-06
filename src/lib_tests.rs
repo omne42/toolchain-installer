@@ -23,9 +23,9 @@ use omne_system_package_primitives::{
 
 use crate::builtin_tools::{
     ManagedBootstrapState, assess_managed_bootstrap_state, builtin_tool_destination,
-    gh_release_asset_suffix_for_target, host_command_is_healthy, install_gh_from_public_release,
-    install_git_from_public_release, normalize_requested_tools, replace_mingit_installation,
-    select_mingit_release_asset_for_target,
+    finalize_mingit_installation_with_launcher_writer, gh_release_asset_suffix_for_target,
+    host_command_is_healthy, install_gh_from_public_release, install_git_from_public_release,
+    normalize_requested_tools, replace_mingit_installation, select_mingit_release_asset_for_target,
 };
 use crate::contracts::{
     BootstrapArchiveFormat, BootstrapCommand, BootstrapSourceKind, BootstrapStatus,
@@ -1412,6 +1412,172 @@ fn select_mingit_release_asset_prefers_busybox_on_x64() {
     let selected = select_mingit_release_asset_for_target(&assets, "x86_64-pc-windows-msvc")
         .expect("selected asset");
     assert_eq!(selected.name, "MinGit-2.53.0-busybox-64-bit.zip");
+}
+
+#[test]
+fn finalize_mingit_installation_restores_previous_payload_when_launcher_write_fails() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let portable_root = managed_dir.join("git-portable");
+    let staging_root = managed_dir.join("git-portable.stage");
+    let backup_root = managed_dir.join("git-portable.backup");
+    let launcher_destination = managed_dir.join("git.cmd");
+    let launcher_backup = launcher_destination.with_file_name("git.cmd.test-backup");
+
+    let old_git = portable_root
+        .join("PortableGit")
+        .join("cmd")
+        .join("git.exe");
+    std::fs::create_dir_all(old_git.parent().expect("parent")).expect("create old payload");
+    std::fs::write(&old_git, b"old-git").expect("write old payload");
+    std::fs::write(&launcher_destination, "@echo off\r\nold\r\n").expect("write old launcher");
+
+    let new_git = staging_root.join("PortableGit").join("cmd").join("git.exe");
+    std::fs::create_dir_all(new_git.parent().expect("parent")).expect("create staged payload");
+    std::fs::write(&new_git, b"new-git").expect("write staged payload");
+
+    let err = finalize_mingit_installation_with_launcher_writer(
+        &portable_root,
+        &staging_root,
+        &backup_root,
+        &launcher_destination,
+        &launcher_backup,
+        || {
+            Err(crate::error::OperationError::install(
+                "synthetic launcher failure",
+            ))
+        },
+    )
+    .expect_err("launcher failure should rollback");
+    assert!(err.to_string().contains("synthetic launcher failure"));
+
+    assert_eq!(
+        std::fs::read(&old_git).expect("restored payload"),
+        b"old-git".to_vec()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&launcher_destination).expect("restored launcher"),
+        "@echo off\r\nold\r\n"
+    );
+    assert!(
+        !staging_root.exists(),
+        "staging root should be consumed during rollback"
+    );
+    assert!(
+        !backup_root.exists(),
+        "payload backup should be cleaned after rollback"
+    );
+    assert!(
+        !launcher_backup.exists(),
+        "launcher backup should be cleaned after rollback"
+    );
+}
+
+#[test]
+fn finalize_mingit_installation_restores_launcher_when_payload_replace_fails() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let portable_root = managed_dir.join("git-portable");
+    let staging_root = managed_dir.join("git-portable.stage");
+    let backup_root = managed_dir.join("git-portable.backup");
+    let launcher_destination = managed_dir.join("git.cmd");
+    let launcher_backup = launcher_destination.with_file_name("git.cmd.test-backup");
+
+    let old_git = portable_root
+        .join("PortableGit")
+        .join("cmd")
+        .join("git.exe");
+    std::fs::create_dir_all(old_git.parent().expect("parent")).expect("create old payload");
+    std::fs::write(&old_git, b"old-git").expect("write old payload");
+    std::fs::write(&launcher_destination, "@echo off\r\nold\r\n").expect("write old launcher");
+
+    let err = finalize_mingit_installation_with_launcher_writer(
+        &portable_root,
+        &staging_root,
+        &backup_root,
+        &launcher_destination,
+        &launcher_backup,
+        || Ok(()),
+    )
+    .expect_err("missing staging dir should fail payload replace");
+    assert!(
+        err.to_string().contains("No such file") || err.to_string().contains("no such file"),
+        "unexpected replace failure: {err}"
+    );
+
+    assert_eq!(
+        std::fs::read(&old_git).expect("restored payload"),
+        b"old-git".to_vec()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&launcher_destination).expect("restored launcher"),
+        "@echo off\r\nold\r\n"
+    );
+    assert!(
+        !backup_root.exists(),
+        "payload backup should be cleaned after rollback"
+    );
+    assert!(
+        !launcher_backup.exists(),
+        "launcher backup should be cleaned after rollback"
+    );
+}
+
+#[test]
+fn finalize_mingit_installation_cleans_backup_paths_on_success() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = tmp.path().join("managed");
+    let portable_root = managed_dir.join("git-portable");
+    let staging_root = managed_dir.join("git-portable.stage");
+    let backup_root = managed_dir.join("git-portable.backup");
+    let launcher_destination = managed_dir.join("git.cmd");
+    let launcher_backup = launcher_destination.with_file_name("git.cmd.test-backup");
+
+    let old_git = portable_root
+        .join("PortableGit")
+        .join("cmd")
+        .join("git.exe");
+    std::fs::create_dir_all(old_git.parent().expect("parent")).expect("create old payload");
+    std::fs::write(&old_git, b"old-git").expect("write old payload");
+    std::fs::write(&launcher_destination, "@echo off\r\nold\r\n").expect("write old launcher");
+
+    let new_git = staging_root.join("PortableGit").join("cmd").join("git.exe");
+    std::fs::create_dir_all(new_git.parent().expect("parent")).expect("create staged payload");
+    std::fs::write(&new_git, b"new-git").expect("write staged payload");
+
+    finalize_mingit_installation_with_launcher_writer(
+        &portable_root,
+        &staging_root,
+        &backup_root,
+        &launcher_destination,
+        &launcher_backup,
+        || {
+            std::fs::write(&launcher_destination, "@echo off\r\nnew\r\n")
+                .map_err(|err| crate::error::OperationError::install(err.to_string()))
+        },
+    )
+    .expect("successful finalize");
+
+    assert_eq!(
+        std::fs::read(
+            portable_root
+                .join("PortableGit")
+                .join("cmd")
+                .join("git.exe")
+        )
+        .expect("new payload"),
+        b"new-git".to_vec()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&launcher_destination).expect("new launcher"),
+        "@echo off\r\nnew\r\n"
+    );
+    assert!(!staging_root.exists(), "staging root should be promoted");
+    assert!(!backup_root.exists(), "payload backup should be cleaned");
+    assert!(
+        !launcher_backup.exists(),
+        "launcher backup should be cleaned after success"
+    );
 }
 
 #[test]

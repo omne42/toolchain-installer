@@ -416,7 +416,7 @@ fn finalize_mingit_installation(
     )
 }
 
-fn finalize_mingit_installation_with_launcher_writer<F>(
+pub(crate) fn finalize_mingit_installation_with_launcher_writer<F>(
     portable_root: &Path,
     staging_root: &Path,
     backup_root: &Path,
@@ -434,14 +434,37 @@ where
         launcher_backup,
     )?;
     if let Err(err) = replace_mingit_installation(portable_root, staging_root, backup_root) {
-        let _ = restore_backup_if_needed(launcher_destination, launcher_backup);
-        return Err(err);
+        let rollback_err = restore_backup_if_needed(launcher_destination, launcher_backup).err();
+        return Err(combine_mingit_transaction_error(
+            "restore git launcher after payload replace failure",
+            err,
+            rollback_err,
+        ));
     }
     if let Err(err) = write_launcher() {
-        let _ = transaction.rollback();
-        return Err(err);
+        let rollback_err = transaction.rollback().err();
+        return Err(combine_mingit_transaction_error(
+            "write MinGit launcher",
+            err,
+            rollback_err,
+        ));
     }
     transaction.commit()
+}
+
+fn combine_mingit_transaction_error(
+    step: &str,
+    err: OperationError,
+    rollback_err: Option<OperationError>,
+) -> OperationError {
+    let Some(rollback_err) = rollback_err else {
+        return err;
+    };
+    OperationError::install(format!(
+        "{step} failed: {}; rollback also failed: {}",
+        err.detail(),
+        rollback_err.detail()
+    ))
 }
 
 const MINGIT_GIT_ENTRY_SUFFIXES: [&str; 4] = [

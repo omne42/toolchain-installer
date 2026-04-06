@@ -13,7 +13,7 @@ pub(crate) use bootstrap_tool_health::{
 pub(crate) use builtin_tool_selection::normalize_requested_tools;
 #[cfg(test)]
 pub(crate) use public_release_asset_installation::{
-    gh_release_asset_suffix_for_target, install_gh_from_public_release,
-    install_git_from_public_release, replace_mingit_installation,
+    finalize_mingit_installation_with_launcher_writer, gh_release_asset_suffix_for_target,
+    install_gh_from_public_release, install_git_from_public_release, replace_mingit_installation,
     select_mingit_release_asset_for_target,
 };
