@@ -49,7 +49,8 @@
 - `--tool-version <value>`
   - direct-plan 模式里的通用 `version` 字段入口；当前用于 `cargo_install`、`go_install`、`uv_python`。
   - 对 `uv_python` 而言，当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
-  - 对 `cargo_install`、`go_install` 而言，installer 只负责把该值映射到对应方法的 `version` 字段，不额外重写上游版本语义。
+  - 对 `cargo_install` 而言，registry package 可以单独传 `version`；若 `package` 解析成本地路径，则必须把版本信息留在该本地源自身，不接受额外 `version`。
+  - 对 `go_install` 而言，installer 只会把 `version` 映射到远端 module spec；本地路径或已经自带 `@version` 的 `package` 不接受额外 `version`。
 - `--url`、`--sha256`、`--archive-binary`、`--binary-name`、`--destination`
   - `release` 或 `archive_tree_release` 模式字段；其中 `archive_binary` 仅用于 `release`。
   - `--archive-binary` 传的是 archive 内目标二进制的相对路径；installer 会规范斜杠，并在常见单根目录 archive 上自动补齐根目录后再做精确匹配。

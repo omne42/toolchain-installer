@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_source_lists_stay_ahead_of_environment_fallbacks() {
+    fn explicit_source_lists_override_environment_fallbacks() {
         let _guard = env_lock().lock().expect("env lock");
         unsafe {
             std::env::set_var(
@@ -369,7 +369,6 @@ mod tests {
             vec![
                 "https://cli-a.example/releases".to_string(),
                 "https://cli-b.example/releases".to_string(),
-                "https://env-a.example/releases".to_string(),
             ]
         );
         assert_eq!(
@@ -377,7 +376,6 @@ mod tests {
             vec![
                 "https://cli-a.example/simple".to_string(),
                 "https://cli-b.example/simple".to_string(),
-                "https://env-a.example/simple".to_string(),
             ]
         );
         assert_eq!(
@@ -385,7 +383,6 @@ mod tests {
             vec![
                 "https://cli-a.example/python".to_string(),
                 "https://cli-b.example/python".to_string(),
-                "https://env-a.example/python".to_string(),
             ]
         );
     }

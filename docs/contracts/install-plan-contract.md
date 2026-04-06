@@ -156,7 +156,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `npm_global` 使用 `bun` 时，若 `managed_dir` 本身已经是 `.../bin`，installer 会直接把它当作 bun 的全局 binary 目录，而不是再额外套一层 `bin/` 形成 `.../bin/bin/<tool>`。
 - `npm_global`、`cargo_install`、`go_install`、`uv_tool` 若未显式提供 `binary_name`，installer 会优先从 `package` 或解析后的本地/远端来源推导默认二进制名；只有确实推不出来时才回退到 `id`。
-- `npm_global` 与 `go_install` 若 `package` 已经编码了版本、显式来源或本地路径，就不接受额外 `version` 字段；installer 会在 resolve 阶段直接返回 usage error，而不是静默忽略其中一边。
+- `npm_global`、`cargo_install`、`go_install` 若 `package` 已经编码了版本、显式来源或本地路径，就不接受额外 `version` 字段；installer 会在 resolve 阶段直接返回 usage error，而不是静默忽略其中一边。
 - `go_install` 把 `./cmd/demo` 这类显式相对路径和 `cmd/demo` 这类 bare relative 工作区路径都当作本地包路径处理；它们会按 plan 文件所在目录解析，而不是被当成远端 module spec 走网络安装。
 - Windows target 下，如果 `npm_global`、`cargo_install`、`go_install`、`uv_tool` 显式提供的 `binary_name` 已经带有 `.cmd` 或 `.exe` 这类平台后缀，执行层不会再重复追加同一后缀。
 - `npm_global` 若未显式提供 `binary_name`，且包名推导出的默认入口在托管 bin 目录里并不存在，installer 会继续结合 item `id` 与已安装包的 manifest/bin 元数据解析真实 CLI 入口；像 `typescript -> tsc` 这类“包名不等于命令名”的安装不会再被误判成失败。
