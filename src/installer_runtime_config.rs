@@ -323,6 +323,71 @@ mod tests {
     }
 
     #[test]
+    fn explicit_source_lists_override_environment_fallbacks() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe {
+            std::env::set_var(
+                "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
+                "https://env-a.example/releases,https://cli-a.example/releases",
+            );
+            std::env::set_var(
+                "TOOLCHAIN_INSTALLER_PACKAGE_INDEXES",
+                "https://env-a.example/simple,https://cli-a.example/simple",
+            );
+            std::env::set_var(
+                "TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS",
+                "https://env-a.example/python,https://cli-a.example/python",
+            );
+        }
+
+        let request = ExecutionRequest {
+            mirror_prefixes: vec![
+                "https://cli-a.example/releases".to_string(),
+                "https://cli-b.example/releases".to_string(),
+            ],
+            package_indexes: vec![
+                "https://cli-a.example/simple".to_string(),
+                "https://cli-b.example/simple".to_string(),
+            ],
+            python_install_mirrors: vec![
+                "https://cli-a.example/python".to_string(),
+                "https://cli-b.example/python".to_string(),
+            ],
+            ..ExecutionRequest::default()
+        }
+        .with_process_environment_fallbacks();
+        let cfg = InstallerRuntimeConfig::from_execution_request(&request);
+
+        unsafe {
+            std::env::remove_var("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS");
+        }
+
+        assert_eq!(
+            cfg.download_sources.mirror_prefixes,
+            vec![
+                "https://cli-a.example/releases".to_string(),
+                "https://cli-b.example/releases".to_string(),
+            ]
+        );
+        assert_eq!(
+            cfg.package_indexes.indexes,
+            vec![
+                "https://cli-a.example/simple".to_string(),
+                "https://cli-b.example/simple".to_string(),
+            ]
+        );
+        assert_eq!(
+            cfg.python_mirrors.install_mirrors,
+            vec![
+                "https://cli-a.example/python".to_string(),
+                "https://cli-b.example/python".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn managed_toolchain_policy_uses_request_timeout_override() {
         let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
             uv_timeout_seconds: Some(7),

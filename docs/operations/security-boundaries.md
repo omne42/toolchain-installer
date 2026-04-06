@@ -48,8 +48,8 @@
    - 托管安装复用只适用于内置受支持工具；未知工具即使在 `managed_dir` 下存在同名且可执行的文件，也不会被误报成 `installed`。
    - 已存在但损坏的 managed 内置工具优先级高于宿主 PATH 命中；只要托管副本健康检查失败，`bootstrap` 就不会把健康 host 命令报成 `present` 来掩盖损坏状态。
    - Windows managed `git` 的 launcher 只允许指向 `managed_dir` 内的 MinGit payload；带 `..` 的逃逸路径会被直接视为损坏安装。
-   - Windows managed `git` 的 launcher 还必须落在 `managed_dir/git-portable/PortableGit/` 这棵 payload 子树内；即使仍在 `git-portable/` 下，只要指向其他旁路目录也会被视为损坏安装。
-   - Windows managed `git` 不会只凭 launcher、`git.exe` 和 DLL 文件存在就被视为健康；installer 还会执行 payload 的 `--version` 健康检查。
+   - Windows managed `git` 的 launcher 目标必须继续落在 `managed_dir/git-portable/` 这棵 payload 根内；`git-portable/mingw64/bin/git.exe` 这类扁平 MinGit 布局和 `git-portable/PortableGit/...` 这类嵌套布局都允许，但只要指向 `git-portable/` 之外的旁路目录就会被视为损坏安装。
+   - Windows managed `git` 不会只凭 launcher 或 payload 文件存在就被视为健康；installer 还会执行 payload 的 `--version` 健康检查。
    - `bootstrap` 只有在宿主机上解析到可实际执行的命令后才会返回 `present`；PATH 中同名但不可执行的普通文件不会阻止后续安装。
 
 ## 验收测试

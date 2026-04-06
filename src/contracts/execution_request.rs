@@ -32,16 +32,18 @@ impl ExecutionRequest {
     }
 
     pub fn with_process_environment_fallbacks(mut self) -> Self {
-        if self.mirror_prefixes.is_empty() {
-            self.mirror_prefixes = parse_csv_env("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES");
-        }
-        if self.package_indexes.is_empty() {
-            self.package_indexes = parse_csv_env("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES");
-        }
-        if self.python_install_mirrors.is_empty() {
-            self.python_install_mirrors =
-                parse_csv_env("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS");
-        }
+        fill_explicit_list_from_env_if_empty(
+            &mut self.mirror_prefixes,
+            "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
+        );
+        fill_explicit_list_from_env_if_empty(
+            &mut self.package_indexes,
+            "TOOLCHAIN_INSTALLER_PACKAGE_INDEXES",
+        );
+        fill_explicit_list_from_env_if_empty(
+            &mut self.python_install_mirrors,
+            "TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS",
+        );
         if self.github_api_bases.is_empty() {
             self.github_api_bases = parse_csv_env("TOOLCHAIN_INSTALLER_GITHUB_API_BASES");
         }
@@ -74,6 +76,13 @@ impl ExecutionRequest {
 
 fn option_string_is_empty(value: Option<&str>) -> bool {
     value.is_none_or(|value| value.trim().is_empty())
+}
+
+fn fill_explicit_list_from_env_if_empty(values: &mut Vec<String>, env_name: &str) {
+    if values.iter().any(|value| !value.trim().is_empty()) {
+        return;
+    }
+    values.extend(parse_csv_env(env_name));
 }
 
 fn parse_csv_env(name: &str) -> Vec<String> {
@@ -130,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn process_environment_fallbacks_fill_only_missing_fields() {
+    fn process_environment_fallbacks_keep_explicit_source_lists_without_env_append() {
         let _guard = env_lock().lock().expect("env lock");
         let names = [
             "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
@@ -262,6 +271,53 @@ mod tests {
         assert_eq!(request.http_timeout_seconds, Some(29));
         assert_eq!(request.max_download_bytes, Some(31));
         assert_eq!(request.uv_timeout_seconds, Some(37));
+    }
+
+    #[test]
+    fn process_environment_fallbacks_use_env_source_lists_when_no_explicit_values_exist() {
+        let _guard = env_lock().lock().expect("env lock");
+        let names = [
+            "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
+            "TOOLCHAIN_INSTALLER_PACKAGE_INDEXES",
+            "TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS",
+        ];
+        let previous = names
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect::<Vec<_>>();
+        unsafe {
+            std::env::set_var(
+                "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
+                "https://env.example/releases",
+            );
+            std::env::set_var(
+                "TOOLCHAIN_INSTALLER_PACKAGE_INDEXES",
+                "https://env.example/simple",
+            );
+            std::env::set_var(
+                "TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS",
+                "https://env.example/python",
+            );
+        }
+
+        let request = ExecutionRequest::default().with_process_environment_fallbacks();
+
+        for (name, value) in previous {
+            restore_env_var(name, value);
+        }
+
+        assert_eq!(
+            request.mirror_prefixes,
+            vec!["https://env.example/releases".to_string()]
+        );
+        assert_eq!(
+            request.package_indexes,
+            vec!["https://env.example/simple".to_string()]
+        );
+        assert_eq!(
+            request.python_install_mirrors,
+            vec!["https://env.example/python".to_string()]
+        );
     }
 
     #[test]
