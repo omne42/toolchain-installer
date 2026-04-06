@@ -1,22 +1,38 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use omne_process_primitives::{
-    HostRecipeRequest, command_exists, command_path_exists, run_host_recipe,
-};
+use omne_process_primitives::{HostRecipeRequest, command_exists, command_path_exists};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
+use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::managed_toolchain::{ManagedDestinationBackup, promote_staged_file};
 use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
 use super::item_destination_resolution::{cargo_install_root, resolve_cargo_install_destination};
 
+#[allow(dead_code)]
 pub(crate) fn execute_cargo_install_item(
     item: &CargoInstallPlanItem,
     target_triple: &str,
     managed_dir: &Path,
+) -> OperationResult<BootstrapItem> {
+    execute_cargo_install_item_with_timeout(
+        item,
+        target_triple,
+        managed_dir,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
+    )
+}
+
+pub(crate) fn execute_cargo_install_item_with_timeout(
+    item: &CargoInstallPlanItem,
+    target_triple: &str,
+    managed_dir: &Path,
+    timeout: Duration,
 ) -> OperationResult<BootstrapItem> {
     if !command_exists("cargo") {
         return Err(OperationError::install("cargo command not found"));
@@ -59,10 +75,12 @@ pub(crate) fn execute_cargo_install_item(
 
     let backup = ManagedDestinationBackup::stash(&expected_destination, "cargo_install binary")
         .map_err(OperationError::install)?;
-    if let Err(err) = run_host_recipe(&HostRecipeRequest::new("cargo".as_ref(), &args)) {
+    if let Err(err) =
+        run_installer_host_recipe(&HostRecipeRequest::new("cargo".as_ref(), &args), timeout)
+    {
         cleanup_stage_root(&stage_root).ok();
         backup.restore().map_err(OperationError::install)?;
-        return Err(OperationError::from_host_recipe(err));
+        return Err(err);
     }
 
     let staged_binary = match select_staged_binary(

@@ -1,16 +1,34 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
+use omne_process_primitives::{HostRecipeRequest, resolve_command_path};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
+use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::plan_items::RustupComponentPlanItem;
 
+#[allow(dead_code)]
 pub(crate) fn execute_rustup_component_item(
     item: &RustupComponentPlanItem,
     _target_triple: &str,
     _managed_dir: &std::path::Path,
+) -> OperationResult<BootstrapItem> {
+    execute_rustup_component_item_with_timeout(
+        item,
+        _target_triple,
+        _managed_dir,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
+    )
+}
+
+pub(crate) fn execute_rustup_component_item_with_timeout(
+    item: &RustupComponentPlanItem,
+    _target_triple: &str,
+    _managed_dir: &std::path::Path,
+    timeout: Duration,
 ) -> OperationResult<BootstrapItem> {
     let args = vec![
         "component".to_string(),
@@ -20,8 +38,7 @@ pub(crate) fn execute_rustup_component_item(
     .into_iter()
     .map(OsString::from)
     .collect::<Vec<_>>();
-    run_host_recipe(&HostRecipeRequest::new("rustup".as_ref(), &args))
-        .map_err(OperationError::from_host_recipe)?;
+    run_installer_host_recipe(&HostRecipeRequest::new("rustup".as_ref(), &args), timeout)?;
 
     let destination =
         resolve_rustup_component_destination(item).map_err(OperationError::install)?;

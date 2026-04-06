@@ -4,13 +4,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use omne_process_primitives::{
     HostRecipeRequest, command_exists, command_path_exists,
-    resolve_command_path_or_standard_location, run_host_recipe,
+    resolve_command_path_or_standard_location,
 };
 
 use crate::artifact::InstallSource;
 use crate::contracts::{BootstrapItem, BootstrapSourceKind};
 use crate::download_sources::redact_source_url;
 use crate::error::{ExitCode, OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::bootstrap_item_construction::build_installed_bootstrap_item_from_install_source;
 use crate::managed_toolchain::install_uv_from_public_release;
@@ -238,8 +239,10 @@ fn install_uv_into_stage_with_pip(
     })?;
 
     let args = build_install_uv_with_pip_args(&site_packages_dir, cfg);
-    run_host_recipe(&HostRecipeRequest::new(python.as_ref(), &args))
-        .map_err(OperationError::from_host_recipe)?;
+    run_installer_host_recipe(
+        &HostRecipeRequest::new(python.as_ref(), &args),
+        cfg.host_recipes.timeout,
+    )?;
     write_bootstrap_uv_launcher(stage_root, python)?;
     Ok(())
 }
@@ -412,9 +415,10 @@ fn append_bootstrap_context(err: OperationError, bootstrap_errors: &[String]) ->
 mod tests {
     use super::build_install_uv_with_pip_args;
     use crate::installer_runtime_config::{
-        DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy,
-        DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig,
-        ManagedToolchainPolicy, PackageIndexPolicy, PythonMirrorPolicy,
+        DEFAULT_GITHUB_API_BASE, DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS, DEFAULT_PYPI_INDEX,
+        DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy,
+        GitHubReleasePolicy, HostRecipePolicy, InstallerRuntimeConfig, ManagedToolchainPolicy,
+        PackageIndexPolicy, PythonMirrorPolicy,
     };
     use std::time::Duration;
 
@@ -440,6 +444,9 @@ mod tests {
             download: DownloadPolicy {
                 http_timeout: Duration::from_secs(5),
                 max_download_bytes: None,
+            },
+            host_recipes: HostRecipePolicy {
+                timeout: Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
             },
             managed_toolchain: ManagedToolchainPolicy {
                 uv_recipe_timeout: Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),

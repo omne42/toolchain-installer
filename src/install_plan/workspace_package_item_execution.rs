@@ -1,15 +1,31 @@
 use std::ffi::OsString;
 use std::path::Path;
+use std::time::Duration;
 
-use omne_process_primitives::{HostRecipeRequest, resolve_command_path, run_host_recipe};
+use omne_process_primitives::{HostRecipeRequest, resolve_command_path};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
+use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::plan_items::WorkspacePackagePlanItem;
 
+#[allow(dead_code)]
 pub(crate) fn execute_workspace_package_item(
     item: &WorkspacePackagePlanItem,
     _managed_dir: &Path,
+) -> OperationResult<BootstrapItem> {
+    execute_workspace_package_item_with_timeout(
+        item,
+        _managed_dir,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
+    )
+}
+
+pub(crate) fn execute_workspace_package_item_with_timeout(
+    item: &WorkspacePackagePlanItem,
+    _managed_dir: &Path,
+    timeout: Duration,
 ) -> OperationResult<BootstrapItem> {
     let workspace_dir = item.destination.clone();
     if !workspace_dir.join("package.json").exists() {
@@ -20,10 +36,10 @@ pub(crate) fn execute_workspace_package_item(
     }
     let (program, args) = build_workspace_package_command(item)?;
     let manager = item.manager.command_name();
-    run_host_recipe(
+    run_installer_host_recipe(
         &HostRecipeRequest::new(program.as_os_str(), &args).with_working_directory(&workspace_dir),
-    )
-    .map_err(OperationError::from_host_recipe)?;
+        timeout,
+    )?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),

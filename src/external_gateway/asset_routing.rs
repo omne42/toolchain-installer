@@ -87,9 +87,9 @@ pub(crate) fn make_gateway_asset_candidate(
 mod tests {
     use super::{gateway_candidate_for_git_release_asset, git_release_asset_from_url};
     use crate::installer_runtime_config::{
-        DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy,
-        GitHubReleasePolicy, InstallerRuntimeConfig, ManagedToolchainPolicy, PackageIndexPolicy,
-        PythonMirrorPolicy,
+        DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS, DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy,
+        DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy, HostRecipePolicy,
+        InstallerRuntimeConfig, ManagedToolchainPolicy, PackageIndexPolicy, PythonMirrorPolicy,
     };
 
     fn gateway_enabled_config() -> InstallerRuntimeConfig {
@@ -104,6 +104,9 @@ mod tests {
             download: DownloadPolicy {
                 http_timeout: std::time::Duration::from_secs(120),
                 max_download_bytes: None,
+            },
+            host_recipes: HostRecipePolicy {
+                timeout: std::time::Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
             },
             managed_toolchain: ManagedToolchainPolicy {
                 uv_recipe_timeout: std::time::Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),

@@ -5,6 +5,7 @@ use crate::contracts::ExecutionRequest;
 
 pub(crate) const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
 pub(crate) const DEFAULT_HTTP_TIMEOUT_SECONDS: u64 = 120;
+pub(crate) const DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS: u64 = 15 * 60;
 pub(crate) const DEFAULT_UV_TIMEOUT_SECONDS: u64 = 15 * 60;
 pub(crate) const DEFAULT_PYPI_INDEX: &str = "https://pypi.org/simple";
 
@@ -16,6 +17,7 @@ pub(crate) struct InstallerRuntimeConfig {
     pub(crate) python_mirrors: PythonMirrorPolicy,
     pub(crate) gateway: GatewayRoutingPolicy,
     pub(crate) download: DownloadPolicy,
+    pub(crate) host_recipes: HostRecipePolicy,
     pub(crate) managed_toolchain: ManagedToolchainPolicy,
 }
 
@@ -53,6 +55,11 @@ pub(crate) struct DownloadPolicy {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct HostRecipePolicy {
+    pub(crate) timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ManagedToolchainPolicy {
     pub(crate) uv_recipe_timeout: Duration,
 }
@@ -66,6 +73,7 @@ impl InstallerRuntimeConfig {
             python_mirrors: PythonMirrorPolicy::from_execution_request(request),
             gateway: GatewayRoutingPolicy::from_execution_request(request),
             download: DownloadPolicy::from_execution_request(request),
+            host_recipes: HostRecipePolicy::from_execution_request(request),
             managed_toolchain: ManagedToolchainPolicy::from_execution_request(request),
         }
     }
@@ -163,6 +171,17 @@ impl DownloadPolicy {
             http_timeout,
             max_download_bytes,
         }
+    }
+}
+
+impl HostRecipePolicy {
+    fn from_execution_request(request: &ExecutionRequest) -> Self {
+        let timeout = request
+            .host_recipe_timeout_seconds
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS));
+        Self { timeout }
     }
 }
 
@@ -400,6 +419,15 @@ mod tests {
     }
 
     #[test]
+    fn host_recipe_policy_uses_request_timeout_override() {
+        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest {
+            host_recipe_timeout_seconds: Some(13),
+            ..ExecutionRequest::default()
+        });
+        assert_eq!(cfg.host_recipes.timeout, Duration::from_secs(13));
+    }
+
+    #[test]
     fn runtime_config_ignores_process_environment_once_request_is_built() {
         let _guard = env_lock().lock().expect("env lock");
         let request = ExecutionRequest {
@@ -409,6 +437,7 @@ mod tests {
             country: Some("US".to_string()),
             http_timeout_seconds: Some(41),
             max_download_bytes: Some(43),
+            host_recipe_timeout_seconds: Some(45),
             uv_timeout_seconds: Some(47),
             ..ExecutionRequest::default()
         };
@@ -423,6 +452,7 @@ mod tests {
             std::env::set_var("TOOLCHAIN_INSTALLER_COUNTRY", "CN");
             std::env::set_var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS", "53");
             std::env::set_var("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES", "59");
+            std::env::set_var("TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS", "61");
             std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", "61");
         }
 
@@ -435,6 +465,7 @@ mod tests {
             std::env::remove_var("TOOLCHAIN_INSTALLER_COUNTRY");
             std::env::remove_var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS");
             std::env::remove_var("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES");
+            std::env::remove_var("TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS");
             std::env::remove_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS");
         }
 
@@ -447,6 +478,7 @@ mod tests {
         assert_eq!(cfg.gateway.country.as_deref(), Some("US"));
         assert_eq!(cfg.download.http_timeout, Duration::from_secs(41));
         assert_eq!(cfg.download.max_download_bytes, Some(43));
+        assert_eq!(cfg.host_recipes.timeout, Duration::from_secs(45));
         assert_eq!(
             cfg.managed_toolchain.uv_recipe_timeout,
             Duration::from_secs(47)

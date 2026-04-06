@@ -1,17 +1,31 @@
 use std::ffi::OsString;
+use std::time::Duration;
 
 use omne_host_info_primitives::detect_host_platform;
-use omne_process_primitives::{HostRecipeRequest, run_host_recipe};
+use omne_process_primitives::HostRecipeRequest;
 use omne_system_package_primitives::{
     SystemPackageName, default_system_package_install_recipes_for_os,
 };
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
+use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::plan_items::{SystemPackageMode, SystemPackagePlanItem};
 
+#[allow(dead_code)]
 pub(crate) fn execute_system_package_item(
     item: &SystemPackagePlanItem,
+) -> OperationResult<BootstrapItem> {
+    execute_system_package_item_with_timeout(
+        item,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
+    )
+}
+
+pub(crate) fn execute_system_package_item_with_timeout(
+    item: &SystemPackagePlanItem,
+    timeout: Duration,
 ) -> OperationResult<BootstrapItem> {
     let package = SystemPackageName::new(&item.package).map_err(|err| {
         OperationError::install(format!(
@@ -40,7 +54,10 @@ pub(crate) fn execute_system_package_item(
     let mut errors = Vec::new();
     for recipe in recipes {
         let args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
-        match run_host_recipe(&HostRecipeRequest::new(recipe.program.as_ref(), &args)) {
+        match run_installer_host_recipe(
+            &HostRecipeRequest::new(recipe.program.as_ref(), &args),
+            timeout,
+        ) {
             Ok(_) => {
                 return Ok(BootstrapItem {
                     tool: item.id.clone(),

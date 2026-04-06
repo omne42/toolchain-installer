@@ -2,9 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use omne_host_info_primitives::detect_host_platform;
-use omne_process_primitives::{
-    HostRecipeRequest, resolve_command_path_or_standard_location, run_host_recipe,
-};
+use omne_process_primitives::{HostRecipeRequest, resolve_command_path_or_standard_location};
 use omne_system_package_primitives::try_default_system_package_install_recipes_for_os;
 
 use crate::artifact::InstallSource;
@@ -18,6 +16,7 @@ use crate::builtin_tools::public_release_asset_installation::{
 };
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::install_uv_from_public_release;
 
@@ -256,10 +255,13 @@ async fn install_git_for_bootstrap(
         return install_git_from_public_release(target_triple, destination, cfg, client).await;
     }
 
-    install_git_via_system_package_manager(target_triple)
+    install_git_via_system_package_manager(target_triple, cfg)
 }
 
-fn install_git_via_system_package_manager(target_triple: &str) -> OperationResult<InstallSource> {
+fn install_git_via_system_package_manager(
+    target_triple: &str,
+    cfg: &InstallerRuntimeConfig,
+) -> OperationResult<InstallSource> {
     let recipes = detect_host_platform()
         .map(|platform| {
             try_default_system_package_install_recipes_for_os(
@@ -279,7 +281,10 @@ fn install_git_via_system_package_manager(target_triple: &str) -> OperationResul
     let mut errors = Vec::new();
     for recipe in recipes {
         let args = recipe.args.iter().map(OsString::from).collect::<Vec<_>>();
-        match run_host_recipe(&HostRecipeRequest::new(recipe.program.as_ref(), &args)) {
+        match run_installer_host_recipe(
+            &HostRecipeRequest::new(recipe.program.as_ref(), &args),
+            cfg.host_recipes.timeout,
+        ) {
             Ok(_) => {
                 if host_command_is_healthy_including_standard_locations("git") {
                     return Ok(InstallSource::new(

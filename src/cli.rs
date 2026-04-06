@@ -26,6 +26,8 @@ struct BootstrapArgs {
     country: Option<String>,
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     max_download_bytes: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    host_recipe_timeout_seconds: Option<u64>,
     #[arg(long)]
     plan_file: Option<PathBuf>,
     #[arg(long)]
@@ -71,6 +73,7 @@ impl BootstrapArgs {
             country: self.country.clone(),
             http_timeout_seconds: None,
             max_download_bytes: self.max_download_bytes,
+            host_recipe_timeout_seconds: self.host_recipe_timeout_seconds,
             uv_timeout_seconds: None,
         }
         .with_process_environment_fallbacks()

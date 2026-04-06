@@ -42,8 +42,9 @@
 - `src/contracts/`：稳定输入/输出契约，只承载 bootstrap request/result 与 install plan contract。
 - `src/plan_items.rs`：`install_plan` 与 `managed_toolchain` 共享的强类型安装项模型。
 - `src/error.rs`：错误类型与退出码。
+- `src/host_recipe.rs`：installer 对宿主 recipe 执行的统一 hard timeout 与超时错误渲染封装。
 - `src/installer_runtime_config.rs`：installer 运行期配置与环境变量收敛。
-  这里已经拆成 `github_releases`、`download_sources`、`download`、`package_indexes`、`python_mirrors`、`gateway` 这些内部策略子结构，不再让所有产品配置揉成一个平铺大对象。
+  这里已经拆成 `github_releases`、`download_sources`、`download`、`host_recipes`、`package_indexes`、`python_mirrors`、`gateway` 这些内部策略子结构，不再让所有产品配置揉成一个平铺大对象。
 - `../omne_foundation/crates/http-kit/`：shared foundation 的 HTTP 通用能力；不承载 installer 自己的 GitHub release schema 与来源候选策略。
 - `../omne_foundation/crates/github-kit/`：shared foundation 的纯 GitHub API client 能力；负责 latest release metadata 获取，不承载 installer 的来源候选顺序或资产选择策略。
 - `../omne-runtime/crates/omne-artifact-install-primitives/`：shared runtime 的 artifact 下载候选执行、SHA 校验、binary/tree 安装管道原语。

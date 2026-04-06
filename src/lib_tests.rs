@@ -42,9 +42,10 @@ use crate::install_plan::install_plan_validation::{
     validate_plan, validate_plan_with_base_dir, validate_plan_with_managed_dir,
 };
 use crate::installer_runtime_config::{
-    DEFAULT_GITHUB_API_BASE, DEFAULT_PYPI_INDEX, DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy,
-    DownloadSourcePolicy, GatewayRoutingPolicy, GitHubReleasePolicy, InstallerRuntimeConfig,
-    ManagedToolchainPolicy, PackageIndexPolicy, PythonMirrorPolicy,
+    DEFAULT_GITHUB_API_BASE, DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS, DEFAULT_PYPI_INDEX,
+    DEFAULT_UV_TIMEOUT_SECONDS, DownloadPolicy, DownloadSourcePolicy, GatewayRoutingPolicy,
+    GitHubReleasePolicy, HostRecipePolicy, InstallerRuntimeConfig, ManagedToolchainPolicy,
+    PackageIndexPolicy, PythonMirrorPolicy,
 };
 use crate::managed_toolchain::managed_environment_layout::managed_python_installation_dir;
 use crate::managed_toolchain::managed_root_dir::{
@@ -82,6 +83,9 @@ fn test_runtime_config() -> InstallerRuntimeConfig {
         download: DownloadPolicy {
             http_timeout: Duration::from_secs(5),
             max_download_bytes: None,
+        },
+        host_recipes: HostRecipePolicy {
+            timeout: Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
         },
         managed_toolchain: ManagedToolchainPolicy {
             uv_recipe_timeout: Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),
@@ -2321,6 +2325,67 @@ async fn apply_install_plan_rejects_download_over_configured_size_limit() -> any
     );
 
     handle.join().expect("mock server thread join");
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "probe script is unix-specific")]
+#[tokio::test]
+async fn apply_install_plan_fails_host_recipe_that_times_out() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let python = temp.path().join("fake-python");
+    write_executable(
+        &python,
+        "#!/usr/bin/env bash\necho stdout-before-timeout\necho stderr-before-timeout >&2\nsleep 5\n",
+    )?;
+
+    let plan = InstallPlan {
+        schema_version: PLAN_SCHEMA_VERSION,
+        items: vec![InstallPlanItem {
+            id: "pip-demo".to_string(),
+            method: "pip".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("ruff".to_string()),
+            manager: None,
+            python: Some(python.display().to_string()),
+        }],
+    };
+    let request = crate::ExecutionRequest {
+        host_recipe_timeout_seconds: Some(1),
+        ..Default::default()
+    };
+
+    let result = crate::apply_install_plan(&plan, &request).await?;
+    assert_eq!(result.items[0].status, BootstrapStatus::Failed);
+    assert_eq!(
+        result.items[0].error_code.as_deref(),
+        Some("install_failed")
+    );
+    assert!(
+        result.items[0]
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("timed out after 1s")
+    );
+    assert!(
+        result.items[0]
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("stdout-before-timeout")
+    );
+    assert!(
+        result.items[0]
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("stderr-before-timeout")
+    );
     Ok(())
 }
 

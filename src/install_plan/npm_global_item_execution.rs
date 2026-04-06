@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::SystemTime;
 
-use omne_process_primitives::{
-    HostRecipeRequest, command_path_exists, resolve_command_path, run_host_recipe,
-};
+use omne_process_primitives::{HostRecipeRequest, command_path_exists, resolve_command_path};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
+use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::plan_items::{HostPackageInput, NodePackageManager, NpmGlobalPlanItem};
 
 struct NpmGlobalRecipe {
@@ -34,10 +35,25 @@ struct PackageInstallRequest<'a> {
     binary_name: &'a str,
 }
 
+#[allow(dead_code)]
 pub(crate) fn execute_npm_global_item(
     item: &NpmGlobalPlanItem,
     target_triple: &str,
     managed_dir: &Path,
+) -> OperationResult<BootstrapItem> {
+    execute_npm_global_item_with_timeout(
+        item,
+        target_triple,
+        managed_dir,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
+    )
+}
+
+pub(crate) fn execute_npm_global_item_with_timeout(
+    item: &NpmGlobalPlanItem,
+    target_triple: &str,
+    managed_dir: &Path,
+    timeout: Duration,
 ) -> OperationResult<BootstrapItem> {
     let recipe = build_npm_global_recipe(
         item.manager,
@@ -45,6 +61,7 @@ pub(crate) fn execute_npm_global_item(
         &item.binary_name,
         target_triple,
         managed_dir,
+        timeout,
     )?;
     let preinstall_state = capture_installation_state_with_item_id(
         &recipe.binary_path,
@@ -55,10 +72,10 @@ pub(crate) fn execute_npm_global_item(
         recipe.package_search_root.as_deref(),
         recipe.fallback_search_root.as_deref(),
     );
-    run_host_recipe(
+    run_installer_host_recipe(
         &HostRecipeRequest::new(recipe.program.as_os_str(), &recipe.args).with_env(&recipe.env),
-    )
-    .map_err(OperationError::from_host_recipe)?;
+        timeout,
+    )?;
 
     let destination = match resolve_npm_global_destination_with_item_id(
         &recipe.binary_path,
@@ -128,6 +145,7 @@ fn build_npm_global_recipe(
     binary_name: &str,
     target_triple: &str,
     managed_dir: &Path,
+    timeout: Duration,
 ) -> OperationResult<NpmGlobalRecipe> {
     match manager {
         NodePackageManager::Npm => {
@@ -170,7 +188,7 @@ fn build_npm_global_recipe(
                 ),
                 (OsString::from("PATH"), prepend_path_env(managed_dir)?),
             ];
-            let package_search_root = resolve_pnpm_global_package_root(&program, &env);
+            let package_search_root = resolve_pnpm_global_package_root(&program, &env, timeout);
             let binary_path =
                 managed_dir.join(global_binary_filename(binary_name, manager, target_triple));
             Ok(NpmGlobalRecipe {
@@ -239,9 +257,14 @@ fn resolved_package_manager_program(command: &str) -> OsString {
 fn resolve_pnpm_global_package_root(
     program: &OsStr,
     env: &[(OsString, OsString)],
+    timeout: Duration,
 ) -> Option<PathBuf> {
     let args = [OsString::from("root"), OsString::from("--global")];
-    let output = run_host_recipe(&HostRecipeRequest::new(program, &args).with_env(env)).ok()?;
+    let output = run_installer_host_recipe(
+        &HostRecipeRequest::new(program, &args).with_env(env),
+        timeout,
+    )
+    .ok()?;
     parse_pnpm_root_stdout(&output.output.stdout)
 }
 
@@ -449,6 +472,7 @@ fn build_npm_global_recipe_for_spec(
         binary_name,
         target_triple,
         managed_dir,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
     )
 }
 
@@ -1228,8 +1252,11 @@ fn binary_name_matches(candidate: &str, binary_name: &str) -> bool {
 mod tests {
     use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     use serde_json::json;
+
+    use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 
     use super::{
         NpmPackageRequest, PackageInstallRequest, build_npm_global_recipe,
@@ -1550,6 +1577,7 @@ mod tests {
             "demo",
             "x86_64-unknown-linux-gnu",
             managed_dir,
+            Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
         )
         .expect("build npm recipe");
 

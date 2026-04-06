@@ -16,6 +16,7 @@ pub struct ExecutionRequest {
     pub country: Option<String>,
     pub http_timeout_seconds: Option<u64>,
     pub max_download_bytes: Option<u64>,
+    pub host_recipe_timeout_seconds: Option<u64>,
     pub uv_timeout_seconds: Option<u64>,
 }
 
@@ -65,6 +66,10 @@ impl ExecutionRequest {
         if self.max_download_bytes.is_none() {
             self.max_download_bytes =
                 parse_positive_u64_env("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES");
+        }
+        if self.host_recipe_timeout_seconds.is_none() {
+            self.host_recipe_timeout_seconds =
+                parse_positive_u64_env("TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS");
         }
         if self.uv_timeout_seconds.is_none() {
             self.uv_timeout_seconds =
@@ -152,6 +157,7 @@ mod tests {
             "TOOLCHAIN_INSTALLER_COUNTRY",
             "TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS",
             "TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES",
+            "TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS",
             "TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS",
         ];
         let previous = names
@@ -181,6 +187,7 @@ mod tests {
             std::env::set_var("TOOLCHAIN_INSTALLER_COUNTRY", "cn");
             std::env::set_var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS", "7");
             std::env::set_var("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES", "11");
+            std::env::set_var("TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS", "12");
             std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", "13");
         }
 
@@ -194,6 +201,7 @@ mod tests {
             country: Some("US".to_string()),
             http_timeout_seconds: Some(17),
             max_download_bytes: Some(19),
+            host_recipe_timeout_seconds: Some(21),
             uv_timeout_seconds: Some(23),
             ..ExecutionRequest::default()
         }
@@ -218,6 +226,7 @@ mod tests {
         assert_eq!(request.country.as_deref(), Some("US"));
         assert_eq!(request.http_timeout_seconds, Some(17));
         assert_eq!(request.max_download_bytes, Some(19));
+        assert_eq!(request.host_recipe_timeout_seconds, Some(21));
         assert_eq!(request.uv_timeout_seconds, Some(23));
     }
 
@@ -232,6 +241,7 @@ mod tests {
             "TOOLCHAIN_INSTALLER_COUNTRY",
             "TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS",
             "TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES",
+            "TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS",
             "TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS",
         ];
         let previous = names
@@ -249,6 +259,7 @@ mod tests {
             std::env::set_var("TOOLCHAIN_INSTALLER_COUNTRY", "cn");
             std::env::set_var("TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS", "29");
             std::env::set_var("TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES", "31");
+            std::env::set_var("TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS", "33");
             std::env::set_var("TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS", "37");
         }
 
@@ -270,6 +281,7 @@ mod tests {
         assert_eq!(request.country.as_deref(), Some("CN"));
         assert_eq!(request.http_timeout_seconds, Some(29));
         assert_eq!(request.max_download_bytes, Some(31));
+        assert_eq!(request.host_recipe_timeout_seconds, Some(33));
         assert_eq!(request.uv_timeout_seconds, Some(37));
     }
 
