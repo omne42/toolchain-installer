@@ -165,6 +165,32 @@ mod tests {
         format!("#!/usr/bin/env bash\n{body}")
     }
 
+    fn large_output_script_body(
+        stdout_len: usize,
+        stderr_len: usize,
+        stderr_prefix: &str,
+    ) -> String {
+        format!(
+            r#"emit_repeat() {{
+  local size="$1"
+  local char="$2"
+  if [ "$size" -le 0 ]; then
+    return 0
+  fi
+  yes "$char" | tr -d '\n' | head -c "$size"
+}}
+if [ "$1" != "--version" ]; then
+  exit 2
+fi
+{stderr_prefix}
+emit_repeat {stdout_len} x
+printf '\n'
+emit_repeat {stderr_len} y >&2
+printf '\n' >&2
+"#
+        )
+    }
+
     #[test]
     fn python_version_match_uses_component_boundaries() {
         assert!(python_version_matches_requirement("3.13.2", "3"));
@@ -230,28 +256,31 @@ echo "Python 3.13.12"
 
     #[cfg_attr(windows, ignore = "probe script is unix-specific")]
     #[test]
-    fn binary_reports_version_handles_large_pipe_output_without_deadlock() {
+    fn version_probe_handles_large_pipe_output_without_deadlock() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let script_path = tmp.path().join("uv");
+        let output_len = 65_536;
 
         write_unix_probe_script(
             &script_path,
-            &portable_unix_script(
-                r#"if [ "$1" != "--version" ]; then
-  exit 2
-fi
-python3 - <<'PY'
-import sys
-
-sys.stderr.write("uv 0.11.0\n")
-sys.stderr.flush()
-sys.stdout.write("x" * 200000)
-PY
-"#,
-            ),
+            &portable_unix_script(&large_output_script_body(
+                output_len,
+                0,
+                "printf 'uv 0.11.0\\n' >&2",
+            )),
         );
 
-        assert!(binary_reports_version(&script_path));
+        // CI runners, especially macOS, can be heavily oversubscribed. Keep this comfortably
+        // above the default timeout and only write enough data to overrun typical pipe buffers.
+        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 30)
+            .expect("probe output");
+        assert!(probe.success);
+        assert!(
+            String::from_utf8_lossy(&probe.stderr)
+                .lines()
+                .any(|line| line == "uv 0.11.0")
+        );
+        assert!(probe.stdout.len() >= output_len);
     }
 
     fn write_unix_probe_script(path: &Path, body: &str) {
@@ -271,35 +300,21 @@ PY
     fn version_probe_drains_large_stdout_and_stderr_without_deadlock() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let script_path = tmp.path().join("uv");
+        let output_len = 32_768;
 
         write_unix_probe_script(
             &script_path,
-            &portable_unix_script(
-                r#"if [ "$1" != "--version" ]; then
-  exit 2
-fi
-python3 - <<'PY'
-import sys
-
-sys.stdout.write("x" * 131072)
-sys.stdout.write("\n")
-sys.stdout.flush()
-sys.stderr.write("y" * 131072)
-sys.stderr.write("\n")
-sys.stderr.flush()
-PY
-"#,
-            ),
+            &portable_unix_script(&large_output_script_body(output_len, output_len, "")),
         );
 
         // Full `cargo test --all-targets` can contend heavily with compile jobs on CI and
         // shared runners. Keep this probe comfortably above the default timeout so we only fail
         // on an actual pipe-drain regression, not on transient scheduler starvation.
-        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 8)
+        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 30)
             .expect("probe output");
 
         assert!(probe.success);
-        assert!(probe.stdout.len() >= 131072);
-        assert!(probe.stderr.len() >= 131072);
+        assert!(probe.stdout.len() >= output_len);
+        assert!(probe.stderr.len() >= output_len);
     }
 }

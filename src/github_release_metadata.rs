@@ -1,4 +1,7 @@
-use github_kit::{GitHubApiRequestOptions, GitHubRelease, fetch_latest_release};
+use github_kit::{
+    GitHubApiRequestOptions, GitHubRelease, fetch_latest_release, fetch_latest_release_with_profile,
+};
+use http_kit::{HttpClientOptions, build_http_client_profile};
 #[cfg(test)]
 use reqwest::Url;
 
@@ -10,16 +13,29 @@ pub(crate) async fn fetch_latest_release_metadata(
     cfg: &InstallerRuntimeConfig,
     repo: &str,
 ) -> OperationResult<GitHubRelease> {
-    fetch_latest_release(
-        client,
-        &cfg.github_releases.api_bases,
-        repo,
-        GitHubApiRequestOptions::new()
-            .with_user_agent("toolchain-installer")
-            .with_bearer_token(cfg.github_releases.token.as_deref()),
-    )
-    .await
-    .map_err(|err| OperationError::download(err.to_string()))
+    let options = GitHubApiRequestOptions::new()
+        .with_user_agent("toolchain-installer")
+        .with_bearer_token(cfg.github_releases.token.as_deref());
+
+    if cfg.github_releases.token.as_deref().is_some() {
+        let profile = build_http_client_profile(&HttpClientOptions {
+            timeout: Some(cfg.download.http_timeout),
+            ..Default::default()
+        })
+        .map_err(|err| OperationError::download(err.to_string()))?;
+        return fetch_latest_release_with_profile(
+            &profile,
+            &cfg.github_releases.api_bases,
+            repo,
+            options,
+        )
+        .await
+        .map_err(|err| OperationError::download(err.to_string()));
+    }
+
+    fetch_latest_release(client, &cfg.github_releases.api_bases, repo, options)
+        .await
+        .map_err(|err| OperationError::download(err.to_string()))
 }
 
 #[cfg(test)]
@@ -112,6 +128,47 @@ mod tests {
         assert_eq!(release.tag_name, "v2.0.0");
         assert_eq!(release.assets.len(), 1);
         handle.join().expect("mock server thread");
+    }
+
+    #[tokio::test]
+    async fn fetch_latest_release_metadata_uses_profile_aware_path_for_bearer_tokens() {
+        let cfg = InstallerRuntimeConfig {
+            github_releases: GitHubReleasePolicy {
+                api_bases: vec!["http://127.0.0.1:9/api".to_string()],
+                token: Some("secret-token".to_string()),
+            },
+            download_sources: DownloadSourcePolicy {
+                mirror_prefixes: Vec::new(),
+            },
+            package_indexes: PackageIndexPolicy {
+                indexes: Vec::new(),
+            },
+            python_mirrors: PythonMirrorPolicy {
+                install_mirrors: Vec::new(),
+            },
+            gateway: GatewayRoutingPolicy {
+                base: None,
+                country: None,
+            },
+            download: DownloadPolicy {
+                http_timeout: Duration::from_secs(5),
+                max_download_bytes: None,
+            },
+            managed_toolchain: ManagedToolchainPolicy {
+                uv_recipe_timeout: Duration::from_secs(DEFAULT_UV_TIMEOUT_SECONDS),
+            },
+        };
+
+        let err = fetch_latest_release_metadata(&reqwest::Client::new(), &cfg, "cli/cli")
+            .await
+            .expect_err("http bearer-token base should be rejected");
+        let message = err.to_string();
+
+        assert!(
+            !message.contains("fetch_latest_release_with_profile"),
+            "{message}"
+        );
+        assert!(message.contains("https github api base"), "{message}");
     }
 
     struct MockHttpResponse {
