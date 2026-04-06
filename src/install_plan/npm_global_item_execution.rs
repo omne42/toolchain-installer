@@ -505,6 +505,12 @@ fn resolve_destination_from_package_metadata(
         }
 
         let manifest_names = manifest_binary_names(&package_dir, package, binary_name);
+        if manifest_names.iter().any(|name| name == binary_name)
+            && binary_path.is_file()
+            && command_path_exists(binary_path)
+        {
+            return Some(binary_path.to_path_buf());
+        }
         if let Some(path) = choose_existing_binary_path(binary_dir, &[], &manifest_names) {
             return Some(path);
         }
@@ -1763,6 +1769,38 @@ mod tests {
     }
 
     #[test]
+    fn resolve_npm_global_destination_prefers_explicit_cmd_destination_over_sibling_wrapper() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_root = temp.path().join("bin");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("http-server");
+        let explicit_binary_path = binary_root.join("http-server.cmd");
+        let sibling_wrapper_path = binary_root.join("http-server");
+
+        write_package_with_binary(
+            &package_dir,
+            &explicit_binary_path,
+            "http-server",
+            "14.1.1",
+            "http-server",
+            "bin/http-server",
+        );
+        write_binary(&sibling_wrapper_path);
+
+        assert_eq!(
+            resolve_npm_global_destination(
+                &explicit_binary_path,
+                "http-server@14.1.1",
+                "http-server",
+                Some(&package_dir),
+                Some(&package_root),
+                None,
+            ),
+            Some(explicit_binary_path)
+        );
+    }
+
+    #[test]
     fn installation_result_accepts_idempotent_binary_when_item_id_matches_manifest_bin() {
         let temp = tempfile::tempdir().expect("tempdir");
         let binary_root = temp.path().join("bin");
@@ -1837,6 +1875,45 @@ mod tests {
                 package: "typescript@5.6.3",
                 binary_name: "typescript",
             },
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_unchanged_cmd_destination_when_manifest_matches() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_root = temp.path().join("bin");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("http-server");
+        let explicit_binary_path = binary_root.join("http-server.cmd");
+        let sibling_wrapper_path = binary_root.join("http-server");
+
+        write_package_with_binary(
+            &package_dir,
+            &explicit_binary_path,
+            "http-server",
+            "14.1.1",
+            "http-server",
+            "bin/http-server",
+        );
+        write_binary(&sibling_wrapper_path);
+
+        let preinstall_state = capture_installation_state(
+            &explicit_binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        );
+
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &explicit_binary_path,
+            "http-server@14.1.1",
+            "http-server",
             Some(&package_dir),
             Some(&package_root),
             None,
