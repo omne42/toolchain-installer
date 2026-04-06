@@ -32,9 +32,9 @@ pub(crate) fn managed_tool_binary_path(
     target_triple: &str,
     managed_dir: &Path,
 ) -> PathBuf {
-    managed_dir.join(format!(
-        "{executable_name}{}",
-        validated_binary_suffix(target_triple)
+    managed_dir.join(append_binary_suffix_if_missing(
+        executable_name,
+        validated_binary_suffix(target_triple),
     ))
 }
 
@@ -114,9 +114,23 @@ fn python_major_minor(version: &str) -> Option<String> {
     Some(format!("{major}.{minor}"))
 }
 
+fn append_binary_suffix_if_missing(binary_name: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        return binary_name.to_string();
+    }
+    if binary_name
+        .to_ascii_lowercase()
+        .ends_with(&suffix.to_ascii_lowercase())
+    {
+        return binary_name.to_string();
+    }
+    format!("{binary_name}{suffix}")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{managed_uv_cache_dir, managed_uv_process_env};
+    use super::{managed_tool_binary_path, managed_uv_cache_dir, managed_uv_process_env};
+    use std::path::Path;
 
     #[cfg(unix)]
     #[test]
@@ -144,5 +158,15 @@ mod tests {
             cache_dir.as_bytes(),
             managed_uv_cache_dir(managed_dir).as_os_str().as_bytes()
         );
+    }
+
+    #[test]
+    fn managed_tool_binary_path_does_not_duplicate_windows_suffix() {
+        let destination = managed_tool_binary_path(
+            "ruff.exe",
+            "x86_64-pc-windows-msvc",
+            Path::new("C:/toolchain/bin"),
+        );
+        assert_eq!(destination, Path::new("C:/toolchain/bin").join("ruff.exe"));
     }
 }
