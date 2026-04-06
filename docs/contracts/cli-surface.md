@@ -44,7 +44,7 @@
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
   - 单个安装项标识。
-  - 对 `npm_global` / `uv_tool` 这类可能出现“包名不等于实际 CLI 名”的方法，若未显式提供 `--binary-name`，installer 也会把 `id` 当作实际 launcher 名的回退提示参与结果解析。
+  - 对 `npm_global` / `uv_tool` 这类可能出现“包名不等于实际 CLI 名”的方法，若未显式提供 `--binary-name`，installer 也会把 `id` 当作实际 launcher 名的回退提示参与结果解析；`uv_tool` 的幂等 no-op 重跑也会沿用这条提示，而不是只接受“本次有新写 launcher”这一种成功形态。
 - `--tool-version <value>`
   - direct-plan 模式里的通用 `version` 字段入口；当前用于 `cargo_install`、`go_install`、`uv_python`。
   - 对 `uv_python` 而言，当前只支持 `3`、`3.13`、`3.13.12` 这类 1 到 3 段的纯数字版本选择器。
