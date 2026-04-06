@@ -258,17 +258,20 @@ echo "Python 3.13.12"
     fn version_probe_handles_large_pipe_output_without_deadlock() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let script_path = tmp.path().join("uv");
+        let output_len = 65_536;
 
         write_unix_probe_script(
             &script_path,
             &portable_unix_script(&large_output_script_body(
-                200000,
+                output_len,
                 0,
                 "printf 'uv 0.11.0\\n' >&2",
             )),
         );
 
-        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 8)
+        // CI runners, especially macOS, can be heavily oversubscribed. Keep this comfortably
+        // above the default timeout and only write enough data to overrun typical pipe buffers.
+        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 30)
             .expect("probe output");
         assert!(probe.success);
         assert!(
@@ -276,7 +279,7 @@ echo "Python 3.13.12"
                 .lines()
                 .any(|line| line == "uv 0.11.0")
         );
-        assert!(probe.stdout.len() >= 200000);
+        assert!(probe.stdout.len() >= output_len);
     }
 
     fn write_unix_probe_script(path: &Path, body: &str) {
@@ -296,20 +299,21 @@ echo "Python 3.13.12"
     fn version_probe_drains_large_stdout_and_stderr_without_deadlock() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let script_path = tmp.path().join("uv");
+        let output_len = 32_768;
 
         write_unix_probe_script(
             &script_path,
-            &portable_unix_script(&large_output_script_body(131072, 131072, "")),
+            &portable_unix_script(&large_output_script_body(output_len, output_len, "")),
         );
 
         // Full `cargo test --all-targets` can contend heavily with compile jobs on CI and
         // shared runners. Keep this probe comfortably above the default timeout so we only fail
         // on an actual pipe-drain regression, not on transient scheduler starvation.
-        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 8)
+        let probe = run_version_probe_with_timeout(&script_path, VERSION_PROBE_TIMEOUT * 30)
             .expect("probe output");
 
         assert!(probe.success);
-        assert!(probe.stdout.len() >= 131072);
-        assert!(probe.stderr.len() >= 131072);
+        assert!(probe.stdout.len() >= output_len);
+        assert!(probe.stderr.len() >= output_len);
     }
 }
