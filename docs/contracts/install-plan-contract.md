@@ -164,7 +164,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `cargo_install` 若显式提供 `binary_name`，installer 还会把它传给 `cargo install --bin <binary_name>`；如果上游 crate 根本不导出这个可执行文件，整项会直接失败，而不是靠旧文件误报成功。
 - Windows target 下，`npm_global` 的 `pnpm`/`bun` CLI 入口也按 `<binary>.cmd` 参与目标路径冲突校验，而不是按无后缀文件名比较。
 - `npm_global` 的预检冲突校验不只看最终 CLI binary，还会保留包管理器自己的托管状态树：`npm` 保留 prefix 下的 `node_modules` 根，`bun` 保留 `install/global/node_modules`，`pnpm` 保留其托管 `global` 根。多个 `npm_global` item 可以共享同一类内部状态根，但其他方法不能把目标落到这些树里。
-- `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的 manifest/bin 元数据按 package spec 语义证明“当前安装与请求相符”：精确版本仍要求 `manifest.version` 精确匹配，`latest`/range/tag/`npm:` alias 以及 `github:`/`git:`/`file:` 等显式来源则退回到包名或可解析来源身份匹配；孤儿旧 binary 仍不会被当成成功安装。
+- `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的 manifest/bin 元数据按 package spec 语义证明“当前安装与请求相符”，并重新解析出与结果 `destination` 相同的 CLI 入口：精确版本仍要求 `manifest.version` 精确匹配，`latest`/range/tag/`npm:` alias 以及 `github:`/`git:`/`file:` 等显式来源则退回到包名或可解析来源身份匹配；孤儿旧 binary，或名字刚好还在但 manifest 当前已指向别的 bin 的旧 wrapper，都不会被当成成功安装。
 - `npm_global` 做幂等探测时会按目标平台使用原生包目录布局：npm 在 Unix 上检查 `<prefix>/lib/node_modules`，在 Windows target 上检查 `<prefix>/node_modules`；pnpm 会递归扫描 `PNPM_HOME/global/` 下的实际 store/workspace 布局，而不是假设固定单层目录。
 - `npm_global` 在托管目录内做包目录或回退二进制探测时不会跟随目录 symlink，避免循环目录把安装流程拖死；同时会跳过不可读目录、不可读 manifest 和坏 manifest，不会因为单个坏条目把幂等重跑误判成失败。
 - `npm_global` 为了兼容重复安装留下的 managed leaf symlink，会允许目标 leaf 自身是 symlink；但 symlink 解析后的最终路径仍必须落在 `managed_dir` 内。无论这个 symlink 是安装前就已存在，还是本次安装新写出的，只要最终解析到托管根外部，整项都会失败。
