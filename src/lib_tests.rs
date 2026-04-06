@@ -1500,8 +1500,11 @@ fn finalize_mingit_installation_restores_launcher_when_payload_replace_fails() {
         || Ok(()),
     )
     .expect_err("missing staging dir should fail payload replace");
+    let err_text = err.to_string().to_ascii_lowercase();
     assert!(
-        err.to_string().contains("No such file") || err.to_string().contains("no such file"),
+        err_text.contains("no such file")
+            || err_text.contains("cannot find the file specified")
+            || err_text.contains("os error 2"),
         "unexpected replace failure: {err}"
     );
 
