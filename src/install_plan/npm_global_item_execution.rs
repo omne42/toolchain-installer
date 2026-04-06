@@ -30,7 +30,6 @@ struct FileFingerprint {
 
 #[derive(Clone, Copy)]
 struct PackageInstallRequest<'a> {
-    item_id: &'a str,
     package: &'a str,
     binary_name: &'a str,
 }
@@ -89,7 +88,6 @@ pub(crate) fn execute_npm_global_item(
         &preinstall_state,
         &destination,
         PackageInstallRequest {
-            item_id: &item.id,
             package: &item.package_spec,
             binary_name: &item.binary_name,
         },
@@ -333,24 +331,18 @@ fn resolve_npm_global_destination_with_item_id(
     package_search_root: Option<&Path>,
     _fallback_search_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    resolve_binary_path_candidates(binary_path, item_id, binary_name)
-        .into_iter()
-        .find(|candidate| candidate.is_file() && command_path_exists(candidate))
-        .or_else(|| {
-            let binary_dir = binary_path.parent()?;
-            let manifest_names =
-                resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
-                    .into_iter()
-                    .flat_map(|package_dir| {
-                        manifest_binary_names(&package_dir, package, binary_name)
-                    })
-                    .collect::<Vec<_>>();
-            choose_existing_binary_path(
-                binary_dir,
-                &preferred_binary_names(item_id, binary_name),
-                &manifest_names,
-            )
-        })
+    resolve_destination_from_package_metadata(
+        binary_path,
+        package,
+        binary_name,
+        fallback_package_dir,
+        package_search_root,
+    )
+    .or_else(|| {
+        resolve_binary_path_candidates(binary_path, item_id, binary_name)
+            .into_iter()
+            .find(|candidate| candidate.is_file() && command_path_exists(candidate))
+    })
 }
 
 #[cfg(test)]
@@ -428,7 +420,6 @@ fn installation_result_is_acceptable(
         preinstall_state,
         destination,
         PackageInstallRequest {
-            item_id: binary_name,
             package,
             binary_name,
         },
@@ -451,7 +442,8 @@ fn installation_result_is_acceptable_with_item_id(
     }
 
     destination_preexisted(preinstall_state, destination)
-        && managed_package_matches_request(
+        && managed_package_matches_request_for_destination(
+            destination,
             request,
             fallback_package_dir,
             package_search_root,
@@ -479,42 +471,45 @@ fn path_changed(preinstall_state: &HashMap<PathBuf, Option<FileFingerprint>>, pa
     }
 }
 
-fn managed_package_matches_request(
+fn managed_package_matches_request_for_destination(
+    destination: &Path,
     request: PackageInstallRequest<'_>,
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
-    fallback_search_root: Option<&Path>,
+    _fallback_search_root: Option<&Path>,
 ) -> bool {
+    let resolved = resolve_destination_from_package_metadata(
+        destination,
+        request.package,
+        request.binary_name,
+        fallback_package_dir,
+        package_search_root,
+    );
+    resolved.as_deref() == Some(destination)
+}
+
+fn resolve_destination_from_package_metadata(
+    binary_path: &Path,
+    package: &str,
+    binary_name: &str,
+    fallback_package_dir: Option<&Path>,
+    package_search_root: Option<&Path>,
+) -> Option<PathBuf> {
+    let binary_dir = binary_path.parent()?;
     for package_dir in
-        resolve_installed_package_dirs(request.package, fallback_package_dir, package_search_root)
+        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
     {
         let manifest_path = package_dir.join("package.json");
-        if !manifest_satisfies_package_request(&manifest_path, request.package, request.binary_name)
-        {
+        if !manifest_satisfies_package_request(&manifest_path, package, binary_name) {
             continue;
         }
 
-        if let Some(path) =
-            resolve_package_bin_script(&package_dir, request.package, request.binary_name)
-            && command_path_exists(&path)
-        {
-            return true;
-        }
-
-        if let Some(binary_dir) =
-            fallback_binary_dir_from_package_dir(&package_dir, package_search_root)
-            && choose_existing_binary_path(
-                &binary_dir,
-                &preferred_binary_names(request.item_id, request.binary_name),
-                &manifest_binary_names(&package_dir, request.package, request.binary_name),
-            )
-            .is_some()
-        {
-            return true;
+        let manifest_names = manifest_binary_names(&package_dir, package, binary_name);
+        if let Some(path) = choose_existing_binary_path(binary_dir, &[], &manifest_names) {
+            return Some(path);
         }
     }
-    let _ = fallback_search_root;
-    false
+    None
 }
 
 fn resolve_binary_path_candidates(
@@ -542,26 +537,6 @@ fn preferred_binary_names<'a>(item_id: &'a str, binary_name: &'a str) -> Vec<&'a
         names.push(item_id);
     }
     names
-}
-
-fn fallback_binary_dir_from_package_dir(
-    package_dir: &Path,
-    package_search_root: Option<&Path>,
-) -> Option<PathBuf> {
-    if let Some(root) = package_search_root {
-        let candidate = root.join(".bin");
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-    }
-
-    package_dir
-        .ancestors()
-        .find(|ancestor| {
-            ancestor.file_name().and_then(|value| value.to_str()) == Some("node_modules")
-        })
-        .and_then(Path::parent)
-        .map(|install_root| install_root.join("bin"))
 }
 
 fn choose_existing_binary_path(
@@ -1214,11 +1189,12 @@ mod tests {
 
     use super::{
         NpmPackageRequest, PackageInstallRequest, build_npm_global_recipe,
-        capture_installation_state, file_fingerprint, find_binary_at_path,
-        find_matching_binary_paths_under_dir, find_package_dirs_under_root, global_binary_filename,
-        installation_result_is_acceptable, installation_result_is_acceptable_with_item_id,
-        npm_global_package_dir, npm_package_request, package_bin_relative_path,
-        parse_pnpm_root_stdout, path_has_no_symlink_components, resolve_npm_global_destination,
+        capture_installation_state, capture_installation_state_with_item_id, file_fingerprint,
+        find_binary_at_path, find_matching_binary_paths_under_dir, find_package_dirs_under_root,
+        global_binary_filename, installation_result_is_acceptable,
+        installation_result_is_acceptable_with_item_id, npm_global_package_dir,
+        npm_package_request, package_bin_relative_path, parse_pnpm_root_stdout,
+        path_has_no_symlink_components, resolve_npm_global_destination,
         resolve_npm_global_destination_with_item_id, resolve_package_bin_script,
     };
     use crate::plan_items::NodePackageManager;
@@ -1561,6 +1537,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
         let preinstall_state = capture_installation_state(
@@ -1588,7 +1565,14 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let package_dir = temp.path().join("global").join("pkg");
         let binary_path = temp.path().join("bin").join("demo");
-        write_package_with_binary(&package_dir, &binary_path, "demo", "1.0.0", "bin/demo");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "demo",
+            "1.0.0",
+            "demo",
+            "bin/demo",
+        );
         let preinstall_state = capture_installation_state(
             &binary_path,
             "file:../packages/demo",
@@ -1620,6 +1604,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
         let preinstall_state = capture_installation_state(
@@ -1648,7 +1633,14 @@ mod tests {
         let package_root = temp.path().join("global");
         let package_dir = package_root.join("pkg");
         let binary_path = temp.path().join("bin").join("demo");
-        write_package_with_binary(&package_dir, &binary_path, "demo", "1.0.0", "bin/demo");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "demo",
+            "1.0.0",
+            "demo",
+            "bin/demo",
+        );
         let preinstall_state = capture_installation_state(
             &binary_path,
             "../packages/demo",
@@ -1680,6 +1672,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
         let preinstall_state = capture_installation_state(
@@ -1717,12 +1710,47 @@ mod tests {
             &actual_binary_path,
             "typescript",
             "5.6.3",
+            "tsc",
             "bin/tsc",
         );
 
         assert_eq!(
             resolve_npm_global_destination_with_item_id(
                 &expected_binary_path,
+                "tsc",
+                "typescript@5.6.3",
+                "typescript",
+                Some(&package_dir),
+                Some(&package_root),
+                None,
+            ),
+            Some(actual_binary_path)
+        );
+    }
+
+    #[test]
+    fn resolve_npm_global_destination_ignores_stale_expected_wrapper_when_manifest_points_elsewhere()
+     {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_root = temp.path().join("bin");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("typescript");
+        let stale_binary_path = binary_root.join("typescript");
+        let actual_binary_path = binary_root.join("tsc");
+
+        std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"typescript","version":"5.6.3","bin":{"tsc":"bin/tsc"}}"#,
+        )
+        .expect("write manifest");
+        write_binary(&actual_binary_path);
+        write_binary(&package_dir.join("bin").join("tsc"));
+        write_binary(&stale_binary_path);
+
+        assert_eq!(
+            resolve_npm_global_destination_with_item_id(
+                &stale_binary_path,
                 "tsc",
                 "typescript@5.6.3",
                 "typescript",
@@ -1748,6 +1776,7 @@ mod tests {
             &actual_binary_path,
             "typescript",
             "5.6.3",
+            "tsc",
             "bin/tsc",
         );
         let preinstall_state = capture_installation_state(
@@ -1763,7 +1792,48 @@ mod tests {
             &preinstall_state,
             &actual_binary_path,
             PackageInstallRequest {
-                item_id: "tsc",
+                package: "typescript@5.6.3",
+                binary_name: "typescript",
+            },
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_rejects_unchanged_stale_wrapper_when_manifest_bin_differs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_root = temp.path().join("bin");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("typescript");
+        let stale_binary_path = binary_root.join("typescript");
+        let actual_binary_path = binary_root.join("tsc");
+
+        std::fs::create_dir_all(package_dir.join("bin")).expect("create package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"typescript","version":"5.6.3","bin":{"tsc":"bin/tsc"}}"#,
+        )
+        .expect("write manifest");
+        write_binary(&actual_binary_path);
+        write_binary(&package_dir.join("bin").join("tsc"));
+        write_binary(&stale_binary_path);
+
+        let preinstall_state = capture_installation_state_with_item_id(
+            &stale_binary_path,
+            "tsc",
+            "typescript@5.6.3",
+            "typescript",
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        );
+
+        assert!(!installation_result_is_acceptable_with_item_id(
+            &preinstall_state,
+            &stale_binary_path,
+            PackageInstallRequest {
                 package: "typescript@5.6.3",
                 binary_name: "typescript",
             },
@@ -1818,6 +1888,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
 
@@ -1892,13 +1963,14 @@ mod tests {
         binary_path: &Path,
         package_name: &str,
         version: &str,
+        binary_name: &str,
         relative_binary_path: &str,
     ) {
         std::fs::create_dir_all(package_dir).expect("create package dir");
         std::fs::write(
             package_dir.join("package.json"),
             format!(
-                r#"{{"name":"{package_name}","version":"{version}","bin":"{relative_binary_path}"}}"#
+                r#"{{"name":"{package_name}","version":"{version}","bin":{{"{binary_name}":"{relative_binary_path}"}}}}"#
             ),
         )
         .expect("write manifest");

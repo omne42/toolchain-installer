@@ -375,6 +375,48 @@ fn go_install_option_like_package_returns_usage_error() {
 }
 
 #[test]
+fn npm_global_rejects_conflicting_package_and_version_fields() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "npm_global",
+            "--id",
+            "npm-demo",
+            "--package=typescript@5.5.4",
+            "--tool-version=5.5.3",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("already encodes a version"));
+}
+
+#[test]
+fn go_install_rejects_conflicting_package_and_version_fields() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "go_install",
+            "--id",
+            "go-demo",
+            "--package=example.com/demo/cmd/demo@v1.2.3",
+            "--tool-version=latest",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("already encodes a version"));
+}
+
+#[test]
 fn rustup_component_option_like_package_returns_usage_error() {
     let mut cmd = bootstrap_cmd();
     let stderr = cmd
