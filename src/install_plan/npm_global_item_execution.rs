@@ -1537,6 +1537,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
         let preinstall_state = capture_installation_state(
@@ -1564,7 +1565,14 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let package_dir = temp.path().join("global").join("pkg");
         let binary_path = temp.path().join("bin").join("demo");
-        write_package_with_binary(&package_dir, &binary_path, "demo", "1.0.0", "bin/demo");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "demo",
+            "1.0.0",
+            "demo",
+            "bin/demo",
+        );
         let preinstall_state = capture_installation_state(
             &binary_path,
             "file:../packages/demo",
@@ -1596,6 +1604,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
         let preinstall_state = capture_installation_state(
@@ -1624,7 +1633,14 @@ mod tests {
         let package_root = temp.path().join("global");
         let package_dir = package_root.join("pkg");
         let binary_path = temp.path().join("bin").join("demo");
-        write_package_with_binary(&package_dir, &binary_path, "demo", "1.0.0", "bin/demo");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "demo",
+            "1.0.0",
+            "demo",
+            "bin/demo",
+        );
         let preinstall_state = capture_installation_state(
             &binary_path,
             "../packages/demo",
@@ -1656,6 +1672,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
         let preinstall_state = capture_installation_state(
@@ -1693,6 +1710,7 @@ mod tests {
             &actual_binary_path,
             "typescript",
             "5.6.3",
+            "tsc",
             "bin/tsc",
         );
 
@@ -1758,6 +1776,7 @@ mod tests {
             &actual_binary_path,
             "typescript",
             "5.6.3",
+            "tsc",
             "bin/tsc",
         );
         let preinstall_state = capture_installation_state(
@@ -1869,6 +1888,7 @@ mod tests {
             &binary_path,
             "http-server",
             "14.1.1",
+            "http-server",
             "bin/http-server",
         );
 
