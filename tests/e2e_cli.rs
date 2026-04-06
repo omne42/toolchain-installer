@@ -437,6 +437,27 @@ fn rustup_component_option_like_package_returns_usage_error() {
 }
 
 #[test]
+fn rustup_component_rejects_mismatched_binary_name_override() {
+    let mut cmd = bootstrap_cmd();
+    let stderr = cmd
+        .args([
+            "--method",
+            "rustup_component",
+            "--id",
+            "rustfmt-demo",
+            "--package=rustfmt",
+            "--binary-name=cargo-rustfmt",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("requires `binary_name=rustfmt`"));
+}
+
+#[test]
 fn uv_tool_option_like_package_returns_usage_error() {
     let mut cmd = bootstrap_cmd();
     let stderr = cmd
@@ -2904,6 +2925,50 @@ echo "rustfmt"
         json["items"][0]["destination"],
         fake_rustfmt.display().to_string()
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn rustup_component_rejects_noncanonical_explicit_binary_name() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_rustup = fake_bin_dir.join("rustup");
+    let fake_rustfmt = fake_bin_dir.join("rustfmt");
+    write_executable(
+        &fake_rustup,
+        r#"#!/bin/sh
+[ "$1" = "component" ] || exit 9
+[ "$2" = "add" ] || exit 10
+[ "$3" = "rustfmt" ] || exit 11
+"#,
+    );
+    write_executable(
+        &fake_rustfmt,
+        r#"#!/bin/sh
+echo "rustfmt"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args([
+            "--method",
+            "rustup_component",
+            "--id",
+            "rustfmt",
+            "--package",
+            "rustfmt",
+            "--binary-name",
+            "missing-rustfmt",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&output);
+    assert!(stderr.contains("requires `binary_name=rustfmt`"));
 }
 
 #[cfg(unix)]

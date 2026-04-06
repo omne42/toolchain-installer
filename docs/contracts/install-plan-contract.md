@@ -163,6 +163,8 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global` 若 `package` 使用 `npm:` alias source spec，默认 `binary_name` 会从 alias 指向的真实包名推导，并剥离 `@1.2.3` 这类内嵌版本片段；`github:`、`git:`、`file:` 等 source spec 则只取仓库或路径叶子名，不会把整段 source spec 当成文件名。
 - `cargo_install`、`go_install` 若显式提供 `binary_name`，它表示最终托管目标文件名；installer 会先在隔离 staging 目录执行安装，再把本次实际产出的目标二进制提升到该文件名。只要 staging 产物里没有名字直接匹配请求的 `binary_name`，整项就会返回失败而不是猜测，即使 staging 里只剩一个名字不匹配的二进制也一样。
 - `cargo_install` 若显式提供 `binary_name`，installer 还会把它传给 `cargo install --bin <binary_name>`；如果上游 crate 根本不导出这个可执行文件，整项会直接失败，而不是靠旧文件误报成功。
+- `rustup_component` 若显式提供 `binary_name`，installer 只会在已知组件对应稳定 CLI 名时接受，而且该值必须与 canonical CLI 名一致；例如 `rustfmt -> rustfmt`、`clippy -> cargo-clippy`。对 `rust-src` 这类不产出稳定 CLI 的组件，installer 会在 resolve 阶段直接拒绝 `binary_name`，避免把不相关 PATH 命令误报成组件产物。
+- `rustup_component` 一旦接受了 `binary_name`，就会把它当作结果契约里的权威二进制名；安装成功后若该命令仍不可解析，整项会返回失败，而不是静默回退到组件默认二进制。
 - Windows target 下，`npm_global` 的 `pnpm`/`bun` CLI 入口也按 `<binary>.cmd` 参与目标路径冲突校验，而不是按无后缀文件名比较。
 - `npm_global` 的预检冲突校验不只看最终 CLI binary，还会保留包管理器自己的托管状态树：`npm` 保留 prefix 下的 `node_modules` 根，`bun` 保留 `install/global/node_modules`，`pnpm` 保留其托管 `global` 根。多个 `npm_global` item 可以共享同一类内部状态根，但其他方法不能把目标落到这些树里。
 - `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的 manifest/bin 元数据按 package spec 语义证明“当前安装与请求相符”，并重新解析出与结果 `destination` 相同的 CLI 入口：精确版本仍要求 `manifest.version` 精确匹配，`latest`/range/tag/`npm:` alias 以及 `github:`/`git:`/`file:` 等显式来源则退回到包名或可解析来源身份匹配；孤儿旧 binary，或名字刚好还在但 manifest 当前已指向别的 bin 的旧 wrapper，都不会被当成成功安装。
