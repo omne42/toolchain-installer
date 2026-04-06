@@ -86,7 +86,7 @@
 环境变量补充：
 
 - 这些环境变量只在 CLI 边界被读取，并在进入库 API 前显式收敛进 `ExecutionRequest`。
-- 纯库调用方如果需要和 CLI 相同的 env fallback 语义，应先自行调用 `ExecutionRequest::with_process_environment_fallbacks()`；否则同一个 request 的行为不会再随进程环境变化。
+- 纯库调用方如果需要和 CLI 相同的 env fallback 语义，应先自行调用 `ExecutionRequest::with_process_environment_fallbacks()`；否则同一个 request 的行为不会再随进程环境变化，`TOOLCHAIN_INSTALLER_MANAGED_DIR` / `OMNE_DATA_DIR` 也不会再隐式改写 `managed_dir`。
 
 - `TOOLCHAIN_INSTALLER_GITHUB_API_BASES`
   - 逗号分隔的 GitHub metadata API base 列表；未设置时默认只使用 `https://api.github.com`。
