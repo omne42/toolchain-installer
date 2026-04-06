@@ -894,7 +894,7 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_launcher_without_pa
 }
 
 #[test]
-fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_missing() {
+fn assess_managed_bootstrap_state_reports_broken_windows_cmd_launcher_file_payload_is_unhealthy() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
     let destination = managed_dir.join("git.cmd");
@@ -916,21 +916,15 @@ fn assess_managed_bootstrap_state_reports_broken_windows_git_when_runtime_is_mis
         state,
         ManagedBootstrapState::ManagedBroken {
             detail: format!(
-                "managed git payload is missing required runtime {}",
-                managed_dir
-                    .join("git-portable")
-                    .join("PortableGit")
-                    .join("mingw64")
-                    .join("bin")
-                    .join("msys-2.0.dll")
-                    .display()
+                "managed git payload {} failed --version health check",
+                payload.join("git.exe").display()
             )
         }
     );
 }
 
 #[test]
-fn assess_managed_bootstrap_state_reports_broken_windows_cmd_git_when_runtime_is_missing() {
+fn assess_managed_bootstrap_state_reports_broken_windows_cmd_git_file_payload_is_unhealthy() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let managed_dir = tmp.path().join("managed");
     let destination = managed_dir.join("git.cmd");
@@ -952,14 +946,8 @@ fn assess_managed_bootstrap_state_reports_broken_windows_cmd_git_when_runtime_is
         state,
         ManagedBootstrapState::ManagedBroken {
             detail: format!(
-                "managed git payload is missing required runtime {}",
-                managed_dir
-                    .join("git-portable")
-                    .join("PortableGit")
-                    .join("mingw64")
-                    .join("bin")
-                    .join("msys-2.0.dll")
-                    .display()
+                "managed git payload {} failed --version health check",
+                payload.join("git.exe").display()
             )
         }
     );
