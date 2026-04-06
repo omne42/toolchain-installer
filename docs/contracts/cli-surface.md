@@ -36,6 +36,9 @@
   - 调用方传入地区码。
 - `--max-download-bytes <bytes>`
   - 限制单次 release / bootstrap 下载的最大响应体大小，必须为正整数。
+- `--host-recipe-timeout-seconds <seconds>`
+  - 覆盖宿主 recipe hard timeout。
+  - 作用于 `system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`，以及 bootstrap 里的系统包 / `pip install uv` fallback；默认是 `900` 秒。
 - `--plan-file <path>`
   - 执行 plan 文件。
   - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
@@ -107,6 +110,8 @@
   - 直接覆盖默认托管目录。
 - `TOOLCHAIN_INSTALLER_MAX_DOWNLOAD_BYTES`
   - 限制单次下载的最大响应体大小；未设置时不启用额外大小上限。
+- `TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS`
+  - 覆盖宿主 recipe hard timeout；默认是 `900` 秒。
 - `TOOLCHAIN_INSTALLER_HTTP_TIMEOUT_SECONDS`
   - 覆盖 HTTP 总超时；默认是 `120` 秒。
 - `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS`

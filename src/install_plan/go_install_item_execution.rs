@@ -1,21 +1,37 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use omne_process_primitives::{
-    HostRecipeRequest, command_exists, command_path_exists, run_host_recipe,
-};
+use omne_process_primitives::{HostRecipeRequest, command_exists, command_path_exists};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
+use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::managed_toolchain::managed_environment_layout::validated_binary_suffix;
 use crate::managed_toolchain::{ManagedDestinationBackup, promote_staged_file};
 use crate::plan_items::{GoInstallPlanItem, GoInstallSource};
 
+#[allow(dead_code)]
 pub(crate) fn execute_go_install_item(
     item: &GoInstallPlanItem,
     target_triple: &str,
     managed_dir: &Path,
+) -> OperationResult<BootstrapItem> {
+    execute_go_install_item_with_timeout(
+        item,
+        target_triple,
+        managed_dir,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
+    )
+}
+
+pub(crate) fn execute_go_install_item_with_timeout(
+    item: &GoInstallPlanItem,
+    target_triple: &str,
+    managed_dir: &Path,
+    timeout: Duration,
 ) -> OperationResult<BootstrapItem> {
     if let GoInstallSource::LocalPath(package_path) = &item.source {
         validate_local_package_path(package_path).map_err(OperationError::install)?;
@@ -39,14 +55,15 @@ pub(crate) fn execute_go_install_item(
                 .into_iter()
                 .map(OsString::from)
                 .collect::<Vec<_>>();
-            if let Err(err) = run_host_recipe(
+            if let Err(err) = run_installer_host_recipe(
                 &HostRecipeRequest::new("go".as_ref(), &args)
                     .with_env(&env)
                     .with_working_directory(package_path),
+                timeout,
             ) {
                 cleanup_stage_root(&stage_root).ok();
                 backup.restore().map_err(OperationError::install)?;
-                return Err(OperationError::from_host_recipe(err));
+                return Err(err);
             }
             package_path.display().to_string()
         }
@@ -55,12 +72,13 @@ pub(crate) fn execute_go_install_item(
                 .into_iter()
                 .map(OsString::from)
                 .collect::<Vec<_>>();
-            if let Err(err) =
-                run_host_recipe(&HostRecipeRequest::new("go".as_ref(), &args).with_env(&env))
-            {
+            if let Err(err) = run_installer_host_recipe(
+                &HostRecipeRequest::new("go".as_ref(), &args).with_env(&env),
+                timeout,
+            ) {
                 cleanup_stage_root(&stage_root).ok();
                 backup.restore().map_err(OperationError::install)?;
-                return Err(OperationError::from_host_recipe(err));
+                return Err(err);
             }
             package.clone()
         }

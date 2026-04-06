@@ -72,7 +72,7 @@
   - 只定义领域数据，不负责 plan 方法归一化、校验、下载候选或执行。
 - `installer_runtime_config`
   - 负责把显式 `ExecutionRequest` 归一化成内部运行期策略对象。
-  - 当前已经明确拆成 `github_releases`、`download_sources`、`download`、`package_indexes`、`python_mirrors`、`gateway` 六类策略，而不是让 GitHub API、镜像候选、索引、gateway、国家码和下载限制继续平铺混放。
+  - 当前已经明确拆成 `github_releases`、`download_sources`、`download`、`host_recipes`、`package_indexes`、`python_mirrors`、`gateway` 七类策略，而不是让 GitHub API、镜像候选、索引、gateway、国家码和下载限制继续平铺混放。
 - `omne-host-info-primitives`
   - 负责宿主 OS/arch 识别、canonical target triple 映射、target override 归一化、home 目录解析与目标可执行后缀推断。
   - 不负责 `OMNE_DATA_DIR`、`TOOLCHAIN_INSTALLER_MANAGED_DIR`、`managed_dir` 布局或 installer plan 语义。
@@ -122,18 +122,18 @@
 - `application`
   - 可以依赖 `builtin_tools`、`contracts`、`error`、`install_plan`、`installer_runtime_config`、`managed_toolchain`。
   - 不反向提供给任何领域策略层依赖。
-- `artifact`、`download_sources`、`installer_runtime_config`、`plan_items`
+- `artifact`、`download_sources`、`host_recipe`、`installer_runtime_config`、`plan_items`
   - 只允许依赖更低层公共边界；不能反向依赖 `managed_toolchain`、`install_plan`、`builtin_tools`、`application`。
 - `builtin_tools`
-  - 可以依赖 `artifact`、`contracts`、`download_sources`、`error`、`external_gateway`、`installer_runtime_config`、`managed_toolchain`。
+  - 可以依赖 `artifact`、`contracts`、`download_sources`、`error`、`external_gateway`、`host_recipe`、`installer_runtime_config`、`managed_toolchain`。
   - 不能依赖 `install_plan` 或 `application`。
 - `external_gateway`
   - 只允许依赖 `installer_runtime_config`。
 - `managed_toolchain`
-  - 可以依赖 `artifact`、`contracts`、`download_sources`、`error`、`installer_runtime_config`、`plan_items`。
+  - 可以依赖 `artifact`、`contracts`、`download_sources`、`error`、`host_recipe`、`installer_runtime_config`、`plan_items`。
   - 不能反向依赖 `install_plan`、`builtin_tools` 或 `application`。
 - `install_plan`
-  - 可以依赖 `managed_toolchain` 及更低层模块，并负责执行编排。
+  - 可以依赖 `managed_toolchain`、`host_recipe` 及更低层模块，并负责执行编排。
   - 不能依赖 `builtin_tools` 或 `application`。
 - 上述方向由 `tools/source-layout-check/` 在本地 git hook 与 CI 中共同执行。
 

@@ -39,6 +39,9 @@
 - `src/download_sources.rs`
   - installer 自有的下载来源选择辅助，负责 `gateway|canonical|mirror` 候选展开与结果来源种类映射。
   - 不承载 GitHub API client、下载执行、摘要校验或安装编排。
+- `src/host_recipe.rs`
+  - installer 对宿主 recipe 执行的统一 hard timeout、超时 stdout/stderr 渲染与错误归并封装。
+  - 不承载具体方法参数拼装、包管理器语义或 shared runtime process primitive 本身。
 - `src/install_plan/`
   - `resolved_plan_item.rs`：把外部 `InstallPlanItem` DTO 收敛成内部强类型 `ResolvedPlanItem`，归一化方法级字段组合。
   - `item_destination_resolution.rs`：plan item 的有效目标路径解析，以及 release 默认落点计算。
@@ -110,7 +113,7 @@
   - 错误类型、退出码与统一结果类型。
 - `src/installer_runtime_config.rs`
   - installer 运行期配置归一化，消费显式 `ExecutionRequest` 组装运行时策略。
-  - 内部进一步拆成 `GitHubReleasePolicy`、`DownloadSourcePolicy`、`DownloadPolicy`、`PackageIndexPolicy`、`PythonMirrorPolicy`、`GatewayRoutingPolicy`，避免 GitHub API、镜像候选、索引、gateway、下载限制继续揉在一个平铺 struct 里。
+  - 内部进一步拆成 `GitHubReleasePolicy`、`DownloadSourcePolicy`、`DownloadPolicy`、`HostRecipePolicy`、`PackageIndexPolicy`、`PythonMirrorPolicy`、`GatewayRoutingPolicy`，避免 GitHub API、镜像候选、索引、gateway、下载限制继续揉在一个平铺 struct 里。
 - `src/plan_items.rs`
   - `install_plan` 与 `managed_toolchain` 共享的强类型安装项模型，例如 `ResolvedPlanItem`、`UvPythonPlanItem`、`UvToolPlanItem`。
   - 只承载共享领域数据，不承载 plan 校验、方法归一化或执行编排逻辑。

@@ -1,17 +1,33 @@
 use std::ffi::{OsStr, OsString};
+use std::time::Duration;
 
-use omne_process_primitives::{HostRecipeRequest, command_exists, run_host_recipe};
+use omne_process_primitives::{HostRecipeRequest, command_exists};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
+use crate::host_recipe::run_installer_host_recipe;
+use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::plan_items::PipPlanItem;
 
-pub(crate) fn execute_pip_item(item: &PipPlanItem) -> OperationResult<BootstrapItem> {
+pub(crate) fn execute_pip_item(
+    item: &PipPlanItem,
+    timeout: Duration,
+) -> OperationResult<BootstrapItem> {
     execute_pip_item_with(item, command_exists, |python, args| {
-        run_host_recipe(&HostRecipeRequest::new(OsStr::new(python), args))
+        run_installer_host_recipe(&HostRecipeRequest::new(OsStr::new(python), args), timeout)
             .map(|_| ())
             .map_err(|err| err.to_string())
     })
+}
+
+#[allow(dead_code)]
+pub(crate) fn execute_pip_item_with_default_timeout(
+    item: &PipPlanItem,
+) -> OperationResult<BootstrapItem> {
+    execute_pip_item(
+        item,
+        Duration::from_secs(DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS),
+    )
 }
 
 fn execute_pip_item_with<CommandExists, RunRecipe>(

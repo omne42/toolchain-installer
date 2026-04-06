@@ -496,6 +496,7 @@ fn allowed_dependencies_for(module: &str) -> &'static [&'static str] {
             "error",
             "external_gateway",
             "github_release_metadata",
+            "host_recipe",
             "installer_runtime_config",
             "managed_toolchain",
             "plan_items",
@@ -505,6 +506,7 @@ fn allowed_dependencies_for(module: &str) -> &'static [&'static str] {
         "error" => &[],
         "external_gateway" => &["installer_runtime_config"],
         "github_release_metadata" => &["error", "installer_runtime_config"],
+        "host_recipe" => &["error"],
         "installer_runtime_config" => &["contracts"],
         "managed_toolchain" => &[
             "artifact",
@@ -512,6 +514,7 @@ fn allowed_dependencies_for(module: &str) -> &'static [&'static str] {
             "download_sources",
             "error",
             "github_release_metadata",
+            "host_recipe",
             "installer_runtime_config",
             "plan_items",
         ],
@@ -520,6 +523,7 @@ fn allowed_dependencies_for(module: &str) -> &'static [&'static str] {
             "download_sources",
             "error",
             "external_gateway",
+            "host_recipe",
             "installer_runtime_config",
             "managed_toolchain",
             "plan_items",
@@ -539,6 +543,7 @@ fn known_architecture_modules() -> BTreeSet<&'static str> {
         "error",
         "external_gateway",
         "github_release_metadata",
+        "host_recipe",
         "install_plan",
         "installer_runtime_config",
         "managed_toolchain",
@@ -916,7 +921,10 @@ mod tests {
 - `src/install_plan/`
 ";
         let dirs = collect_documented_top_level_src_dirs(doc);
-        assert_eq!(dirs, vec!["src/application", "src/artifact", "src/install_plan"]);
+        assert_eq!(
+            dirs,
+            vec!["src/application", "src/artifact", "src/install_plan"]
+        );
     }
 
     #[test]
@@ -927,7 +935,10 @@ mod tests {
             "src/download_sources.rs".to_string(),
             "src/artifact/mod.rs".to_string(),
         ]);
-        assert_eq!(dirs, vec!["src/application", "src/artifact", "src/install_plan"]);
+        assert_eq!(
+            dirs,
+            vec!["src/application", "src/artifact", "src/install_plan"]
+        );
     }
 
     #[test]
