@@ -32,16 +32,12 @@ impl ExecutionRequest {
     }
 
     pub fn with_process_environment_fallbacks(mut self) -> Self {
-        if self.mirror_prefixes.is_empty() {
-            self.mirror_prefixes = parse_csv_env("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES");
-        }
-        if self.package_indexes.is_empty() {
-            self.package_indexes = parse_csv_env("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES");
-        }
-        if self.python_install_mirrors.is_empty() {
-            self.python_install_mirrors =
-                parse_csv_env("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS");
-        }
+        self.mirror_prefixes
+            .extend(parse_csv_env("TOOLCHAIN_INSTALLER_MIRROR_PREFIXES"));
+        self.package_indexes
+            .extend(parse_csv_env("TOOLCHAIN_INSTALLER_PACKAGE_INDEXES"));
+        self.python_install_mirrors
+            .extend(parse_csv_env("TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS"));
         if self.github_api_bases.is_empty() {
             self.github_api_bases = parse_csv_env("TOOLCHAIN_INSTALLER_GITHUB_API_BASES");
         }
@@ -130,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn process_environment_fallbacks_fill_only_missing_fields() {
+    fn process_environment_fallbacks_append_explicit_source_lists_before_env_lists() {
         let _guard = env_lock().lock().expect("env lock");
         let names = [
             "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
@@ -196,12 +192,18 @@ mod tests {
 
         assert_eq!(
             request.mirror_prefixes,
-            vec!["https://cli.example/releases"]
+            vec![
+                "https://cli.example/releases",
+                "https://env.example/releases",
+            ]
         );
-        assert_eq!(request.package_indexes, vec!["https://cli.example/simple"]);
+        assert_eq!(
+            request.package_indexes,
+            vec!["https://cli.example/simple", "https://env.example/simple",]
+        );
         assert_eq!(
             request.python_install_mirrors,
-            vec!["https://cli.example/python"]
+            vec!["https://cli.example/python", "https://env.example/python",]
         );
         assert_eq!(request.github_api_bases, vec!["https://api.cli.example"]);
         assert_eq!(request.github_token.as_deref(), Some("cli-token"));

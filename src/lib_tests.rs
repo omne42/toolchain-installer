@@ -3136,6 +3136,140 @@ fn validate_plan_accepts_apt_method_as_explicit_apt_get_alias() {
 }
 
 #[test]
+fn validate_plan_accepts_apt_method_without_explicit_manager() {
+    let plan = InstallPlan {
+        schema_version: PLAN_SCHEMA_VERSION,
+        items: vec![InstallPlanItem {
+            id: "apt-demo".to_string(),
+            method: "apt".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("curl".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+
+    let resolved = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect("apt alias should default to apt-get");
+
+    let ResolvedPlanItem::SystemPackage(item) = &resolved[0] else {
+        panic!("expected system package item");
+    };
+    assert_eq!(
+        item.mode,
+        SystemPackageMode::Explicit(
+            SystemPackageManager::parse("apt-get").expect("apt-get manager")
+        )
+    );
+}
+
+#[test]
+fn validate_plan_rejects_apt_manager_other_than_apt_get() {
+    let plan = InstallPlan {
+        schema_version: PLAN_SCHEMA_VERSION,
+        items: vec![InstallPlanItem {
+            id: "apt-demo".to_string(),
+            method: "apt".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("curl".to_string()),
+            manager: Some("brew".to_string()),
+            python: None,
+        }],
+    };
+
+    let err = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect_err("apt alias should reject non-apt-get managers");
+    assert!(
+        err.to_string().contains("only supports manager `apt-get`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn validate_plan_rejects_cargo_install_version_with_local_path_package() {
+    let plan = InstallPlan {
+        schema_version: PLAN_SCHEMA_VERSION,
+        items: vec![InstallPlanItem {
+            id: "cargo-local".to_string(),
+            method: "cargo_install".to_string(),
+            version: Some("1.2.3".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("./tools/demo".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+
+    let err = validate_plan_with_base_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/repo"),
+    )
+    .expect_err("cargo_install local paths must reject a separate version");
+    assert!(
+        err.to_string()
+            .contains("method `cargo_install` cannot set `version`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn validate_plan_rejects_go_install_version_with_local_path_package() {
+    let plan = InstallPlan {
+        schema_version: PLAN_SCHEMA_VERSION,
+        items: vec![InstallPlanItem {
+            id: "go-local".to_string(),
+            method: "go_install".to_string(),
+            version: Some("1.2.3".to_string()),
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("./cmd/demo".to_string()),
+            manager: None,
+            python: None,
+        }],
+    };
+
+    let err = validate_plan_with_base_dir(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        Path::new("/repo"),
+    )
+    .expect_err("go_install local paths must reject a separate version");
+    assert!(
+        err.to_string()
+            .contains("method `go_install` cannot set `version`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn validate_install_plan_with_request_rejects_relative_plan_base_dir() {
     let plan = InstallPlan {
         schema_version: PLAN_SCHEMA_VERSION,

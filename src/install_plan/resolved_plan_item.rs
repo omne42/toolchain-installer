@@ -341,6 +341,7 @@ fn resolve_cargo_install_plan_item(
         item.id.as_str(),
     )?;
     let version = optional_trimmed(item.version.as_deref());
+    reject_conflicting_cargo_install_version(&id, &package, version)?;
     let source = resolve_cargo_install_source(&package, version, plan_base_dir, host_triple, &id)?;
     let binary_name_explicit = optional_trimmed(item.binary_name.as_deref()).is_some();
     Ok(ResolvedPlanItem::CargoInstall(CargoInstallPlanItem {
@@ -545,6 +546,22 @@ fn reject_conflicting_go_install_version(
     if package.contains('@') {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` with method `go_install` cannot set `version` to `{version}` because `package` already encodes a version: `{package}`"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_conflicting_cargo_install_version(
+    item_id: &str,
+    package: &str,
+    version: Option<&str>,
+) -> InstallerResult<()> {
+    let Some(version) = version else {
+        return Ok(());
+    };
+    if looks_like_explicit_cargo_local_path(package) {
+        return Err(InstallerError::usage(format!(
+            "plan item `{item_id}` with method `cargo_install` cannot set `version` to `{version}` because local `package` paths must encode their own source: `{package}`"
         )));
     }
     Ok(())
