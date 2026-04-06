@@ -139,12 +139,12 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 任意 `destination` 都禁止包含 `..`，避免路径逃逸。
 - 为了避免 Windows 语义下的伪相对路径逃逸，`destination` 还禁止使用 `C:foo` 这类 drive-relative 路径，以及 `\foo` 这类 root-relative 路径。
 - 托管落盘方法同样拒绝 `C:\tools\demo.exe` 这类 Windows 绝对路径；不能借“宿主机本身是 Windows”或“显式把 `target_triple` 设成 Windows”把写入绕出 `managed_dir`。
-- `workspace_package` 同样只在 Windows 宿主上接受 `C:\workspace\app` 这类 Windows 绝对目录；非 Windows 宿主必须使用当前宿主机有效的绝对路径语法。
 - `release` 未指定 `destination` 时，默认安装到 `managed_dir/<binary_name>`。
 - `release.archive_binary` 表示 archive 内目标二进制的相对路径；installer 会先规范斜杠，并在常见“单一根目录” archive 上自动补齐该根目录，兼容 shared runtime 当前要求的精确 archive 路径匹配。
 - `archive_tree_release` 未指定 `destination` 时，默认解到 `managed_dir/<id>/`。
 - `archive_tree_release` 会先把 archive 解到同级 staging 目录，只有校验和解包都成功后才替换目标目录；失败时不会先删除现有内容。
 - `workspace_package` 必须显式给出 `destination`，并把它当作工作区目录路径；绝对路径会原样使用，相对路径则按 plan 文件所在目录解析，不会默认写入 `managed_dir`。
+- `workspace_package` 若使用 Windows 绝对 `destination`，只有当 host triple 和 target triple 都使用 Windows 路径语义时才会接受；非 Windows target 不会再把 `C:\repo\app` 这类路径误当成合法工作区目录。
 - `workspace_package` 执行时会把底层包管理器的工作目录锚定到该 workspace；即使调用 CLI 时的当前目录不同，`npm` 的 `file:`、相对路径和其他依赖解析也按目标 workspace 解析，而不是按 installer 进程当前目录漂移。
 - `workspace_package` 不接受独立 `version` 字段；如需锁定版本，应直接把版本写进 `package` 自身。
 - `system_package`、`apt` 的 `package` 会先按 shared runtime 的 `SystemPackageName` 校验；空串、任何空白、控制字符、路径分隔符、`.`/`..` 以及看起来像 option 的值会在执行前直接返回 install error，而不是继续拼进包管理器 argv。
@@ -156,6 +156,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global`、`cargo_install`、`go_install` 的最终可执行文件路径以结果里的 `destination` 为准；调用方不应假设它们都严格等于 `managed_dir/<binary>`。
 - `npm_global` 使用 `bun` 时，若 `managed_dir` 本身已经是 `.../bin`，installer 会直接把它当作 bun 的全局 binary 目录，而不是再额外套一层 `bin/` 形成 `.../bin/bin/<tool>`。
 - `npm_global`、`cargo_install`、`go_install`、`uv_tool` 若未显式提供 `binary_name`，installer 会优先从 `package` 或解析后的本地/远端来源推导默认二进制名；只有确实推不出来时才回退到 `id`。
+- `npm_global` 与 `go_install` 若 `package` 已经编码了版本、显式来源或本地路径，就不接受额外 `version` 字段；installer 会在 resolve 阶段直接返回 usage error，而不是静默忽略其中一边。
 - Windows target 下，如果 `npm_global`、`cargo_install`、`go_install`、`uv_tool` 显式提供的 `binary_name` 已经带有 `.cmd` 或 `.exe` 这类平台后缀，执行层不会再重复追加同一后缀。
 - `npm_global` 若未显式提供 `binary_name`，且包名推导出的默认入口在托管 bin 目录里并不存在，installer 会继续结合 item `id` 与已安装包的 manifest/bin 元数据解析真实 CLI 入口；像 `typescript -> tsc` 这类“包名不等于命令名”的安装不会再被误判成失败。
 - `npm_global` 若 `package` 使用 `npm:` alias source spec，默认 `binary_name` 会从 alias 指向的真实包名推导，并剥离 `@1.2.3` 这类内嵌版本片段；`github:`、`git:`、`file:` 等 source spec 则只取仓库或路径叶子名，不会把整段 source spec 当成文件名。
