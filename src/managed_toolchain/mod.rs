@@ -19,7 +19,9 @@ use crate::error::OperationResult;
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::plan_items::ResolvedPlanItem;
 
-pub(crate) use managed_destination_backup::{ManagedDestinationBackup, promote_staged_file};
+pub(crate) use managed_destination_backup::{
+    ManagedDestinationBackup, lock_managed_destination, promote_staged_file,
+};
 pub(crate) use uv_public_release_installation::install_uv_from_public_release;
 
 pub(crate) async fn execute_managed_toolchain_item(
