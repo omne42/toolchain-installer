@@ -42,7 +42,7 @@ pub(crate) fn execute_rustup_component_item(
 fn resolve_rustup_component_destination(
     item: &RustupComponentPlanItem,
 ) -> Result<Option<PathBuf>, String> {
-    resolve_rustup_component_destination_with(item, |binary_name| resolve_command_path(binary_name))
+    resolve_rustup_component_destination_with(item, resolve_command_path)
 }
 
 fn resolve_rustup_component_destination_with<F>(
