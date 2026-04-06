@@ -1,6 +1,10 @@
-use omne_artifact_install_primitives::{ArtifactDownloadCandidate, ArtifactDownloadCandidateKind};
+use omne_artifact_install_primitives::ArtifactDownloadCandidate;
 
 use crate::contracts::BootstrapSourceKind;
+
+const GATEWAY_SOURCE_LABEL: &str = "gateway";
+const CANONICAL_SOURCE_LABEL: &str = "canonical";
+const MIRROR_SOURCE_LABEL: &str = "mirror";
 
 pub(crate) fn build_download_candidates(
     canonical_url: &str,
@@ -13,13 +17,13 @@ pub(crate) fn build_download_candidates(
         if !trimmed.is_empty() {
             out.push(ArtifactDownloadCandidate {
                 url: trimmed.to_string(),
-                kind: ArtifactDownloadCandidateKind::Gateway,
+                source_label: GATEWAY_SOURCE_LABEL.to_string(),
             });
         }
     }
     out.push(ArtifactDownloadCandidate {
         url: canonical_url.to_string(),
-        kind: ArtifactDownloadCandidateKind::Canonical,
+        source_label: CANONICAL_SOURCE_LABEL.to_string(),
     });
     for raw_prefix in mirror_prefixes {
         let prefix = raw_prefix.trim();
@@ -34,20 +38,19 @@ pub(crate) fn build_download_candidates(
         if !out.iter().any(|value| value.url == candidate) {
             out.push(ArtifactDownloadCandidate {
                 url: candidate,
-                kind: ArtifactDownloadCandidateKind::Mirror,
+                source_label: MIRROR_SOURCE_LABEL.to_string(),
             });
         }
     }
     out
 }
 
-pub(crate) fn result_source_kind_for_download_candidate(
-    kind: ArtifactDownloadCandidateKind,
-) -> BootstrapSourceKind {
-    match kind {
-        ArtifactDownloadCandidateKind::Gateway => BootstrapSourceKind::Gateway,
-        ArtifactDownloadCandidateKind::Mirror => BootstrapSourceKind::Mirror,
-        ArtifactDownloadCandidateKind::Canonical => BootstrapSourceKind::Canonical,
+pub(crate) fn result_source_kind_for_download_candidate(source_label: &str) -> BootstrapSourceKind {
+    match source_label {
+        GATEWAY_SOURCE_LABEL => BootstrapSourceKind::Gateway,
+        MIRROR_SOURCE_LABEL => BootstrapSourceKind::Mirror,
+        CANONICAL_SOURCE_LABEL => BootstrapSourceKind::Canonical,
+        _ => BootstrapSourceKind::Canonical,
     }
 }
 
@@ -76,9 +79,8 @@ pub(crate) fn make_download_candidates(
 
 #[cfg(test)]
 mod tests {
-    use omne_artifact_install_primitives::ArtifactDownloadCandidateKind;
-
     use super::{
+        CANONICAL_SOURCE_LABEL, GATEWAY_SOURCE_LABEL, MIRROR_SOURCE_LABEL,
         build_download_candidates, redact_source_url, result_source_kind_for_download_candidate,
     };
     use crate::contracts::BootstrapSourceKind;
@@ -92,23 +94,23 @@ mod tests {
         );
 
         assert_eq!(candidates.len(), 3);
-        assert_eq!(candidates[0].kind, ArtifactDownloadCandidateKind::Gateway);
-        assert_eq!(candidates[1].kind, ArtifactDownloadCandidateKind::Canonical);
-        assert_eq!(candidates[2].kind, ArtifactDownloadCandidateKind::Mirror);
+        assert_eq!(candidates[0].source_label, GATEWAY_SOURCE_LABEL);
+        assert_eq!(candidates[1].source_label, CANONICAL_SOURCE_LABEL);
+        assert_eq!(candidates[2].source_label, MIRROR_SOURCE_LABEL);
     }
 
     #[test]
     fn result_source_kind_maps_known_source_kinds() {
         assert_eq!(
-            result_source_kind_for_download_candidate(ArtifactDownloadCandidateKind::Gateway),
+            result_source_kind_for_download_candidate(GATEWAY_SOURCE_LABEL),
             BootstrapSourceKind::Gateway
         );
         assert_eq!(
-            result_source_kind_for_download_candidate(ArtifactDownloadCandidateKind::Canonical),
+            result_source_kind_for_download_candidate(CANONICAL_SOURCE_LABEL),
             BootstrapSourceKind::Canonical
         );
         assert_eq!(
-            result_source_kind_for_download_candidate(ArtifactDownloadCandidateKind::Mirror),
+            result_source_kind_for_download_candidate(MIRROR_SOURCE_LABEL),
             BootstrapSourceKind::Mirror
         );
     }

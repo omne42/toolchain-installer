@@ -70,7 +70,7 @@ pub(crate) async fn install_gh_from_public_release(
     } = downloaded;
     Ok(InstallSource::new(
         source.url,
-        result_source_kind_for_download_candidate(source.kind),
+        result_source_kind_for_download_candidate(&source.source_label),
     )
     .with_archive_match(archive_match.into()))
 }
@@ -133,7 +133,7 @@ pub(crate) async fn install_git_from_public_release(
     } = downloaded;
     Ok(InstallSource::new(
         source.url,
-        result_source_kind_for_download_candidate(source.kind),
+        result_source_kind_for_download_candidate(&source.source_label),
     )
     .with_archive_match(archive_match.into()))
 }
@@ -239,7 +239,7 @@ async fn download_and_install_mingit_bundle(
 
     Ok(InstallSource::new(
         selected.url,
-        result_source_kind_for_download_candidate(selected.kind),
+        result_source_kind_for_download_candidate(&selected.source_label),
     )
     .with_archive_match(BootstrapArchiveMatch {
         format: BootstrapArchiveFormat::Zip,
