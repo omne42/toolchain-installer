@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use omne_host_info_primitives::detect_host_target_triple;
 
 use crate::error::{InstallerError, InstallerResult};
 
@@ -33,6 +35,10 @@ impl ExecutionRequest {
     }
 
     pub fn with_process_environment_fallbacks(mut self) -> Self {
+        if self.managed_dir.is_none() {
+            self.managed_dir =
+                resolve_managed_dir_from_process_environment(self.target_triple.as_deref());
+        }
         fill_explicit_list_from_env_if_empty(
             &mut self.mirror_prefixes,
             "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
@@ -81,6 +87,29 @@ impl ExecutionRequest {
 
 fn option_string_is_empty(value: Option<&str>) -> bool {
     value.is_none_or(|value| value.trim().is_empty())
+}
+
+fn resolve_managed_dir_from_process_environment(target_triple: Option<&str>) -> Option<PathBuf> {
+    if let Some(raw) =
+        std::env::var_os("TOOLCHAIN_INSTALLER_MANAGED_DIR").filter(|value| !value.is_empty())
+    {
+        return Some(PathBuf::from(raw));
+    }
+
+    let omne_data_dir = std::env::var_os("OMNE_DATA_DIR").filter(|value| !value.is_empty())?;
+    let target_triple = target_triple
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| detect_host_target_triple().map(str::to_string))?;
+    Some(default_managed_dir_under_data_root(
+        Path::new(&omne_data_dir),
+        &target_triple,
+    ))
+}
+
+fn default_managed_dir_under_data_root(data_root: &Path, target_triple: &str) -> PathBuf {
+    data_root.join("toolchain").join(target_triple).join("bin")
 }
 
 fn fill_explicit_list_from_env_if_empty(values: &mut Vec<String>, env_name: &str) {
@@ -147,6 +176,8 @@ mod tests {
     fn process_environment_fallbacks_keep_explicit_source_lists_without_env_append() {
         let _guard = env_lock().lock().expect("env lock");
         let names = [
+            "TOOLCHAIN_INSTALLER_MANAGED_DIR",
+            "OMNE_DATA_DIR",
             "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
             "TOOLCHAIN_INSTALLER_PACKAGE_INDEXES",
             "TOOLCHAIN_INSTALLER_PYTHON_INSTALL_MIRRORS",
@@ -165,6 +196,8 @@ mod tests {
             .map(|name| (*name, std::env::var_os(name)))
             .collect::<Vec<_>>();
         unsafe {
+            std::env::set_var("TOOLCHAIN_INSTALLER_MANAGED_DIR", "/env/managed-dir");
+            std::env::set_var("OMNE_DATA_DIR", "/env/omne-data");
             std::env::set_var(
                 "TOOLCHAIN_INSTALLER_MIRROR_PREFIXES",
                 "https://env.example/releases",
@@ -192,6 +225,7 @@ mod tests {
         }
 
         let request = ExecutionRequest {
+            managed_dir: Some(PathBuf::from("/cli/managed-dir")),
             mirror_prefixes: vec!["https://cli.example/releases".to_string()],
             package_indexes: vec!["https://cli.example/simple".to_string()],
             python_install_mirrors: vec!["https://cli.example/python".to_string()],
@@ -211,6 +245,7 @@ mod tests {
             restore_env_var(name, value);
         }
 
+        assert_eq!(request.managed_dir, Some(PathBuf::from("/cli/managed-dir")));
         assert_eq!(
             request.mirror_prefixes,
             vec!["https://cli.example/releases"]
@@ -283,6 +318,59 @@ mod tests {
         assert_eq!(request.max_download_bytes, Some(31));
         assert_eq!(request.host_recipe_timeout_seconds, Some(33));
         assert_eq!(request.uv_timeout_seconds, Some(37));
+    }
+
+    #[test]
+    fn process_environment_fallbacks_capture_managed_dir_from_toolchain_override() {
+        let _guard = env_lock().lock().expect("env lock");
+        let names = ["TOOLCHAIN_INSTALLER_MANAGED_DIR", "OMNE_DATA_DIR"];
+        let previous = names
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect::<Vec<_>>();
+        unsafe {
+            std::env::set_var("TOOLCHAIN_INSTALLER_MANAGED_DIR", "/env/managed-dir");
+            std::env::set_var("OMNE_DATA_DIR", "/env/omne-data");
+        }
+
+        let request = ExecutionRequest::default().with_process_environment_fallbacks();
+
+        for (name, value) in previous {
+            restore_env_var(name, value);
+        }
+
+        assert_eq!(request.managed_dir, Some(PathBuf::from("/env/managed-dir")));
+    }
+
+    #[test]
+    fn process_environment_fallbacks_capture_managed_dir_from_omne_data_dir() {
+        let _guard = env_lock().lock().expect("env lock");
+        let names = ["TOOLCHAIN_INSTALLER_MANAGED_DIR", "OMNE_DATA_DIR"];
+        let previous = names
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect::<Vec<_>>();
+        unsafe {
+            std::env::remove_var("TOOLCHAIN_INSTALLER_MANAGED_DIR");
+            std::env::set_var("OMNE_DATA_DIR", "/env/omne-data");
+        }
+
+        let request = ExecutionRequest {
+            target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
+            ..ExecutionRequest::default()
+        }
+        .with_process_environment_fallbacks();
+
+        for (name, value) in previous {
+            restore_env_var(name, value);
+        }
+
+        assert_eq!(
+            request.managed_dir,
+            Some(PathBuf::from(
+                "/env/omne-data/toolchain/x86_64-unknown-linux-gnu/bin"
+            ))
+        );
     }
 
     #[test]

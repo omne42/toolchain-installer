@@ -30,6 +30,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 纯库 API `validate_install_plan()` 只做 schema、字段组合、宿主/目标约束和重复 `id` 校验；它不知道 `managed_dir`，因此不会擅自猜测依赖目标目录的全局路径冲突。
 - CLI 与 `validate_install_plan_with_request()` 会在结构校验通过后，再结合真实 `managed_dir` 做需要托管根的方法的全局目标路径冲突校验；如果整份 plan 只包含 `system_package`、`pip`、`workspace_package`、`rustup_component` 这类不依赖托管根的方法，即使默认 `managed_dir` 不可解析也不会提前失败。
 - 纯库调用若要传 `ExecutionRequest.plan_base_dir`，该路径必须已经是绝对路径；库层不会再偷偷回退到进程当前工作目录帮调用方猜测基准目录。
+- 纯库调用若希望复用 CLI 对 `TOOLCHAIN_INSTALLER_MANAGED_DIR`、`OMNE_DATA_DIR` 等环境变量的 fallback 语义，需要先显式调用 `ExecutionRequest::with_process_environment_fallbacks()`；执行层不会再直接从这两个环境变量隐式改写 request 的 `managed_dir`。
 - 真正进入 bootstrap 或 plan 执行时，installer 还会对目标 `managed_dir` 获取进程级 advisory lock；命中同一托管根的并发调用会串行等待，直到前一个执行释放锁后才继续，避免共享 state root、固定 staging 名或回滚逻辑互相踩坏。
 - `src/contracts/install_plan_contract.rs` 只承载外部 JSON DTO；进入 `src/install_plan/` 后会先收敛成内部强类型 `ResolvedPlanItem`，执行层不再直接处理一组弱类型 `Option<String>` 字段。
 

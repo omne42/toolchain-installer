@@ -23,6 +23,7 @@
 - `system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install` 以及 bootstrap 的系统包 / `pip install uv` fallback 都会带 hard timeout；默认是 `900` 秒，可通过 `--host-recipe-timeout-seconds` 或 `TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS` 覆盖。
 - `uv_python` 与 `uv_tool` 的托管 `uv` 安装子进程会带有界 stdout/stderr 捕获和 hard timeout；默认是 `900` 秒，可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。
 - 未显式传 `--managed-dir` 时，默认托管目录是 `~/.omne_data/toolchain/<target>/bin`。
+- CLI 会先把 `TOOLCHAIN_INSTALLER_MANAGED_DIR`、`OMNE_DATA_DIR` 等 env fallback 收口进 `ExecutionRequest`；纯库调用若需要相同行为，必须显式调用 `ExecutionRequest::with_process_environment_fallbacks()`，否则不会再被这两个环境变量偷偷改写 `managed_dir`。
 - `release` 的相对 `destination` 解析到 `managed_dir` 下，并拒绝 `..` 路径逃逸。
 - 非 Windows 宿主即使显式把 `target_triple` 设为 Windows，也不会接受 `C:\tools\demo.exe` 这类 Windows 绝对 `destination`；installer 只接受当前宿主机真实可落盘的绝对路径语义。
 - Windows 托管 `git` 更新会把 `git-portable/` payload 切换和 `git.cmd` launcher 重写放进同一事务；launcher 写失败时会回滚到旧 payload，不留下半更新状态。
