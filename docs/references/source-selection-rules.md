@@ -6,6 +6,7 @@
 - 备用站只作为可达性和网络条件不佳时的回退。
 - 回退顺序先看调用方显式输入；同一类来源里，CLI 显式值优先于环境变量。
 - 可选 Worker 只做固定路由优化，不做开放代理。
+- GitHub public release metadata 和 asset 下载使用 installer 自己的 GitHub scoped HTTP/1.1 client；package index、Python mirror、gateway 与其他普通 URL 继续走通用运行期 HTTP client，不共享这条 GitHub workaround。
 
 ## `release` 方法
 
