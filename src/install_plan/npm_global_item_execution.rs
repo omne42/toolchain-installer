@@ -147,6 +147,9 @@ pub(crate) fn execute_npm_global_item_with_timeout(
         )));
     }
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
     write_install_receipt_when_safe(
         &destination,
         PackageInstallRequest {
@@ -157,9 +160,12 @@ pub(crate) fn execute_npm_global_item_with_timeout(
         recipe.package_search_root.as_deref(),
         recipe.fallback_search_root.as_deref(),
     )?;
+<<<<<<< HEAD
 =======
     write_install_receipt(&destination, &item.package_spec, &item.binary_name)?;
 >>>>>>> 72a1e77 (fix(npm): persist no-op install receipts)
+=======
+>>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -529,17 +535,12 @@ fn installation_result_is_acceptable_with_item_id(
     }
 
     destination_preexisted(preinstall_state, destination)
-<<<<<<< HEAD
         && match managed_package_matches_request_for_destination(
-=======
-        && (managed_package_matches_request_for_destination(
->>>>>>> 72a1e77 (fix(npm): persist no-op install receipts)
             destination,
             request,
             fallback_package_dir,
             package_search_root,
             fallback_search_root,
-<<<<<<< HEAD
         ) {
             PackageInstallEvidence::Matches => true,
             PackageInstallEvidence::Mismatch => false,
@@ -547,9 +548,6 @@ fn installation_result_is_acceptable_with_item_id(
                 install_receipt_matches_request(destination, request)
             }
         }
-=======
-        ) || install_receipt_matches_request(destination, request))
->>>>>>> 72a1e77 (fix(npm): persist no-op install receipts)
 }
 
 fn destination_preexisted(
@@ -1381,6 +1379,9 @@ fn write_install_receipt(
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
 fn write_install_receipt_when_safe(
     destination: &Path,
     request: PackageInstallRequest<'_>,
@@ -1403,8 +1404,11 @@ fn write_install_receipt_when_safe(
     write_install_receipt(destination, request.package, request.binary_name)
 }
 
+<<<<<<< HEAD
 =======
 >>>>>>> 72a1e77 (fix(npm): persist no-op install receipts)
+=======
+>>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
 fn install_receipt_matches_request(destination: &Path, request: PackageInstallRequest<'_>) -> bool {
     let Some(current_fingerprint) = file_fingerprint(destination) else {
         return false;
