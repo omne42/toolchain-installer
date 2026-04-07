@@ -153,6 +153,7 @@ fn tool_and_plan_file_conflict_returns_usage_error() {
 
 #[test]
 fn apt_alias_method_normalizes_before_host_bound_validation() {
+    let non_host_target = non_host_target_triple();
     let mut cmd = bootstrap_cmd();
     let stderr = cmd
         .args([
@@ -163,7 +164,7 @@ fn apt_alias_method_normalizes_before_host_bound_validation() {
             "--package",
             "curl",
             "--target-triple",
-            "aarch64-apple-darwin",
+            non_host_target.as_str(),
         ])
         .assert()
         .code(2)
