@@ -280,13 +280,16 @@ fn validate_destination_path(
     _target_triple: &str,
     policy: DestinationPolicy,
 ) -> InstallerResult<PathBuf> {
-    if host_triple.contains("windows") && raw_destination.starts_with('/') {
+    let windows_host = host_triple.contains("windows");
+    let slash_unc_absolute = windows_host && raw_destination.starts_with("//");
+
+    if windows_host && raw_destination.starts_with('/') && !slash_unc_absolute {
         return Err(InstallerError::usage(format!(
             "plan item `{item_id}` destination `{raw_destination}` cannot use a Windows root-relative path such as `\\foo` or `/foo`"
         )));
     }
 
-    if raw_destination.starts_with('/') {
+    if raw_destination.starts_with('/') && !slash_unc_absolute {
         if matches!(policy, DestinationPolicy::Managed) {
             return Err(InstallerError::usage(format!(
                 "plan item `{item_id}` destination `{raw_destination}` cannot be an absolute path"
@@ -524,7 +527,7 @@ enum DestinationPolicy {
 }
 
 fn classify_windows_destination(raw: &str) -> WindowsDestinationKind {
-    if raw.starts_with("\\\\") {
+    if raw.starts_with("\\\\") || raw.starts_with("//") {
         return WindowsDestinationKind::Absolute;
     }
     if raw.starts_with('\\') {
@@ -886,6 +889,19 @@ mod tests {
     }
 
     #[test]
+    fn validate_workspace_destination_accepts_windows_unc_path_with_forward_slashes() {
+        let destination = validate_workspace_destination(
+            "demo",
+            "//server/share/app",
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+        )
+        .expect("windows host should accept slash-form UNC absolute path");
+
+        assert_eq!(destination, PathBuf::from("//server/share/app"));
+    }
+
+    #[test]
     fn validate_workspace_destination_accepts_windows_absolute_path_for_windows_host_only() {
         let destination = validate_workspace_destination(
             "demo",
@@ -910,6 +926,19 @@ mod tests {
             err.to_string()
                 .contains("does not use Windows path semantics")
         );
+    }
+
+    #[test]
+    fn validate_destination_rejects_windows_unc_path_with_forward_slashes_for_managed_installs() {
+        let err = validate_destination(
+            "demo",
+            "//server/share/demo.exe",
+            "x86_64-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+        )
+        .expect_err("managed destination should reject slash-form UNC absolute path");
+
+        assert!(err.to_string().contains("cannot be an absolute path"));
     }
 
     #[test]
