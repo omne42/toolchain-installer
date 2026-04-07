@@ -1967,6 +1967,80 @@ exit 0
 
 #[cfg(unix)]
 #[test]
+fn npm_global_accepts_noop_repeat_install_for_direct_npm_source_spec() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+package_dir="$npm_config_prefix/lib/node_modules/http-server"
+mkdir -p "$package_dir/bin" "$npm_config_prefix/bin"
+if [ ! -f "$npm_config_prefix/bin/http-server" ]; then
+  cat > "$npm_config_prefix/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "direct source"
+EOF
+  chmod +x "$npm_config_prefix/bin/http-server"
+fi
+cat > "$package_dir/package.json" <<'EOF'
+{"name":"http-server","version":"14.1.1","bin":{"http-server":"bin/http-server"}}
+EOF
+cat > "$package_dir/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "direct source"
+EOF
+chmod +x "$package_dir/bin/http-server"
+exit 0
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    let args = [
+        "--json",
+        "--managed-dir",
+        managed_dir.to_str().expect("utf8 path"),
+        "--method",
+        "npm_global",
+        "--id",
+        "http-server-direct-source",
+        "--package",
+        "npm:http-server@14.1.1",
+        "--binary-name",
+        "http-server",
+    ];
+
+    let mut first = bootstrap_cmd();
+    first
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args(args)
+        .assert()
+        .success();
+
+    let mut second = bootstrap_cmd();
+    let output = second
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir
+            .join("bin")
+            .join("http-server")
+            .display()
+            .to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn npm_global_rejects_stale_manifest_binary_when_install_did_not_refresh_it() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
@@ -2234,6 +2308,94 @@ fi
     let mut second = bootstrap_cmd();
     let output = second
         .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "installed");
+    assert_eq!(
+        json["items"][0]["destination"],
+        managed_dir.join("http-server").display().to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_global_pnpm_accepts_noop_reinstall_when_global_root_is_outside_managed_dir() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_pnpm = fake_bin_dir.join("pnpm");
+    write_executable(
+        &fake_pnpm,
+        r#"#!/bin/sh
+[ -n "$PNPM_HOME" ] || exit 9
+[ -n "$PNPM_GLOBAL_ROOT" ] || exit 10
+if [ "$1" = "root" ] && [ "$2" = "--global" ]; then
+  printf '%s\n' "$PNPM_GLOBAL_ROOT"
+  exit 0
+fi
+pkg_dir="$PNPM_GLOBAL_ROOT/http-server"
+bin_path="$PNPM_HOME/http-server"
+mkdir -p "$PNPM_HOME"
+mkdir -p "$pkg_dir/bin"
+if [ ! -f "$bin_path" ]; then
+  cat > "$bin_path" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+  chmod +x "$bin_path"
+fi
+cat > "$pkg_dir/package.json" <<'EOF'
+{"name":"http-server","version":"14.1.1","bin":{"http-server":"bin/http-server"}}
+EOF
+cat > "$pkg_dir/bin/http-server" <<'EOF'
+#!/bin/sh
+echo "14.1.1"
+EOF
+chmod +x "$pkg_dir/bin/http-server"
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-pnpm-home");
+    let pnpm_global_root = temp.path().join("external-pnpm-global-root");
+    let args = [
+        "--json",
+        "--strict",
+        "--managed-dir",
+        managed_dir.to_str().expect("utf8 path"),
+        "--method",
+        "npm_global",
+        "--id",
+        "http-server-pnpm-external-root",
+        "--package",
+        "http-server@14.1.1",
+        "--binary-name",
+        "http-server",
+        "--manager",
+        "pnpm",
+    ];
+
+    let mut first = bootstrap_cmd();
+    first
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .env(
+            "PNPM_GLOBAL_ROOT",
+            pnpm_global_root.to_str().expect("utf8 pnpm global root"),
+        )
+        .args(args)
+        .assert()
+        .success();
+
+    let mut second = bootstrap_cmd();
+    let output = second
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .env(
+            "PNPM_GLOBAL_ROOT",
+            pnpm_global_root.to_str().expect("utf8 pnpm global root"),
+        )
         .args(args)
         .assert()
         .success()
