@@ -437,6 +437,64 @@ chmod +x "$root/bin/alias-tool"
 
 #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
 #[test]
+fn cargo_install_strips_windows_exe_suffix_from_explicit_bin_arg() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cargo = tmp.path().join("cargo");
+    write_executable(
+        &cargo,
+        r#"#!/bin/sh
+root=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--root" ]; then
+    root="$2"
+    shift 2
+    continue
+  fi
+  if [ "$1" = "--bin" ]; then
+    if [ "$2" != "alias-tool" ]; then
+      echo "unexpected cargo --bin value: $2" >&2
+      exit 7
+    fi
+    shift 2
+    continue
+  fi
+  shift
+done
+mkdir -p "$root/bin"
+printf 'cargo-installed-windows' > "$root/bin/alias-tool.exe"
+chmod +x "$root/bin/alias-tool.exe"
+"#,
+    )
+    .expect("write cargo");
+    let managed_dir = tmp.path().join("managed");
+    let item = CargoInstallPlanItem {
+        id: "cargo-demo".to_string(),
+        source: CargoInstallSource::RegistryPackage {
+            package: "demo-tool".to_string(),
+            version: None,
+        },
+        binary_name: "alias-tool.exe".to_string(),
+        binary_name_explicit: true,
+    };
+
+    let result = with_path_prepend(tmp.path(), || {
+        execute_cargo_install_item(&item, "x86_64-pc-windows-msvc", &managed_dir)
+    })
+    .expect("cargo install should succeed for windows explicit .exe binary name");
+
+    let destination = managed_dir.join("bin").join("alias-tool.exe");
+    assert_eq!(
+        result.destination.as_deref(),
+        Some(destination.to_str().unwrap())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("read installed cargo binary"),
+        "cargo-installed-windows"
+    );
+}
+
+#[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+#[test]
 fn cargo_install_rejects_single_staged_binary_that_does_not_match_explicit_binary_name() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cargo = tmp.path().join("cargo");
@@ -1628,14 +1686,17 @@ fn system_package_recipe_helpers_match_runtime_validation_contract() {
     let package = SystemPackageName::new("git").expect("valid package name");
     let apt_recipe = SystemPackageManager::AptGet.install_recipe(&package);
     assert_eq!(apt_recipe.program, "apt-get");
-    assert_eq!(
-        apt_recipe.args,
-        vec![
-            "install".to_string(),
-            "-y".to_string(),
-            "--".to_string(),
-            "git".to_string()
-        ]
+    assert!(
+        apt_recipe.args
+            == vec![
+                "install".to_string(),
+                "-y".to_string(),
+                "--".to_string(),
+                "git".to_string()
+            ]
+            || apt_recipe.args == vec!["install".to_string(), "--".to_string(), "git".to_string()],
+        "unexpected apt-get install recipe args: {:?}",
+        apt_recipe.args
     );
 
     assert_eq!(

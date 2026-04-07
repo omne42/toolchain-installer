@@ -160,6 +160,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global`、`cargo_install`、`go_install` 若 `package` 已经编码了版本、显式来源或本地路径，就不接受额外 `version` 字段；installer 会在 resolve 阶段直接返回 usage error，而不是静默忽略其中一边。
 - `go_install` 把 `./cmd/demo` 这类显式相对路径和 `cmd/demo` 这类 bare relative 工作区路径都当作本地包路径处理；它们会按 plan 文件所在目录解析，而不是被当成远端 module spec 走网络安装。
 - Windows target 下，如果 `npm_global`、`cargo_install`、`go_install`、`uv_tool` 显式提供的 `binary_name` 已经带有 `.cmd` 或 `.exe` 这类平台后缀，执行层不会再重复追加同一后缀。
+- `cargo_install` 若显式提供的 `binary_name` 已经带 `.exe`，installer 会把它继续当作最终托管目标文件名，但传给 `cargo install --bin` 的 crate bin 选择器会先去掉平台后缀，避免把 `foo.exe` 错传成不存在的 crate bin 名。
 - `npm_global` 若未显式提供 `binary_name`，且包名推导出的默认入口在托管 bin 目录里并不存在，installer 会继续结合 item `id` 与已安装包的 manifest/bin 元数据解析真实 CLI 入口；像 `typescript -> tsc` 这类“包名不等于命令名”的安装不会再被误判成失败。
 - `npm_global` 若 `package` 使用 `npm:` alias source spec，默认 `binary_name` 会从 alias 指向的真实包名推导，并剥离 `@1.2.3` 这类内嵌版本片段；`github:`、`git:`、`file:` 等 source spec 则只取仓库或路径叶子名，不会把整段 source spec 当成文件名。
 - `cargo_install`、`go_install` 若显式提供 `binary_name`，它表示最终托管目标文件名；installer 会先在隔离 staging 目录执行安装，再把本次实际产出的目标二进制提升到该文件名。只要 staging 产物里没有名字直接匹配请求的 `binary_name`，整项就会返回失败而不是猜测，即使 staging 里只剩一个名字不匹配的二进制也一样。
@@ -171,7 +172,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `npm_global` 的幂等重跑允许包管理器 no-op，但前提是 installer 还能从托管目录里的 manifest/bin 元数据，或上一次成功安装时写下的 installer-managed receipt，按 package spec 语义证明“当前安装与请求相符”，并重新解析出与结果 `destination` 相同的 CLI 入口：精确版本仍要求 `manifest.version` 精确匹配，`latest`/range/tag/`npm:` alias 以及 `github:`/`git:`/`file:` 等显式来源则退回到包名或可解析来源身份匹配；对 `file:`、`github:`、`git:`、本地路径这类显式来源，若只能从 spec 里稳定解析出仓库名或路径叶子名，installer 也只会接受 manifest `name` 与这个可解析身份一致的包目录，不会把 search root 下无关包的 metadata 当成命中。孤儿旧 binary，或名字刚好还在但 manifest 当前已指向别的 bin 的旧 wrapper，都不会被当成成功安装。
 - `npm_global` 做幂等探测时会按目标平台使用原生包目录布局：npm 在 Unix 上检查 `<prefix>/lib/node_modules`，在 Windows target 上检查 `<prefix>/node_modules`；pnpm 会递归扫描 `PNPM_HOME/global/` 下的实际 store/workspace 布局，而不是假设固定单层目录。
 - `npm_global` 在托管目录内做包目录或回退二进制探测时不会跟随目录 symlink，避免循环目录把安装流程拖死；同时会跳过不可读目录、不可读 manifest 和坏 manifest，不会因为单个坏条目把幂等重跑误判成失败。
-- `npm_global` 为了兼容重复安装留下的 managed leaf symlink，会允许目标 leaf 自身是 symlink；但 symlink 解析后的最终路径仍必须落在 `managed_dir` 内。无论这个 symlink 是安装前就已存在，还是本次安装新写出的，只要最终解析到托管根外部，整项都会失败。
+- `npm_global` 为了兼容重复安装留下的 managed leaf symlink，会允许目标 leaf 自身是 symlink；但只限于 canonical 全局 entrypoint 位置，也就是 `managed_dir/<tool>` 或 `managed_dir/bin/<tool>`，而且 symlink 解析后的最终路径仍必须落在 `managed_dir` 内。无论这个 symlink 是安装前就已存在，还是本次安装新写出的，只要最终解析到托管根外部，整项都会失败。
 - `cargo_install` 若 `managed_dir` 本身不是 `bin/` 目录，结果二进制会落到 `managed_dir/bin/<binary>`，不会越过调用方给定的托管根。
 - plan 文件中的本地相对路径输入（例如 `cargo_install` 的本地包路径、`go_install` 的 `./cmd/demo` 或 `cmd/demo` 这类裸相对源码路径、`workspace_package` 的相对工作区目录，以及 `pip`/`npm_global` 的本地 `package` 路径）按 plan 文件所在目录解析；解析时会先对 plan 基准目录做词法规范化，不会因为 `plans/../plans` 这类等价写法绕过后续目标冲突校验。
 - 这类“按本地路径解释”的 `package` 输入也只接受当前宿主机原生的绝对路径语法：非 Windows 宿主会在 resolve 阶段直接拒绝 `C:\repo\demo`、`\repo\demo`、`file:C:\repo\demo` 这类 Windows-local 路径，而不是把它们误当成相对路径继续执行。

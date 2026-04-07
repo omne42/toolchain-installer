@@ -42,7 +42,7 @@ pub(crate) fn execute_cargo_install_item_with_timeout(
         create_stage_root(&install_root, "cargo-install").map_err(OperationError::install)?;
     let expected_destination = resolve_cargo_install_destination(item, target_triple, managed_dir);
 
-    let mut args = build_cargo_install_args(item, &stage_root);
+    let mut args = build_cargo_install_args(item, &stage_root, target_triple);
     let source = match &item.source {
         CargoInstallSource::LocalPath(package_path) => {
             if !package_path.exists() {
@@ -133,7 +133,11 @@ pub(crate) fn execute_cargo_install_item_with_timeout(
     })
 }
 
-fn build_cargo_install_args(item: &CargoInstallPlanItem, stage_root: &Path) -> Vec<OsString> {
+fn build_cargo_install_args(
+    item: &CargoInstallPlanItem,
+    stage_root: &Path,
+    target_triple: &str,
+) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("install"),
         OsString::from("--root"),
@@ -141,9 +145,22 @@ fn build_cargo_install_args(item: &CargoInstallPlanItem, stage_root: &Path) -> V
     ];
     if item.binary_name_explicit {
         args.push(OsString::from("--bin"));
-        args.push(OsString::from(&item.binary_name));
+        args.push(OsString::from(cargo_install_requested_bin_name(
+            &item.binary_name,
+            target_triple,
+        )));
     }
     args
+}
+
+fn cargo_install_requested_bin_name<'a>(binary_name: &'a str, target_triple: &str) -> &'a str {
+    if target_triple.contains("windows") && binary_name.len() > 4 {
+        let suffix_start = binary_name.len() - 4;
+        if binary_name[suffix_start..].eq_ignore_ascii_case(".exe") {
+            return &binary_name[..suffix_start];
+        }
+    }
+    binary_name
 }
 
 fn push_cargo_install_local_path_arg(args: &mut Vec<OsString>, package_path: &Path) {
@@ -277,8 +294,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        build_cargo_install_args, build_success_cleanup_detail, push_cargo_install_local_path_arg,
-        select_staged_binary,
+        build_cargo_install_args, build_success_cleanup_detail, cargo_install_requested_bin_name,
+        push_cargo_install_local_path_arg, select_staged_binary,
     };
     use crate::plan_items::{CargoInstallPlanItem, CargoInstallSource};
 
@@ -294,7 +311,8 @@ mod tests {
             binary_name_explicit: true,
         };
 
-        let args = build_cargo_install_args(&item, Path::new("/tmp/stage"));
+        let args =
+            build_cargo_install_args(&item, Path::new("/tmp/stage"), "x86_64-unknown-linux-gnu");
         assert_eq!(
             args,
             vec![
@@ -319,7 +337,8 @@ mod tests {
             binary_name_explicit: false,
         };
 
-        let args = build_cargo_install_args(&item, Path::new("/tmp/stage"));
+        let args =
+            build_cargo_install_args(&item, Path::new("/tmp/stage"), "x86_64-unknown-linux-gnu");
         assert_eq!(
             args,
             vec![
@@ -348,7 +367,7 @@ mod tests {
         let stage_root = PathBuf::from(OsString::from_vec(b"/tmp/stage-\xff".to_vec()));
         let package_path = PathBuf::from(OsString::from_vec(b"/tmp/pkg-\xfe".to_vec()));
 
-        let mut args = build_cargo_install_args(&item, &stage_root);
+        let mut args = build_cargo_install_args(&item, &stage_root, "x86_64-unknown-linux-gnu");
         push_cargo_install_local_path_arg(&mut args, &package_path);
 
         assert_eq!(args[2].as_bytes(), b"/tmp/stage-\xff");
@@ -368,6 +387,48 @@ mod tests {
         assert!(detail.contains("cleanup warning"));
         assert!(detail.contains("/tmp/stage"));
         assert!(detail.contains("/tmp/managed/bin/demo"));
+    }
+
+    #[test]
+    fn cargo_install_requested_bin_name_strips_windows_exe_suffix() {
+        assert_eq!(
+            cargo_install_requested_bin_name("demo.exe", "x86_64-pc-windows-msvc"),
+            "demo"
+        );
+        assert_eq!(
+            cargo_install_requested_bin_name("DEMO.EXE", "x86_64-pc-windows-msvc"),
+            "DEMO"
+        );
+        assert_eq!(
+            cargo_install_requested_bin_name("demo.exe", "x86_64-unknown-linux-gnu"),
+            "demo.exe"
+        );
+    }
+
+    #[test]
+    fn explicit_windows_binary_name_omits_exe_in_cargo_install_args() {
+        let item = CargoInstallPlanItem {
+            id: "demo".to_string(),
+            source: CargoInstallSource::RegistryPackage {
+                package: "demo".to_string(),
+                version: None,
+            },
+            binary_name: "alias-tool.exe".to_string(),
+            binary_name_explicit: true,
+        };
+
+        let args =
+            build_cargo_install_args(&item, Path::new("/tmp/stage"), "x86_64-pc-windows-msvc");
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("install"),
+                OsString::from("--root"),
+                OsString::from("/tmp/stage"),
+                OsString::from("--bin"),
+                OsString::from("alias-tool"),
+            ]
+        );
     }
     #[test]
     fn select_staged_binary_rejects_unique_mismatch_for_explicit_binary_name() {

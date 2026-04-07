@@ -387,14 +387,14 @@ fn validate_parsed_destination(
 }
 
 pub(crate) fn resolve_destination_path(path: &Path, managed_dir: &Path) -> PathBuf {
-    if destination_is_absolute(path) {
+    if host_destination_is_absolute(path) {
         return normalize_lexical_path(path);
     }
     normalize_lexical_path(&managed_dir.join(path))
 }
 
 pub(crate) fn resolve_plan_relative_path(path: &Path, plan_base_dir: Option<&Path>) -> PathBuf {
-    if destination_is_absolute(path) {
+    if host_destination_is_absolute(path) {
         return normalize_lexical_path(path);
     }
     if let Some(base_dir) = plan_base_dir {
@@ -418,6 +418,7 @@ pub(crate) fn validate_managed_path_boundary(
     for (index, component) in components.iter().enumerate() {
         current.push(component.as_os_str());
         if allow_leaf_symlink && index + 1 == components.len() {
+            validate_allowed_leaf_symlink_location(&current, managed_dir)?;
             validate_allowed_leaf_symlink(&current, managed_dir)?;
             continue;
         }
@@ -510,6 +511,10 @@ fn destination_is_absolute(path: &Path) -> bool {
         classify_windows_destination(path.as_os_str().to_string_lossy().as_ref()),
         WindowsDestinationKind::Absolute
     )
+}
+
+fn host_destination_is_absolute(path: &Path) -> bool {
+    path.is_absolute() || path.has_root() || (cfg!(windows) && destination_is_absolute(path))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -615,6 +620,29 @@ fn validate_allowed_leaf_symlink(candidate: &Path, managed_dir: &Path) -> Result
     Ok(())
 }
 
+fn validate_allowed_leaf_symlink_location(
+    candidate: &Path,
+    managed_dir: &Path,
+) -> Result<(), String> {
+    let Some(parent) = candidate.parent() else {
+        return Err(format!(
+            "managed destination under `{}` does not have a parent directory",
+            managed_dir.display()
+        ));
+    };
+    let managed_bin_dir = managed_dir.join("bin");
+    if parent == managed_dir || parent == managed_bin_dir {
+        return Ok(());
+    }
+    Err(format!(
+        "managed destination under `{}` only allows npm_global leaf symlinks in `{}` or `{}`; got `{}`",
+        managed_dir.display(),
+        managed_dir.display(),
+        managed_bin_dir.display(),
+        candidate.display()
+    ))
+}
+
 fn normalize_symlink_target_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -715,10 +743,23 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn resolve_destination_path_preserves_windows_absolute_paths() {
         let destination =
             resolve_destination_path(Path::new("C:\\tools\\demo.exe"), Path::new("/managed"));
         assert_eq!(destination, PathBuf::from("C:\\tools\\demo.exe"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn resolve_destination_path_keeps_windows_absolute_like_input_under_managed_dir_on_non_windows()
+    {
+        let destination =
+            resolve_destination_path(Path::new("C:\\tools\\demo.exe"), Path::new("/managed"));
+        assert_eq!(
+            destination,
+            PathBuf::from("/managed").join("C:\\tools\\demo.exe")
+        );
     }
 
     #[test]
@@ -1085,6 +1126,28 @@ mod tests {
         )
         .expect_err("parent escape leaf symlink should be rejected");
         assert!(err.contains("escapes via symlink leaf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_managed_path_boundary_rejects_leaf_symlink_outside_canonical_bin_locations() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = tmp.path().join("managed");
+        let package_dir = managed_dir
+            .join("lib")
+            .join("node_modules")
+            .join("demo")
+            .join("bin");
+        std::fs::create_dir_all(&package_dir).expect("create package dir");
+        symlink(package_dir.join("demo"), package_dir.join("demo-link"))
+            .expect("create nested symlink");
+
+        let err =
+            validate_managed_path_boundary(&package_dir.join("demo-link"), &managed_dir, true)
+                .expect_err("non-entrypoint leaf symlink should be rejected");
+        assert!(err.contains("only allows npm_global leaf symlinks"));
     }
 
     #[test]
