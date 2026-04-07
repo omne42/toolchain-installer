@@ -178,6 +178,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
+        ManagedBootstrapState, assess_managed_bootstrap_state,
         host_command_is_healthy_with_resolver, launcher_target_from_script,
         managed_windows_git_payload_path,
     };
@@ -186,6 +187,9 @@ mod tests {
     fn write_executable(path: &std::path::Path, body: &str) {
         use std::os::unix::fs::PermissionsExt;
 
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create executable parent");
+        }
         std::fs::write(path, body).expect("write executable");
         let mut permissions = std::fs::metadata(path)
             .expect("stat executable")
@@ -204,6 +208,34 @@ mod tests {
         assert!(host_command_is_healthy_with_resolver("git", |_| Some(
             PathBuf::from(&git_path)
         )));
+    }
+
+    #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+    #[test]
+    fn unsupported_tool_ignores_healthy_managed_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let destination = managed_dir.join("custom-tool");
+        write_executable(
+            &destination,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "custom-tool 1.0.0"
+  exit 0
+fi
+exit 1
+"#,
+        );
+
+        assert_eq!(
+            assess_managed_bootstrap_state(
+                "custom-tool",
+                "x86_64-unknown-linux-gnu",
+                &destination,
+                &managed_dir,
+            ),
+            ManagedBootstrapState::NeedsInstall
+        );
     }
 
     #[test]
