@@ -210,7 +210,7 @@ mod tests {
         )));
     }
 
-    #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+    #[cfg(unix)]
     #[test]
     fn unsupported_tool_ignores_healthy_managed_binary() {
         let temp = tempfile::tempdir().expect("tempdir");
