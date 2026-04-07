@@ -627,10 +627,9 @@ fn resolve_installed_package_dirs(
             package_dirs.push(path.to_path_buf());
         }
     }
-    if let Some(root) =
-        package_search_root
-            .filter(|path| path_has_no_symlink_components(path, PathKind::Directory))
-            .filter(|_| search_root_package_scan_is_allowed(package))
+    if let Some(root) = package_search_root
+        .filter(|path| path_has_no_symlink_components(path, PathKind::Directory))
+        .filter(|_| search_root_package_scan_is_allowed(package))
     {
         package_dirs.extend(find_package_dirs_under_root(
             root,
@@ -1659,15 +1658,11 @@ mod tests {
         );
         assert_eq!(
             npm_package_request(&spec("file:../packages/http-server")),
-            NpmPackageRequest::ExplicitSource {
-                package_name: Some("http-server"),
-            }
+            NpmPackageRequest::ExplicitSource { package_name: None }
         );
         assert_eq!(
             npm_package_request(&spec("../packages/http-server")),
-            NpmPackageRequest::ExplicitSource {
-                package_name: Some("http-server"),
-            }
+            NpmPackageRequest::ExplicitSource { package_name: None }
         );
         assert_eq!(
             npm_package_request(&spec("github:owner/repo-tool#main")),
@@ -1678,6 +1673,19 @@ mod tests {
             NpmPackageRequest::ExplicitSource {
                 package_name: Some("http-server"),
             }
+        );
+    }
+
+    #[test]
+    fn npm_global_package_dir_uses_source_leaf_for_explicit_source_specs() {
+        let package_dir = npm_global_package_dir(
+            Path::new("/tmp/prefix"),
+            "github:owner/repo-tool#main",
+            "x86_64-unknown-linux-gnu",
+        );
+        assert_eq!(
+            package_dir,
+            PathBuf::from("/tmp/prefix/lib/node_modules/repo-tool")
         );
     }
 
@@ -1824,7 +1832,7 @@ mod tests {
     fn installation_result_accepts_noop_for_local_path_source_with_matching_package_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         let package_root = temp.path().join("global");
-        let package_dir = package_root.join("pkg");
+        let package_dir = package_root.join("demo");
         let binary_path = temp.path().join("bin").join("demo");
         write_package_with_binary(
             &package_dir,
@@ -1838,7 +1846,7 @@ mod tests {
             &binary_path,
             "../packages/demo",
             "demo",
-            None,
+            Some(&package_dir),
             Some(&package_root),
             None,
         );
@@ -1848,7 +1856,7 @@ mod tests {
             &binary_path,
             "../packages/demo",
             "demo",
-            None,
+            Some(&package_dir),
             Some(&package_root),
             None,
         ));
@@ -2560,7 +2568,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let binary_path = temp.path().join("bin").join("repo-tool");
         let package_root = temp.path().join("lib").join("node_modules");
-        let package_dir = package_root.join("repo-tool-package");
+        let package_dir = package_root.join("repo-tool");
         std::fs::create_dir_all(binary_path.parent().expect("binary parent"))
             .expect("create binary parent");
         std::fs::create_dir_all(package_dir.join("dist")).expect("create package dir");
@@ -2591,7 +2599,7 @@ mod tests {
             &binary_path,
             "github:owner/repo-tool#main",
             "repo-tool",
-            None,
+            Some(&package_dir),
             Some(&package_root),
             None,
         );
@@ -2600,7 +2608,7 @@ mod tests {
             &binary_path,
             "github:owner/repo-tool#main",
             "repo-tool",
-            None,
+            Some(&package_dir),
             Some(&package_root),
             None,
         ));
