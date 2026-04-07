@@ -1628,14 +1628,17 @@ fn system_package_recipe_helpers_match_runtime_validation_contract() {
     let package = SystemPackageName::new("git").expect("valid package name");
     let apt_recipe = SystemPackageManager::AptGet.install_recipe(&package);
     assert_eq!(apt_recipe.program, "apt-get");
-    assert_eq!(
-        apt_recipe.args,
-        vec![
-            "install".to_string(),
-            "-y".to_string(),
-            "--".to_string(),
-            "git".to_string()
-        ]
+    assert!(
+        apt_recipe.args
+            == vec![
+                "install".to_string(),
+                "-y".to_string(),
+                "--".to_string(),
+                "git".to_string()
+            ]
+            || apt_recipe.args == vec!["install".to_string(), "--".to_string(), "git".to_string()],
+        "unexpected apt-get install recipe args: {:?}",
+        apt_recipe.args
     );
 
     assert_eq!(

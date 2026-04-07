@@ -302,6 +302,22 @@ fn remove_backup_path(path: &Path) -> OperationResult<()> {
     }
 }
 
+fn restore_payload_backup_after_failed_replace(
+    current: &Path,
+    backup: &Path,
+) -> OperationResult<()> {
+    if !backup.exists() {
+        return Ok(());
+    }
+    if current.exists() {
+        return Err(OperationError::install(format!(
+            "cannot restore MinGit payload backup because destination {} already exists",
+            current.display()
+        )));
+    }
+    fs::rename(backup, current).map_err(|err| OperationError::install(err.to_string()))
+}
+
 fn mingit_launcher_backup_path(destination: &Path) -> PathBuf {
     destination.with_file_name(format!(
         "{}.toolchain-installer-backup",
@@ -380,18 +396,39 @@ pub(crate) fn replace_mingit_installation(
     staging_root: &Path,
     backup_root: &Path,
 ) -> OperationResult<()> {
+    replace_mingit_installation_with_before_promote(
+        portable_root,
+        staging_root,
+        backup_root,
+        || Ok(()),
+    )
+}
+
+fn replace_mingit_installation_with_before_promote<F>(
+    portable_root: &Path,
+    staging_root: &Path,
+    backup_root: &Path,
+    before_promote: F,
+) -> OperationResult<()>
+where
+    F: FnOnce() -> OperationResult<()>,
+{
     restore_backup_if_needed(portable_root, backup_root)?;
     remove_dir_if_exists(backup_root)?;
     if portable_root.exists() {
         fs::rename(portable_root, backup_root)
             .map_err(|err| OperationError::install(err.to_string()))?;
     }
+    before_promote()?;
 
     if let Err(err) = fs::rename(staging_root, portable_root) {
-        if backup_root.exists() {
-            let _ = fs::rename(backup_root, portable_root);
-        }
-        return Err(OperationError::install(err.to_string()));
+        let rollback_err =
+            restore_payload_backup_after_failed_replace(portable_root, backup_root).err();
+        return Err(combine_mingit_transaction_error(
+            "promote MinGit payload",
+            OperationError::install(err.to_string()),
+            rollback_err,
+        ));
     }
     Ok(())
 }
@@ -570,7 +607,7 @@ mod tests {
 
     use super::{
         finalize_mingit_installation_with_launcher_writer, lock_mingit_installation_paths,
-        mingit_launcher_backup_path,
+        mingit_launcher_backup_path, replace_mingit_installation_with_before_promote,
     };
     use crate::error::OperationError;
 
@@ -644,6 +681,40 @@ mod tests {
         assert!(
             !backup_root.exists(),
             "transaction cleanup should remove backup root"
+        );
+    }
+
+    #[test]
+    fn mingit_replace_surfaces_payload_rollback_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let portable_root = managed_dir.join("git-portable");
+        let staging_root = managed_dir.join("git-portable.stage");
+        let backup_root = managed_dir.join("git-portable.backup");
+        std::fs::create_dir_all(portable_root.join("cmd")).expect("create old portable root");
+        std::fs::create_dir_all(staging_root.join("cmd")).expect("create staging portable root");
+        std::fs::write(portable_root.join("cmd").join("git.exe"), b"old").expect("write old git");
+        std::fs::write(staging_root.join("cmd").join("git.exe"), b"new").expect("write staged git");
+
+        let err = replace_mingit_installation_with_before_promote(
+            &portable_root,
+            &staging_root,
+            &backup_root,
+            || {
+                let blocking_dir = portable_root.join("blocking");
+                std::fs::create_dir_all(&blocking_dir)
+                    .map_err(|write_err| OperationError::install(write_err.to_string()))?;
+                std::fs::write(blocking_dir.join("sentinel.txt"), b"blocking-file")
+                    .map_err(|write_err| OperationError::install(write_err.to_string()))
+            },
+        )
+        .expect_err("payload promote failure should report rollback failure");
+
+        assert!(err.detail().contains("promote MinGit payload failed"));
+        assert!(err.detail().contains("rollback also failed"));
+        assert!(
+            backup_root.exists(),
+            "backup root should remain for manual recovery"
         );
     }
 
