@@ -3334,45 +3334,7 @@ fn validate_plan_rejects_duplicate_item_ids() {
 }
 
 #[test]
-fn validate_plan_accepts_apt_method_as_explicit_apt_get_alias() {
-    let plan = InstallPlan {
-        schema_version: PLAN_SCHEMA_VERSION,
-        items: vec![InstallPlanItem {
-            id: "apt-demo".to_string(),
-            method: "apt".to_string(),
-            version: None,
-            url: None,
-            sha256: None,
-            archive_binary: None,
-            binary_name: None,
-            destination: None,
-            package: Some("curl".to_string()),
-            manager: Some("apt-get".to_string()),
-            python: None,
-        }],
-    };
-
-    let resolved = validate_plan(
-        &plan,
-        "x86_64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-    )
-    .expect("apt alias should resolve");
-
-    let ResolvedPlanItem::SystemPackage(item) = &resolved[0] else {
-        panic!("expected system package item");
-    };
-    assert_eq!(item.package, "curl");
-    assert_eq!(
-        item.mode,
-        SystemPackageMode::Explicit(
-            SystemPackageManager::parse("apt-get").expect("apt-get manager")
-        )
-    );
-}
-
-#[test]
-fn validate_plan_accepts_apt_method_without_explicit_manager() {
+fn validate_plan_rejects_apt_alias_method() {
     let plan = InstallPlan {
         schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
@@ -3390,51 +3352,14 @@ fn validate_plan_accepts_apt_method_without_explicit_manager() {
         }],
     };
 
-    let resolved = validate_plan(
-        &plan,
-        "x86_64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-    )
-    .expect("apt alias should default to apt-get");
-
-    let ResolvedPlanItem::SystemPackage(item) = &resolved[0] else {
-        panic!("expected system package item");
-    };
-    assert_eq!(
-        item.mode,
-        SystemPackageMode::Explicit(
-            SystemPackageManager::parse("apt-get").expect("apt-get manager")
-        )
-    );
-}
-
-#[test]
-fn validate_plan_rejects_apt_manager_other_than_apt_get() {
-    let plan = InstallPlan {
-        schema_version: PLAN_SCHEMA_VERSION,
-        items: vec![InstallPlanItem {
-            id: "apt-demo".to_string(),
-            method: "apt".to_string(),
-            version: None,
-            url: None,
-            sha256: None,
-            archive_binary: None,
-            binary_name: None,
-            destination: None,
-            package: Some("curl".to_string()),
-            manager: Some("brew".to_string()),
-            python: None,
-        }],
-    };
-
     let err = validate_plan(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt alias should reject non-apt-get managers");
+    .expect_err("apt alias should be rejected");
     assert!(
-        err.to_string().contains("only supports manager `apt-get`"),
+        err.to_string().contains("unsupported method `apt`"),
         "unexpected error: {err}"
     );
 }
@@ -4422,7 +4347,7 @@ fn validate_plan_accepts_system_package_method_with_explicit_apt_get_manager() {
 }
 
 #[test]
-fn validate_plan_rejects_apt_method_with_non_apt_get_manager() {
+fn validate_plan_rejects_apt_method_even_with_explicit_manager() {
     let plan = InstallPlan {
         schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
@@ -4435,7 +4360,7 @@ fn validate_plan_rejects_apt_method_with_non_apt_get_manager() {
             binary_name: None,
             destination: None,
             package: Some("demo".to_string()),
-            manager: Some("dnf".to_string()),
+            manager: Some("apt-get".to_string()),
             python: None,
         }],
     };
@@ -4444,9 +4369,9 @@ fn validate_plan_rejects_apt_method_with_non_apt_get_manager() {
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt method should reject non-apt-get manager");
+    .expect_err("apt method should stay unsupported");
     assert_eq!(err.exit_code(), ExitCode::Usage);
-    assert!(err.to_string().contains("only supports manager `apt-get`"));
+    assert!(err.to_string().contains("unsupported method `apt`"));
 }
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]

@@ -22,8 +22,7 @@ CI 另外会在 GitHub-hosted Linux、macOS、Windows runner 上调用 `scripts/
 - Windows 上的 `bootstrap --tool git`
 - `plan.method=release`
 - `plan.method=system_package`
-- Ubuntu 上的 `plan.method=apt`
-  - CI 会单独跑公开 alias `apt`，而不是只通过 `system_package + manager=apt-get` 间接覆盖。
+- Ubuntu 上的 `plan.method=system_package + manager=apt-get`
 - `plan.method=pip`
 - `plan.method=uv`
 - `plan.method=uv_python`

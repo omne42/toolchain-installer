@@ -23,7 +23,6 @@ ARCHIVE_TREE_RELEASE_PHASE = "archive_tree_release"
 GIT_BOOTSTRAP_PHASE = "bootstrap_git"
 PIP_PHASE = "pip"
 SYSTEM_PACKAGE_PHASE = "system_package"
-APT_PHASE = "apt"
 UV_PHASE = "uv"
 UV_PYTHON_PHASE = "uv_python"
 UV_TOOL_PHASE = "uv_tool"
@@ -74,7 +73,6 @@ def parse_args() -> argparse.Namespace:
                 GIT_BOOTSTRAP_PHASE,
                 PIP_PHASE,
                 SYSTEM_PACKAGE_PHASE,
-                APT_PHASE,
                 UV_PHASE,
                 UV_PYTHON_PHASE,
                 UV_TOOL_PHASE,
@@ -956,17 +954,20 @@ def phase_pip(binary: Path) -> None:
 
 
 def phase_system_package(binary: Path) -> None:
+    argv: list[str] = [
+        "--json",
+        "--method",
+        "system_package",
+        "--id",
+        "jq-system-package",
+        "--package",
+        "jq",
+    ]
+    if platform.system() == "Linux":
+        argv.extend(["--manager", "apt-get"])
     result = run_installer_json(
         binary,
-        [
-            "--json",
-            "--method",
-            "system_package",
-            "--id",
-            "jq-system-package",
-            "--package",
-            "jq",
-        ],
+        argv,
         attempts=HOST_INSTALL_ATTEMPTS,
     )
     item = single_item(result)
@@ -974,27 +975,6 @@ def phase_system_package(binary: Path) -> None:
         raise SmokeError(f"{SYSTEM_PACKAGE_PHASE} expected installed status, got: {item}")
     run_command(["jq", "--version"])
     print(f"{SYSTEM_PACKAGE_PHASE}: ok", flush=True)
-
-
-def phase_apt(binary: Path) -> None:
-    result = run_installer_json(
-        binary,
-        [
-            "--json",
-            "--method",
-            "apt",
-            "--id",
-            "jq-apt",
-            "--package",
-            "jq",
-        ],
-        attempts=HOST_INSTALL_ATTEMPTS,
-    )
-    item = single_item(result)
-    if item.get("status") != "installed":
-        raise SmokeError(f"{APT_PHASE} expected installed status, got: {item}")
-    run_command(["jq", "--version"])
-    print(f"{APT_PHASE}: ok", flush=True)
 
 
 def phase_uv(binary: Path, managed_dir: Path) -> None:
@@ -1381,8 +1361,6 @@ def main() -> int:
                 phase_pip(binary)
             elif phase == SYSTEM_PACKAGE_PHASE:
                 phase_system_package(binary)
-            elif phase == APT_PHASE:
-                phase_apt(binary)
             elif phase == UV_PHASE:
                 phase_uv(binary, managed_dir)
             elif phase == UV_PYTHON_PHASE:

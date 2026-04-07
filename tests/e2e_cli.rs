@@ -151,55 +151,18 @@ fn tool_and_plan_file_conflict_returns_usage_error() {
     assert!(stderr.contains("`--tool` cannot be used with `--plan-file`"));
 }
 
-#[cfg(unix)]
 #[test]
-fn apt_method_uses_canonical_apt_get_recipe() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let fake_bin_dir = temp.path().join("fake-bin");
-    let fake_apt_get = fake_bin_dir.join("apt-get");
-    write_executable(
-        &fake_apt_get,
-        r#"#!/bin/sh
-exit 0
-"#,
-    );
-
+fn apt_alias_method_returns_usage_error() {
     let mut cmd = bootstrap_cmd();
-    let output = cmd
-        .env("PATH", path_with_prepend(&fake_bin_dir))
-        .args([
-            "--json",
-            "--method",
-            "apt",
-            "--id",
-            "apt-demo",
-            "--package",
-            "curl",
-        ])
-        .assert();
-    let output = if cfg!(target_os = "linux") {
-        output.success()
-    } else {
-        output.code(4)
-    }
-    .get_output()
-    .stdout
-    .clone();
-    let json: Value = serde_json::from_slice(&output).expect("valid json");
-    if cfg!(target_os = "linux") {
-        assert_eq!(json["items"][0]["status"], "installed");
-        assert_eq!(json["items"][0]["source"], "system:apt-get");
-        assert_eq!(json["items"][0]["source_kind"], "system_package");
-    } else {
-        assert_eq!(json["items"][0]["status"], "failed");
-        assert_eq!(json["items"][0]["error_code"], "install_failed");
-        assert!(
-            json["items"][0]["detail"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("apt-get")
-        );
-    }
+    let stderr = cmd
+        .args(["--method", "apt", "--id", "apt-demo", "--package", "curl"])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(stderr.contains("unsupported method `apt`"));
 }
 
 #[test]
@@ -3392,7 +3355,7 @@ fn apt_method_rejects_non_apt_get_manager() {
             "--package",
             "demo-package",
             "--manager",
-            "brew",
+            "apt-get",
         ])
         .assert()
         .code(2)
@@ -3400,7 +3363,7 @@ fn apt_method_rejects_non_apt_get_manager() {
         .stderr
         .clone();
     let stderr = String::from_utf8_lossy(&stderr);
-    assert!(stderr.contains("only supports manager `apt-get`"));
+    assert!(stderr.contains("unsupported method `apt`"));
 }
 
 #[cfg_attr(
