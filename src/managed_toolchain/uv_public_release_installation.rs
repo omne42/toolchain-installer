@@ -12,16 +12,19 @@ use crate::download_sources::{
     build_download_candidates, result_source_kind_for_download_candidate,
 };
 use crate::error::{OperationError, OperationResult};
-use crate::github_release_metadata::fetch_latest_release_metadata;
+use crate::github_release_metadata::{
+    build_github_release_http_client, fetch_latest_release_metadata,
+};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::managed_environment_layout::validated_binary_suffix;
 pub(crate) async fn install_uv_from_public_release(
     target_triple: &str,
     destination: &Path,
     cfg: &InstallerRuntimeConfig,
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
-    let release = fetch_latest_release_metadata(client, cfg, "astral-sh/uv").await?;
+    let github_client = build_github_release_http_client(cfg)?;
+    let release = fetch_latest_release_metadata(&github_client, cfg, "astral-sh/uv").await?;
     let asset = select_uv_asset_for_target(&release.assets, target_triple).ok_or_else(|| {
         OperationError::download(format!("cannot find uv asset for target `{target_triple}`"))
     })?;
@@ -43,25 +46,29 @@ pub(crate) async fn install_uv_from_public_release(
         expected_sha256: Some(&expected_sha),
         max_download_bytes: cfg.download.max_download_bytes,
     };
-    let downloaded =
-        match download_and_install_binary_from_archive(client, &candidates, &primary_request).await
+    let downloaded = match download_and_install_binary_from_archive(
+        &github_client,
+        &candidates,
+        &primary_request,
+    )
+    .await
+    {
+        Ok(downloaded) => downloaded,
+        Err(err)
+            if err.kind() == ArtifactInstallErrorKind::Install
+                && err.to_string().contains(" not found in ")
+                && archive_binary_hint.as_deref() != Some(binary_name.as_str()) =>
         {
-            Ok(downloaded) => downloaded,
-            Err(err)
-                if err.kind() == ArtifactInstallErrorKind::Install
-                    && err.to_string().contains(" not found in ")
-                    && archive_binary_hint.as_deref() != Some(binary_name.as_str()) =>
-            {
-                let fallback_request = BinaryArchiveInstallRequest {
-                    archive_binary_hint: Some(binary_name.as_str()),
-                    ..primary_request
-                };
-                download_and_install_binary_from_archive(client, &candidates, &fallback_request)
-                    .await
-                    .map_err(OperationError::from_artifact_install)?
-            }
-            Err(err) => return Err(OperationError::from_artifact_install(err)),
-        };
+            let fallback_request = BinaryArchiveInstallRequest {
+                archive_binary_hint: Some(binary_name.as_str()),
+                ..primary_request
+            };
+            download_and_install_binary_from_archive(&github_client, &candidates, &fallback_request)
+                .await
+                .map_err(OperationError::from_artifact_install)?
+        }
+        Err(err) => return Err(OperationError::from_artifact_install(err)),
+    };
     let InstalledArchiveBinary {
         source,
         archive_match,
