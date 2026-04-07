@@ -44,7 +44,7 @@
    - 相对路径只会解析到 `managed_dir` 下；当目标是 Windows 时，`bin\\tool.exe` 与 `bin/tool.exe` 会按同一相对层级处理。
    - Windows 托管 `git` 的 `git-portable/` payload 替换与 `git.cmd` launcher 更新属于同一事务；launcher 写失败时必须恢复旧 payload 和旧 launcher，不能留下半更新状态。
    - 解析后若两个 item 指向同一目标路径，或一个目标路径嵌套在另一个目标路径之下，plan 会在执行前直接拒绝。
-   - `npm_global` 允许复用托管目录里已有的 leaf symlink 入口，但这个 symlink 解析后的目标仍必须留在 `managed_dir` 内；installer 会在执行前和安装结果落盘后都复检一次，不能借复用入口或新写出的 symlink 把实际执行路径指到托管根外部。
+   - `npm_global` 允许复用托管目录里已有的 leaf symlink 入口，但只限于 canonical 全局 entrypoint 位置，也就是 `managed_dir/<tool>` 或 `managed_dir/bin/<tool>`；这个 symlink 解析后的目标仍必须留在 `managed_dir` 内。installer 会在执行前和安装结果落盘后都复检一次，不能借复用入口或新写出的 symlink 把实际执行路径指到托管根外部。
 10. 托管 bootstrap 健康检查
    - 托管安装复用只适用于内置受支持工具；未知工具即使在 `managed_dir` 下存在同名且可执行的文件，也不会被误报成 `installed`。
    - 已存在但损坏的 managed 内置工具优先级高于宿主 PATH 命中；只要托管副本健康检查失败，`bootstrap` 就不会把健康 host 命令报成 `present` 来掩盖损坏状态。

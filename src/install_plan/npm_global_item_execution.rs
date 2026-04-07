@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
 use crate::host_recipe::run_installer_host_recipe;
+use crate::install_plan::item_destination_resolution::validate_managed_path_boundary;
 use crate::installer_runtime_config::DEFAULT_HOST_RECIPE_TIMEOUT_SECONDS;
 use crate::plan_items::{HostPackageInput, NodePackageManager, NpmGlobalPlanItem};
 
@@ -139,6 +140,8 @@ pub(crate) fn execute_npm_global_item_with_timeout(
             destination.display()
         )));
     }
+    validate_managed_path_boundary(&destination, managed_dir, true)
+        .map_err(OperationError::install)?;
 
     if !command_path_exists(&destination) {
         return Err(OperationError::install(format!(
