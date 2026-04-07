@@ -1900,10 +1900,18 @@ mod tests {
         );
         assert_eq!(
             npm_package_request(&spec("file:../packages/http-server")),
-            NpmPackageRequest::ExplicitSource { package_name: None }
+            NpmPackageRequest::ExplicitSource {
+                package_name: Some("http-server"),
+            }
         );
         assert_eq!(
             npm_package_request(&spec("../packages/http-server")),
+            NpmPackageRequest::ExplicitSource {
+                package_name: Some("http-server"),
+            }
+        );
+        assert_eq!(
+            npm_package_request(&spec("github:owner/repo-tool#main")),
             NpmPackageRequest::ExplicitSource { package_name: None }
         );
         assert_eq!(
