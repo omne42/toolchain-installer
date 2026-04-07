@@ -3,6 +3,9 @@ name = "toolchain-installer"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+exclude = ["fixtures/cargo-install-fixture", "tools/source-layout-check"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

@@ -44,7 +44,7 @@
   - plan JSON 会严格拒绝未知字段；调用方不能依赖拼错字段后被静默忽略。
   - plan 中声明的本地相对路径按该 plan 文件所在目录解析，不按调用 CLI 时的当前工作目录解析；这同样适用于 `pip` / `npm_global` 的本地 `package` 路径。
   - `go_install` 的本地 `package` 既接受 `./cmd/demo`，也接受 `cmd/demo` 这类 bare relative 路径；两者都会按 plan 目录解析，不会被当成远端 module spec。
-- `--method <release|archive_tree_release|system_package|apt|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
+- `--method <release|archive_tree_release|system_package|pip|npm_global|workspace_package|cargo_install|rustup_component|go_install|uv|uv_python|uv_tool>`
   - 直接参数模式下执行单个安装项。
 - `--id <name>`
   - 单个安装项标识。
@@ -61,8 +61,8 @@
   - Windows 宿主会把 `\\server\share\app` 和 `//server/share/app` 都当作 Windows UNC 绝对路径处理；这类路径只适用于允许绝对 `destination` 的方法，不会被误降级成 root-relative。
   - `npm_global`、`cargo_install`、`go_install`、`rustup_component`、`uv_tool` 也允许 `--binary-name`；其中 `rustup_component` 只有在 installer 已知组件对应稳定 CLI 名时才接受这个字段，而且值必须与该 canonical CLI 名一致。安装成功后若该命令不可解析，整项失败，不会静默回退到组件默认二进制。
 - `--package`、`--manager`
-  - `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install` 或 `uv_tool` 模式字段。
-  - `--method apt` 会固定使用 canonical `apt-get`；若显式传 `--manager`，当前也只接受 `apt-get`。
+  - `system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install` 或 `uv_tool` 模式字段。
+  - 需要固定 canonical `apt-get` 时，通过 `--method system_package --manager apt-get` 表达。
   - `pip` / `npm_global` / `workspace_package` / `uv_tool` 的 `--package` 不允许传 `-r`、`--editable`、`--workspace`、`--from` 这类 option-like 值。
 - `--python`
   - `pip` 模式的解释器；`uv_tool` 模式的绑定 Python。
