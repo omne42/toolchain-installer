@@ -615,7 +615,7 @@ fn resolve_destination_from_package_metadata_with_package_dirs(
             continue;
         }
 
-        let manifest_names = manifest_binary_names(&package_dir, package, binary_name);
+        let manifest_names = manifest_binary_names(package_dir, package, binary_name);
         if manifest_names.iter().any(|name| name == binary_name)
             && binary_path.is_file()
             && command_path_exists(binary_path)
