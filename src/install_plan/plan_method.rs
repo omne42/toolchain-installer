@@ -2,6 +2,7 @@ pub(crate) const SUPPORTED_PLAN_METHODS: &[&str] = &[
     "release",
     "archive_tree_release",
     "system_package",
+    "apt",
     "pip",
     "npm_global",
     "workspace_package",
@@ -74,7 +75,10 @@ pub(crate) fn normalize_plan_method(raw_method: &str) -> Option<String> {
     if normalized.is_empty() {
         return None;
     }
-    Some(normalized)
+    match normalized.as_str() {
+        "apt" => Some("system_package".to_string()),
+        _ => Some(normalized),
+    }
 }
 
 #[cfg(test)]
@@ -103,5 +107,13 @@ mod tests {
     fn host_bound_methods_include_managed_toolchain() {
         assert!(PlanMethod::ManagedToolchain(ManagedToolchainMethod::Uv).is_host_bound());
         assert!(!PlanMethod::Release.is_host_bound());
+    }
+
+    #[test]
+    fn normalize_plan_method_maps_apt_alias_to_system_package() {
+        assert_eq!(
+            normalize_plan_method("apt").as_deref(),
+            Some("system_package")
+        );
     }
 }

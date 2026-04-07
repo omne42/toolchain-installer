@@ -5,7 +5,7 @@
 ## 仓库提供什么
 
 - 稳定 CLI：`toolchain-installer bootstrap [options]`
-- 通用安装 plan 执行能力：`release`、`archive_tree_release`、`system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool`
+- 通用安装 plan 执行能力：`release`、`archive_tree_release`、`system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool`
 - 调用方无关的 JSON 输出契约
 - 官方来源优先、镜像回退和可达性探测
 - 可选外部固定路由网关集成接口：`--gateway-base`
@@ -16,8 +16,8 @@
 - 如果 `managed_dir` 里已有同名内置工具但健康检查失败，`bootstrap` 会优先修复托管副本，而不会因为宿主 PATH 上碰巧存在健康同名命令就把结果降级成 `present`。
 - `bootstrap` 只有在本次安装后的目标工具再次通过同等级健康检查后，才会返回 `status=installed`；下载、解压或系统包命令本身成功但产物仍不可用时，会返回失败而不是误报成功。
 - 只有 `release` 与 `archive_tree_release` 支持显式跨目标平台下载。
-- `system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
-- 需要固定 canonical `apt-get` 时，通过 `system_package + manager=apt-get` 收口；`apt` 不再是公开方法名。
+- `system_package`、`apt`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`、`uv`、`uv_python`、`uv_tool` 都是宿主机方法。
+- `apt` 是兼容 alias；进入解析层后会收口到 `system_package + manager=apt-get`，不会再分叉出独立执行域。
 - `pip` 表达的是“把包安装进选定 Python 环境”这类宿主环境变更，不承诺 installer 自己拥有的托管 `destination` 或可重放 artifact 坐标。
 - `pip` 只有在默认首选解释器命令不存在时才会回退到后续候选；若首选解释器已经执行 `-m pip install` 并失败，installer 会直接报错，不会静默装到另一个 Python 环境。
 - `system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install` 以及 bootstrap 的系统包 / `pip install uv` fallback 都会带 hard timeout；默认是 `900` 秒，可通过 `--host-recipe-timeout-seconds` 或 `TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS` 覆盖。

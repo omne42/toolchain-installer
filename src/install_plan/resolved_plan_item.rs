@@ -152,7 +152,17 @@ fn resolve_system_package_plan_item(
         ],
     )?;
 
-    let mode = if let Some(manager) = optional_trimmed(item.manager.as_deref()) {
+    let apt_alias = item.method.trim().eq_ignore_ascii_case("apt");
+    let mode = if apt_alias {
+        match optional_trimmed(item.manager.as_deref()) {
+            None | Some("apt-get") => SystemPackageMode::Explicit(SystemPackageManager::AptGet),
+            Some(manager) => {
+                return Err(InstallerError::usage(format!(
+                    "plan item `{id}` with method `apt` only accepts `manager=apt-get`, got `{manager}`"
+                )));
+            }
+        }
+    } else if let Some(manager) = optional_trimmed(item.manager.as_deref()) {
         let manager = SystemPackageManager::parse(manager).ok_or_else(|| {
             InstallerError::usage(format!(
                 "plan item `{id}` uses unsupported manager `{manager}`"
