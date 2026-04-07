@@ -28,6 +28,7 @@
 8. 最小日志
    - 只记录必要诊断字段，避免泄露凭证或敏感头。
    - `uv_tool` / `uv_python` 对外结果里的 `source` 不回显显式索引或镜像 URL 中的用户信息、query 或 fragment。
+   - `uv_tool` / `uv_python` 失败时写入结果 `detail` 的有界 stdout/stderr 也必须对 `http(s)` URL 做同等级脱敏，避免把索引或镜像凭证重新泄露进诊断文本。
 9. 路径约束
    - Unix 风格绝对路径如 `/tmp/demo` 会直接拒绝，不能借此绕过托管目录。
    - 托管落盘方法同样拒绝 Windows 绝对路径如 `C:\tools\demo.exe`；不能借“宿主机本身是 Windows”或“显式把 `target_triple` 设成 Windows”把写入绕出 `managed_dir`。
