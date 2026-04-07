@@ -8,6 +8,19 @@ use reqwest::Url;
 use crate::error::{OperationError, OperationResult};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 
+pub(crate) fn build_github_release_http_client(
+    cfg: &InstallerRuntimeConfig,
+) -> OperationResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .http1_only()
+        .timeout(cfg.download.http_timeout)
+        .user_agent("toolchain-installer")
+        .build()
+        .map_err(|err| {
+            OperationError::download(format!("build github release client failed: {err}"))
+        })
+}
+
 pub(crate) async fn fetch_latest_release_metadata(
     client: &reqwest::Client,
     cfg: &InstallerRuntimeConfig,

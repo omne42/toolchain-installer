@@ -16,7 +16,9 @@ use crate::download_sources::{
 };
 use crate::error::{OperationError, OperationResult};
 use crate::external_gateway::gateway_candidate_for_git_release_asset;
-use crate::github_release_metadata::fetch_latest_release_metadata;
+use crate::github_release_metadata::{
+    build_github_release_http_client, fetch_latest_release_metadata,
+};
 use crate::installer_runtime_config::InstallerRuntimeConfig;
 use crate::managed_toolchain::lock_managed_destination;
 pub(crate) async fn install_gh_from_public_release(
@@ -24,14 +26,15 @@ pub(crate) async fn install_gh_from_public_release(
     binary_ext: &str,
     destination: &Path,
     cfg: &InstallerRuntimeConfig,
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
+    let github_client = build_github_release_http_client(cfg)?;
     let suffix = gh_release_asset_suffix_for_target(target_triple).ok_or_else(|| {
         OperationError::install(format!(
             "gh public recipe unsupported on target `{target_triple}`"
         ))
     })?;
-    let release = fetch_latest_release_metadata(client, cfg, "cli/cli").await?;
+    let release = fetch_latest_release_metadata(&github_client, cfg, "cli/cli").await?;
     let asset = release
         .assets
         .iter()
@@ -50,7 +53,7 @@ pub(crate) async fn install_gh_from_public_release(
         .contains("windows")
         .then(|| format!("bin/gh{binary_ext}"));
     let downloaded = download_and_install_binary_from_archive(
-        client,
+        &github_client,
         &candidates,
         &BinaryArchiveInstallRequest {
             canonical_url: &asset.browser_download_url,
@@ -79,9 +82,10 @@ pub(crate) async fn install_git_from_public_release(
     target_triple: &str,
     destination: &Path,
     cfg: &InstallerRuntimeConfig,
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
 ) -> OperationResult<InstallSource> {
-    let release = fetch_latest_release_metadata(client, cfg, "git-for-windows/git").await?;
+    let github_client = build_github_release_http_client(cfg)?;
+    let release = fetch_latest_release_metadata(&github_client, cfg, "git-for-windows/git").await?;
     let asset = select_mingit_release_asset_for_target(&release.assets, target_triple).ok_or_else(
         || {
             OperationError::download(format!(
@@ -95,7 +99,7 @@ pub(crate) async fn install_git_from_public_release(
     let gateway = gateway_candidate_for_git_release_asset(cfg, &release.tag_name, &asset.name);
     if target_triple.contains("windows") {
         return download_and_install_mingit_bundle(MingitBundleInstallRequest {
-            client,
+            client: &github_client,
             canonical_url: &asset.browser_download_url,
             asset_name: &asset.name,
             mirror_prefixes: &cfg.download_sources.mirror_prefixes,
@@ -113,7 +117,7 @@ pub(crate) async fn install_git_from_public_release(
         gateway.as_deref(),
     );
     let downloaded = download_and_install_binary_from_archive(
-        client,
+        &github_client,
         &candidates,
         &BinaryArchiveInstallRequest {
             canonical_url: &asset.browser_download_url,

@@ -41,7 +41,6 @@ pub async fn apply_install_plan(
     let _managed_dir_lock = lock_managed_dir_if_needed(managed_dir.as_deref())?;
     let cfg = InstallerRuntimeConfig::from_execution_request(request);
     let client = reqwest::Client::builder()
-        .http1_only()
         .timeout(cfg.download.http_timeout)
         .user_agent("toolchain-installer")
         .build()
