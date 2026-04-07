@@ -15,7 +15,7 @@ impl ManagedDestinationBackup {
         let lock = acquire_destination_lock(original, label)?;
         let backup = destination_backup_path(original);
         reconcile_backup_before_stash(original, &backup, label)?;
-        if !original.exists() {
+        if !path_entry_exists(original) {
             return Ok(Self {
                 original: original.to_path_buf(),
                 backup: None,
@@ -81,7 +81,7 @@ impl ManagedDestinationBackup {
                 self.original.display()
             ));
         };
-        if !backup.exists() {
+        if !path_entry_exists(backup) {
             return Some(format!(
                 "{} installed at {} but cleanup warning: {err}",
                 self.label,
@@ -155,15 +155,19 @@ fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
     }
 }
 
+fn path_entry_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
 fn reconcile_backup_before_stash(
     original: &Path,
     backup: &Path,
     label: &str,
 ) -> Result<(), String> {
-    if !backup.exists() {
+    if !path_entry_exists(backup) {
         return Ok(());
     }
-    if !original.exists() {
+    if !path_entry_exists(original) {
         std::fs::rename(backup, original).map_err(|err| {
             format!(
                 "cannot restore interrupted {} {} from stale backup {} before reinstall: {err}",
@@ -183,7 +187,7 @@ fn reconcile_backup_before_stash(
         )
     })?;
     debug_assert!(
-        quarantined.exists(),
+        path_entry_exists(&quarantined),
         "quarantined stale backup should exist after rename"
     );
     Ok(())
@@ -261,12 +265,14 @@ fn quarantine_backup_path(backup_path: &Path) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
 
-    use super::{ManagedDestinationBackup, promote_staged_file};
+    use super::{ManagedDestinationBackup, path_entry_exists, promote_staged_file};
 
     #[test]
     fn discard_removes_directory_backup_without_leaving_residue() {
@@ -401,6 +407,80 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&original).expect("read restored original"),
             "current"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stash_quarantines_dangling_symlink_backup_when_destination_already_exists() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let original = temp.path().join("managed-tool");
+        std::fs::write(&original, "current").expect("write current");
+        let backup_path = temp.path().join("managed-tool.toolchain-installer-backup");
+        symlink(temp.path().join("missing-target"), &backup_path).expect("write dangling symlink");
+
+        let backup =
+            ManagedDestinationBackup::stash(&original, "managed binary").expect("stash backup");
+        assert!(!original.exists(), "original should be staged away");
+        assert!(
+            path_entry_exists(&backup_path),
+            "canonical backup path should be reused after dangling backup quarantine"
+        );
+        backup.restore().expect("restore");
+
+        let quarantined = std::fs::read_dir(temp.path())
+            .expect("read temp")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.contains(".toolchain-installer-backup.stale-"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "expected one quarantined dangling stale backup"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&original).expect("read restored original"),
+            "current"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stash_treats_dangling_destination_symlink_as_existing_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let original = temp.path().join("managed-tool");
+        symlink(temp.path().join("missing-target"), &original).expect("write dangling symlink");
+
+        let backup =
+            ManagedDestinationBackup::stash(&original, "managed binary").expect("stash backup");
+
+        assert!(
+            !path_entry_exists(&original),
+            "original symlink should be moved into canonical backup"
+        );
+        let backup_path = temp.path().join("managed-tool.toolchain-installer-backup");
+        assert!(
+            path_entry_exists(&backup_path),
+            "canonical backup should preserve the dangling destination entry"
+        );
+
+        backup.restore().expect("restore symlink");
+
+        assert!(
+            path_entry_exists(&original),
+            "restored original should keep the dangling symlink entry"
+        );
+        assert!(
+            std::fs::symlink_metadata(&original)
+                .expect("metadata")
+                .file_type()
+                .is_symlink(),
+            "restored original should remain a symlink"
         );
     }
 
