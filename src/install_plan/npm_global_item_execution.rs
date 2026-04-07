@@ -628,7 +628,9 @@ fn resolve_installed_package_dirs(
         }
     }
     if let Some(root) =
-        package_search_root.filter(|path| path_has_no_symlink_components(path, PathKind::Directory))
+        package_search_root
+            .filter(|path| path_has_no_symlink_components(path, PathKind::Directory))
+            .filter(|_| search_root_package_scan_is_allowed(package))
     {
         package_dirs.extend(find_package_dirs_under_root(
             root,
@@ -638,6 +640,13 @@ fn resolve_installed_package_dirs(
     package_dirs.sort();
     package_dirs.dedup();
     package_dirs
+}
+
+fn search_root_package_scan_is_allowed(package: &HostPackageInput) -> bool {
+    !matches!(
+        npm_package_request(package),
+        NpmPackageRequest::ExplicitSource { package_name: None }
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -785,10 +794,18 @@ fn npm_global_package_dir(prefix_root: &Path, package: &str, target_triple: &str
 
 fn package_dir_with_root(root: &Path, package: &str) -> PathBuf {
     let mut package_dir = root.to_path_buf();
-    for segment in npm_package_name(package).split('/') {
+    for segment in package_install_identity(package).split('/') {
         package_dir.push(segment);
     }
     package_dir
+}
+
+fn package_install_identity(package: &str) -> &str {
+    if node_package_spec_uses_explicit_source(package) {
+        return explicit_source_install_identity(package)
+            .unwrap_or_else(|| npm_package_name(package));
+    }
+    npm_package_name(package)
 }
 
 #[cfg(windows)]
@@ -1100,6 +1117,37 @@ fn npm_package_name_from_explicit_source(package: &str) -> Option<&str> {
         return Some(npm_package_name(source));
     }
     package.strip_prefix("npm:").map(npm_package_name)
+}
+
+fn explicit_source_install_identity(package: &str) -> Option<&str> {
+    npm_package_name_from_explicit_source(package).or_else(|| source_spec_leaf_name(package))
+}
+
+fn source_spec_leaf_name(package: &str) -> Option<&str> {
+    let package = package.trim();
+    let rest = package
+        .strip_prefix("file:")
+        .or_else(|| package.strip_prefix("github:"))
+        .or_else(|| package.strip_prefix("git+"))
+        .or_else(|| package.strip_prefix("git:"))
+        .or_else(|| package.strip_prefix("workspace:"))
+        .or_else(|| package.strip_prefix("link:"))
+        .or_else(|| package.strip_prefix("http://"))
+        .or_else(|| package.strip_prefix("https://"))
+        .unwrap_or(package);
+    let rest = trim_source_spec_suffix(rest);
+    let leaf = rest.rsplit(['/', '\\']).next().unwrap_or(rest).trim();
+    (!leaf.is_empty() && leaf != "." && leaf != "..").then_some(leaf)
+}
+
+fn trim_source_spec_suffix(raw: &str) -> &str {
+    raw.trim()
+        .split(['#', '?'])
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .trim_end_matches(".git")
+        .trim_end_matches('/')
 }
 
 fn node_package_spec_uses_explicit_source(package: &str) -> bool {
@@ -1611,10 +1659,18 @@ mod tests {
         );
         assert_eq!(
             npm_package_request(&spec("file:../packages/http-server")),
-            NpmPackageRequest::ExplicitSource { package_name: None }
+            NpmPackageRequest::ExplicitSource {
+                package_name: Some("http-server"),
+            }
         );
         assert_eq!(
             npm_package_request(&spec("../packages/http-server")),
+            NpmPackageRequest::ExplicitSource {
+                package_name: Some("http-server"),
+            }
+        );
+        assert_eq!(
+            npm_package_request(&spec("github:owner/repo-tool#main")),
             NpmPackageRequest::ExplicitSource { package_name: None }
         );
         assert_eq!(
@@ -1691,6 +1747,41 @@ mod tests {
             "demo",
             Some(&package_dir),
             None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_rejects_explicit_source_when_only_unrelated_package_metadata_matches() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("other");
+        let binary_path = temp.path().join("bin").join("demo");
+        write_package_with_binary(
+            &package_dir,
+            &binary_path,
+            "other",
+            "1.0.0",
+            "demo",
+            "bin/demo",
+        );
+
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "file:../packages/demo",
+            "demo",
+            None,
+            Some(&package_root),
+            None,
+        );
+
+        assert!(!installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "file:../packages/demo",
+            "demo",
+            None,
+            Some(&package_root),
             None,
         ));
     }
