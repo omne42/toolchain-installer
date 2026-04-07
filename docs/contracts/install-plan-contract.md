@@ -182,7 +182,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_tool` 若未显式提供 `binary_name`，且按包名推导出的默认入口不存在，installer 会优先检查 item `id` 对应的托管入口，再在本次新建/更新的托管 launcher 里按稳定顺序选择实际 CLI；像 `httpie -> http` 这类 distribution 名与命令名不同的包不会再被误判成失败。
 - `uv_tool` 的幂等 no-op 重跑同样会沿用这条 `id` 回退提示语义：如果本次安装没有改写 launcher，但托管目录里已经存在一个与 item `id` 匹配且健康的既有入口，installer 会把它视为当前请求对应的 CLI，而不是把无变化的重跑误报为失败。
 - `cargo_install`、`go_install`、`uv_tool` 在替换同名目标路径时，会先按最终 `destination` 获取同级 advisory lock，再把旧路径整体暂存到 canonical backup；并发 installer 命中同一目标时会串行等待，不会因为共享固定备份名而互相删掉对方的新产物。旧路径无论原先是文件还是目录，安装成功后都会清理备份，失败时恢复原状，不会把目录误当文件导致残留 `.toolchain-installer-backup`。
-- 如果上一次安装在 stash 之后异常中断，下一次 `cargo_install`、`go_install`、`uv_tool` 重试会先用 canonical backup 自愈恢复旧目标，再重新暂存；如果成功路径上的旧 backup 已经只剩清理残留，则会自动移到同级 `*.stale-*` 隔离名，避免后续重试继续被固定备份名卡死。
+- 如果上一次安装在 stash 之后异常中断，下一次 `cargo_install`、`go_install`、`uv_tool` 重试会先用 canonical backup 自愈恢复旧目标，再重新暂存；如果成功路径上的旧 backup 只剩清理残留，哪怕残留的是 dangling symlink，这些条目也会自动移到同级 `*.stale-*` 隔离名，避免后续重试继续被固定备份名卡死。
 - `go_install` 若 `package` 解析成本地目录，会先校验该目录真实存在且是目录，再去探测 `go` 命令、创建 staging root 或暂存现有目标；无效输入不会先破坏已有托管 binary。
 - 所有可确定最终输出路径的方法都参与全局冲突校验；两个 item 不能指向同一路径，也不能形成父子路径重叠，避免后执行项覆盖先执行项目录树。
 - 冲突校验的大小写语义跟随目标路径实际落盘的宿主文件系统，而不是只看 `target_triple`：Windows host 继续按大小写不敏感语义比较；Darwin host 则按目标路径所在卷的真实大小写语义比较；把 `target_triple` 设成 Windows 并不会让非 Windows 宿主提前按 Windows 文件系统规则拒绝本来合法的大小写不同路径。
