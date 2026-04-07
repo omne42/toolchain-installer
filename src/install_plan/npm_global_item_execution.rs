@@ -49,6 +49,13 @@ struct PackageInstallRequest<'a> {
     binary_name: &'a str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackageInstallEvidence {
+    Matches,
+    Mismatch,
+    Unavailable,
+}
+
 #[allow(dead_code)]
 pub(crate) fn execute_npm_global_item(
     item: &NpmGlobalPlanItem,
@@ -139,7 +146,16 @@ pub(crate) fn execute_npm_global_item_with_timeout(
             destination.display()
         )));
     }
-    write_install_receipt(&destination, &item.package_spec, &item.binary_name)?;
+    write_install_receipt_when_safe(
+        &destination,
+        PackageInstallRequest {
+            package: &item.package_spec,
+            binary_name: &item.binary_name,
+        },
+        recipe.fallback_package_dir.as_deref(),
+        recipe.package_search_root.as_deref(),
+        recipe.fallback_search_root.as_deref(),
+    )?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -509,13 +525,19 @@ fn installation_result_is_acceptable_with_item_id(
     }
 
     destination_preexisted(preinstall_state, destination)
-        && (managed_package_matches_request_for_destination(
+        && match managed_package_matches_request_for_destination(
             destination,
             request,
             fallback_package_dir,
             package_search_root,
             fallback_search_root,
-        ) || install_receipt_matches_request(destination, request))
+        ) {
+            PackageInstallEvidence::Matches => true,
+            PackageInstallEvidence::Mismatch => false,
+            PackageInstallEvidence::Unavailable => {
+                install_receipt_matches_request(destination, request)
+            }
+        }
 }
 
 fn destination_preexisted(
@@ -544,15 +566,23 @@ fn managed_package_matches_request_for_destination(
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
     _fallback_search_root: Option<&Path>,
-) -> bool {
-    let resolved = resolve_destination_from_package_metadata(
+) -> PackageInstallEvidence {
+    let package_dirs =
+        resolve_installed_package_dirs(request.package, fallback_package_dir, package_search_root);
+    if package_dirs.is_empty() {
+        return PackageInstallEvidence::Unavailable;
+    }
+    let resolved = resolve_destination_from_package_metadata_with_package_dirs(
         destination,
         request.package,
         request.binary_name,
-        fallback_package_dir,
-        package_search_root,
+        &package_dirs,
     );
-    resolved.as_deref() == Some(destination)
+    if resolved.as_deref() == Some(destination) {
+        PackageInstallEvidence::Matches
+    } else {
+        PackageInstallEvidence::Mismatch
+    }
 }
 
 fn resolve_destination_from_package_metadata(
@@ -562,10 +592,24 @@ fn resolve_destination_from_package_metadata(
     fallback_package_dir: Option<&Path>,
     package_search_root: Option<&Path>,
 ) -> Option<PathBuf> {
+    let package_dirs =
+        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root);
+    resolve_destination_from_package_metadata_with_package_dirs(
+        binary_path,
+        package,
+        binary_name,
+        &package_dirs,
+    )
+}
+
+fn resolve_destination_from_package_metadata_with_package_dirs(
+    binary_path: &Path,
+    package: &HostPackageInput,
+    binary_name: &str,
+    package_dirs: &[PathBuf],
+) -> Option<PathBuf> {
     let binary_dir = binary_path.parent()?;
-    for package_dir in
-        resolve_installed_package_dirs(package, fallback_package_dir, package_search_root)
-    {
+    for package_dir in package_dirs {
         let manifest_path = package_dir.join("package.json");
         if !manifest_satisfies_package_request(&manifest_path, package, binary_name) {
             continue;
@@ -1322,6 +1366,28 @@ fn write_install_receipt(
             receipt_path.display()
         ))
     })
+}
+
+fn write_install_receipt_when_safe(
+    destination: &Path,
+    request: PackageInstallRequest<'_>,
+    fallback_package_dir: Option<&Path>,
+    package_search_root: Option<&Path>,
+    fallback_search_root: Option<&Path>,
+) -> OperationResult<()> {
+    if matches!(
+        managed_package_matches_request_for_destination(
+            destination,
+            request,
+            fallback_package_dir,
+            package_search_root,
+            fallback_search_root,
+        ),
+        PackageInstallEvidence::Mismatch
+    ) {
+        return Ok(());
+    }
+    write_install_receipt(destination, request.package, request.binary_name)
 }
 
 fn install_receipt_matches_request(destination: &Path, request: PackageInstallRequest<'_>) -> bool {
