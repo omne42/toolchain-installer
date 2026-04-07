@@ -311,8 +311,9 @@ fn install_git_via_system_package_manager(
 mod tests {
     use std::path::Path;
 
-    use super::verify_bootstrap_installation;
-    use crate::contracts::BootstrapSourceKind;
+    use super::{bootstrap_builtin_tool, verify_bootstrap_installation};
+    use crate::contracts::{BootstrapSourceKind, BootstrapStatus, ExecutionRequest};
+    use crate::installer_runtime_config::InstallerRuntimeConfig;
 
     fn write_executable(path: &Path, body: &str) {
         if let Some(parent) = path.parent() {
@@ -386,6 +387,46 @@ exit 1
         assert!(
             err.detail()
                 .contains("bootstrap install reported success but managed install is unhealthy")
+        );
+    }
+
+    #[cfg_attr(windows, ignore = "mock executable is unix-specific")]
+    #[tokio::test]
+    async fn bootstrap_keeps_unsupported_status_even_with_healthy_managed_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path().join("managed");
+        let destination = managed_dir.join("custom-tool");
+        write_executable(
+            &destination,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "custom-tool 1.0.0"
+  exit 0
+fi
+exit 1
+"#,
+        );
+        let cfg = InstallerRuntimeConfig::from_execution_request(&ExecutionRequest::default());
+        let client = reqwest::Client::builder()
+            .build()
+            .expect("build reqwest client");
+
+        let item = bootstrap_builtin_tool(
+            "custom-tool",
+            "x86_64-unknown-linux-gnu",
+            "",
+            &destination,
+            &managed_dir,
+            &cfg,
+            &client,
+        )
+        .await;
+
+        assert_eq!(item.status, BootstrapStatus::Unsupported);
+        assert_eq!(item.source, None);
+        assert_eq!(
+            item.detail,
+            Some("unsupported tool `custom-tool`".to_string())
         );
     }
 }
