@@ -3334,7 +3334,7 @@ fn validate_plan_rejects_duplicate_item_ids() {
 }
 
 #[test]
-fn validate_plan_rejects_apt_alias_method() {
+fn validate_plan_accepts_apt_alias_method_without_explicit_manager() {
     let plan = InstallPlan {
         schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
@@ -3352,16 +3352,19 @@ fn validate_plan_rejects_apt_alias_method() {
         }],
     };
 
-    let err = validate_plan(
+    let items = validate_plan(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt alias should be rejected");
-    assert!(
-        err.to_string().contains("unsupported method `apt`"),
-        "unexpected error: {err}"
-    );
+    .expect("apt alias should stay compatible without explicit manager");
+
+    assert!(matches!(
+        items.as_slice(),
+        [ResolvedPlanItem::SystemPackage(item)]
+            if item.package == "curl"
+                && item.mode == SystemPackageMode::Explicit(SystemPackageManager::AptGet)
+    ));
 }
 
 #[test]
