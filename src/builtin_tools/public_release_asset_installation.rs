@@ -701,7 +701,10 @@ mod tests {
             &staging_root,
             &backup_root,
             || {
-                std::fs::write(&portable_root, b"blocking-file")
+                let blocking_dir = portable_root.join("blocking");
+                std::fs::create_dir_all(&blocking_dir)
+                    .map_err(|write_err| OperationError::install(write_err.to_string()))?;
+                std::fs::write(blocking_dir.join("sentinel.txt"), b"blocking-file")
                     .map_err(|write_err| OperationError::install(write_err.to_string()))
             },
         )
