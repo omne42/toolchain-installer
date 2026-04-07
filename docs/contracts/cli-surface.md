@@ -182,6 +182,7 @@
 - `cargo_install`、`go_install`、`npm_global`、`workspace_package`、`rustup_component` 这些宿主机 recipe 方法会各自输出同名 `source_kind`，避免调用方再从 `source` 文本推断安装方式。
 - `uv_python` 命中官方来源时会输出 `source_kind=canonical`；只有命中显式 Python 镜像时才会输出 `python_mirror`。
 - 当 `source_kind=package_index|python_mirror|canonical|mirror|gateway` 且来源 URL 含凭证、query 或 fragment 时，`source` 会输出脱敏后的协议、主机和路径，而不是回显原始敏感 URL。
+- `uv_tool` / `uv_python` 失败时若 `detail` 携带有界 stdout/stderr 诊断，其中出现的 `http(s)` URL 也会做同等级脱敏，不回显用户信息、query 或 fragment。
 - `archive_match` 仅在安装结果来自 archive 解包时出现；调用方不应再从 `detail` 或日志文本解析匹配到的 archive 内路径。
 - `pip` 成功结果里的 `source` 只表示“这次调用用了哪个 Python 解释器”，不表示可重放的 artifact 来源；对应项的 `destination` 会保持为空，调用方不能把它当作 installer 拥有的托管落点。
 - `gateway` 仅在 `country=CN` 且下载目标为 `git release` 时生效。

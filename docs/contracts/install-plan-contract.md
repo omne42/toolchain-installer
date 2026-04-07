@@ -206,6 +206,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 若显式索引、镜像或镜像前缀里出现重复值，只会保留第一次出现的位置，不会按字典序重排。
   - 安装前会探测显式索引的可达性，把可达源优先用于安装。
   - 结果里的 `source` 会对显式索引做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
+  - 若安装失败并把 `uv` 的有界 stdout/stderr 写进结果 `detail`，其中出现的 `http(s)` URL 也会做同等级脱敏，不回显用户信息、query 或 fragment。
   - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式索引配置，避免外部 shell 状态静默污染来源选择。
   - `uv tool install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。超时会直接返回 install error，而不是无限期挂住整个 installer。
 - `uv_python`
@@ -214,6 +215,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
   - 备用镜像列表若有重复值，只保留第一次出现的位置。
   - 官方来源成功时，结果里的 `source_kind` 会是 `canonical`；只有显式镜像命中时才会是 `python_mirror`。
   - 结果里的 `source` 会对显式镜像做脱敏，只保留协议、主机和路径，不回显 URL 中的用户信息、query 或 fragment。
+  - 若安装失败并把 `uv` 的有界 stdout/stderr 写进结果 `detail`，其中出现的 `http(s)` URL 也会做同等级脱敏，不回显用户信息、query 或 fragment。
   - 调用时会显式移除宿主进程继承的 `UV_*` 环境变量，只保留 installer 自己注入的托管目录布局和显式 Python mirror 配置，避免外部 shell 状态静默污染来源选择。
   - `uv python install` 子流程会带 hard timeout 和 bounded stdout/stderr capture 执行；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。超时会直接返回 install error，而不是无限期挂住整个 installer。
 - `release`、`archive_tree_release`
