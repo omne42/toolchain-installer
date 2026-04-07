@@ -1694,12 +1694,7 @@ fn system_package_recipe_helpers_match_runtime_validation_contract() {
                 "--".to_string(),
                 "git".to_string()
             ]
-            || apt_recipe.args
-                == vec![
-                    "install".to_string(),
-                    "--".to_string(),
-                    "git".to_string()
-                ],
+            || apt_recipe.args == vec!["install".to_string(), "--".to_string(), "git".to_string()],
         "unexpected apt-get install recipe args: {:?}",
         apt_recipe.args
     );
