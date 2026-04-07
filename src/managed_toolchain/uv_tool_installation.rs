@@ -288,19 +288,20 @@ struct ManagedUvToolStateBackups {
 impl ManagedUvToolStateBackups {
     fn stash(managed_dir: &Path, active_uv: &Path) -> Result<Self, String> {
         let bootstrap_root = bootstrap_uv_root(managed_dir);
-        let backups = [
+        let python_state = managed_python_installation_dir(managed_dir);
+        let mut paths = vec![
             (managed_uv_tool_dir(managed_dir), "managed uv tool state"),
             (managed_uv_cache_dir(managed_dir), "managed uv cache"),
             (bootstrap_root.clone(), "managed uv bootstrap"),
-            (
-                managed_python_installation_dir(managed_dir),
-                "managed uv python state",
-            ),
-        ]
-        .into_iter()
-        .filter(|(path, _)| !path.starts_with(&bootstrap_root) || !active_uv.starts_with(path))
-        .map(|(path, label)| ManagedDestinationBackup::stash(&path, label))
-        .collect::<Result<Vec<_>, _>>()?;
+        ];
+        if !python_state.exists() {
+            paths.push((python_state, "managed uv python state"));
+        }
+        let backups = paths
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(&bootstrap_root) || !active_uv.starts_with(path))
+            .map(|(path, label)| ManagedDestinationBackup::stash(&path, label))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { backups })
     }
 
@@ -344,13 +345,11 @@ fn build_uv_tool_install_args(
         OsString::from("install"),
         OsString::from("--force"),
     ];
-    if let Some(python) = item.python.as_deref() {
+    if let Some(python) = item.python.as_deref()
+        && let Some(python_arg) = resolve_uv_tool_python_arg(python, target_triple, managed_dir)?
+    {
         args.push(OsString::from("--python"));
-        args.push(resolve_uv_tool_python_arg(
-            python,
-            target_triple,
-            managed_dir,
-        )?);
+        args.push(python_arg);
     }
     if item.binary_name_explicit {
         args.push(OsString::from("--from"));
@@ -366,19 +365,17 @@ fn resolve_uv_tool_python_arg(
     python: &str,
     target_triple: &str,
     managed_dir: &Path,
-) -> Result<OsString, String> {
+) -> Result<Option<OsString>, String> {
     if !is_version_like_python_selector(python) {
-        return Ok(OsString::from(python));
+        return Ok(Some(OsString::from(python)));
     }
-    if let Some(existing_python) =
-        find_managed_python_executable(managed_dir, python, target_triple)
-    {
-        return Ok(existing_python.into_os_string());
+    if find_managed_python_executable(managed_dir, python, target_triple).is_some() {
+        return Ok(None);
     }
-    Ok(OsString::from(managed_python_request(
+    Ok(Some(OsString::from(managed_python_request(
         python,
         target_triple,
-    )?))
+    )?)))
 }
 
 #[cfg(test)]
@@ -387,9 +384,10 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        build_uv_tool_install_args, capture_managed_uv_tool_state, merge_detail,
-        resolve_uv_tool_destination, resolve_uv_tool_python_arg,
+        ManagedUvToolStateBackups, build_uv_tool_install_args, capture_managed_uv_tool_state,
+        merge_detail, resolve_uv_tool_destination, resolve_uv_tool_python_arg,
     };
+    use crate::managed_toolchain::managed_environment_layout::managed_python_installation_dir;
     use crate::plan_items::{HostPackageInput, UvToolPlanItem};
 
     #[test]
@@ -479,7 +477,7 @@ echo "Python 3.13.12"
         let python_arg =
             resolve_uv_tool_python_arg("3.13.12", "x86_64-unknown-linux-gnu", &managed_dir)
                 .expect("resolve managed python path");
-        assert_eq!(python_arg, python.into_os_string());
+        assert_eq!(python_arg, None);
         Ok(())
     }
 
@@ -491,8 +489,32 @@ echo "Python 3.13.12"
                 .expect("map managed python request");
         assert_eq!(
             python_arg,
-            OsString::from("cpython-3.13.12-linux-x86_64-gnu")
+            Some(OsString::from("cpython-3.13.12-linux-x86_64-gnu"))
         );
+    }
+
+    #[test]
+    fn uv_tool_state_backups_leave_existing_python_root_in_place() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let managed_dir = temp.path();
+        let python_root = managed_python_installation_dir(managed_dir);
+        std::fs::create_dir_all(python_root.join("cpython-3.13.12-linux-x86_64-gnu/bin"))
+            .expect("create python root");
+
+        let backups = ManagedUvToolStateBackups::stash(managed_dir, Path::new("/tmp/uv"))
+            .expect("stash uv tool state");
+
+        assert!(
+            python_root.exists(),
+            "existing managed python root must remain available during uv_tool install"
+        );
+        assert!(
+            !managed_dir
+                .join(".uv-python.toolchain-installer-backup")
+                .exists(),
+            "existing managed python root should not be renamed into a backup"
+        );
+        assert_eq!(backups.backups.len(), 3);
     }
 
     #[cfg(unix)]

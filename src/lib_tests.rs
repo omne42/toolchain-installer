@@ -6108,7 +6108,7 @@ exit 2
     );
     assert_eq!(
         std::fs::read_to_string(python_state.join("python-state.txt"))?,
-        "existing-python-state"
+        "new-python-state\n"
     );
     assert!(
         !destination

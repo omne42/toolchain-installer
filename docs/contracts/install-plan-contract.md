@@ -180,7 +180,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 当当前 host triple 是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；仅仅把 `target_triple` 设成 Windows，不会让 Unix 宿主机把反斜杠改解释成目录分隔符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - `uv_tool` 若显式提供 `binary_name`，installer 会改用 `uv tool install --from <package> <binary_name>`，把请求的可执行文件名直接纳入上游安装契约，而不是只在安装后被动检查结果路径。
-- `uv_tool` 若提供 `python=3`、`3.13`、`3.13.12` 这类纯版本选择器，installer 会优先把它解析到已存在的托管 Python 可执行文件；只有当前托管根里还没有匹配解释器时，才会把它映射成带平台/`libc` 约束的完整 Python request 传给 `uv`，避免上游在 Linux 上自行选错 `gnu` / `musl` 变体。
+- `uv_tool` 若提供 `python=3`、`3.13`、`3.13.12` 这类纯版本选择器，installer 会先检查当前 `managed_dir` 里是否已经有匹配的托管 Python；若已有匹配解释器，会直接复用当前 managed Python 环境而不再额外透传 `--python`，避免上游 `uv` 在部分宿主上对 managed Python 做脆弱的二次探测；只有当前托管根里还没有匹配解释器时，才会把该选择器映射成带平台/`libc` 约束的完整 Python request，避免上游在 Linux 上自行选错 `gnu` / `musl` 变体。
 - `uv_tool` 若未显式提供 `binary_name`，且按包名推导出的默认入口不存在，installer 会优先检查 item `id` 对应的托管入口，再在本次新建/更新的托管 launcher 里按稳定顺序选择实际 CLI；像 `httpie -> http` 这类 distribution 名与命令名不同的包不会再被误判成失败。
 - `uv_tool` 的幂等 no-op 重跑同样会沿用这条 `id` 回退提示语义：如果本次安装没有改写 launcher，但托管目录里已经存在一个与 item `id` 匹配且健康的既有入口，installer 会把它视为当前请求对应的 CLI，而不是把无变化的重跑误报为失败。
 - `cargo_install`、`go_install`、`uv_tool` 在替换同名目标路径时，会先按最终 `destination` 获取同级 advisory lock，再把旧路径整体暂存到 canonical backup；并发 installer 命中同一目标时会串行等待，不会因为共享固定备份名而互相删掉对方的新产物。旧路径无论原先是文件还是目录，安装成功后都会清理备份，失败时恢复原状，不会把目录误当文件导致残留 `.toolchain-installer-backup`。
@@ -201,7 +201,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`，以及 bootstrap 为托管 `uv` 走的 `python -m pip install --target ... uv` fallback，都会通过统一 host recipe 执行边界施加 hard timeout；默认超时是 `900` 秒，也可通过 `--host-recipe-timeout-seconds` 或 `TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS` 覆盖。超时会直接返回 install error，并附带有界 stdout/stderr，而不是无限期挂住整个 installer。
 - `uv_python`、`uv_tool` 的托管 `uv` 安装子进程都会带 hard timeout，并对 stdout/stderr 做有界捕获；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。installer 不会因为挂起进程或无限输出把自身卡死或无限占用内存。
 - `uv_tool` 若目标路径上已有同名旧二进制，installer 会先把旧文件挪到临时备份；只有本次 `uv tool install` 真正产出新的目标二进制，且该入口还能通过一次带超时上限的 `--version` 健康探测后才算成功，失败时会恢复旧文件。
-- `uv_tool` 在失败回滚时不只恢复最终 binary，也会恢复同次安装里可能被改写的 `.uv-tools`、`.uv-cache`、`.uv-bootstrap` 和共享 `.uv-python` 状态根，避免 launcher 恢复了但托管环境仍停在半更新状态。
+- `uv_tool` 在失败回滚时不只恢复最终 binary，也会恢复同次安装里可能被改写的 `.uv-tools`、`.uv-cache`、`.uv-bootstrap`，以及“本次尝试新建出来”的共享 `.uv-python` 状态根；但不会把一个安装前就已存在的 `.uv-python` 整棵暂存走，因为真实 `uv tool install` 可能需要它在执行期间保持可见。
 
 ## 来源探测与回退
 
