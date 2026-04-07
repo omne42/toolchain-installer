@@ -146,10 +146,6 @@ pub(crate) fn execute_npm_global_item_with_timeout(
             destination.display()
         )));
     }
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
     write_install_receipt_when_safe(
         &destination,
         PackageInstallRequest {
@@ -160,12 +156,6 @@ pub(crate) fn execute_npm_global_item_with_timeout(
         recipe.package_search_root.as_deref(),
         recipe.fallback_search_root.as_deref(),
     )?;
-<<<<<<< HEAD
-=======
-    write_install_receipt(&destination, &item.package_spec, &item.binary_name)?;
->>>>>>> 72a1e77 (fix(npm): persist no-op install receipts)
-=======
->>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -1027,13 +1017,18 @@ fn package_manifest_binary_names(
     package: &HostPackageInput,
     binary_name: &str,
 ) -> Vec<String> {
-    let package_basename = package_request_name_constraint(package)
+    let package_basename = manifest
+        .get("name")
+        .and_then(|value| value.as_str())
+        .or_else(|| package_request_name_constraint(package))
         .and_then(|package_name| package_name.rsplit('/').next());
     let Some(bin) = manifest.get("bin") else {
         return Vec::new();
     };
     match bin {
-        serde_json::Value::String(_) => vec![binary_name.to_string()],
+        serde_json::Value::String(_) => package_basename
+            .map(|name| vec![name.to_string()])
+            .unwrap_or_else(|| vec![binary_name.to_string()]),
         serde_json::Value::Object(entries) => {
             let mut names = entries
                 .keys()
@@ -1378,10 +1373,6 @@ fn write_install_receipt(
     })
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
 fn write_install_receipt_when_safe(
     destination: &Path,
     request: PackageInstallRequest<'_>,
@@ -1404,11 +1395,6 @@ fn write_install_receipt_when_safe(
     write_install_receipt(destination, request.package, request.binary_name)
 }
 
-<<<<<<< HEAD
-=======
->>>>>>> 72a1e77 (fix(npm): persist no-op install receipts)
-=======
->>>>>>> a16f867 (fix(npm): accept safe no-op reinstalls)
 fn install_receipt_matches_request(destination: &Path, request: PackageInstallRequest<'_>) -> bool {
     let Some(current_fingerprint) = file_fingerprint(destination) else {
         return false;
@@ -2376,6 +2362,47 @@ mod tests {
             PackageInstallRequest {
                 package: &spec("typescript@5.6.3"),
                 binary_name: "typescript",
+            },
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_rejects_stale_wrapper_for_string_bin_manifest_with_explicit_binary_name()
+    {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_root = temp.path().join("bin");
+        let package_root = temp.path().join("lib").join("node_modules");
+        let package_dir = package_root.join("http-server");
+        let stale_binary_path = binary_root.join("custom-http-server");
+
+        std::fs::create_dir_all(package_dir.join("dist")).expect("create package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"http-server","version":"14.1.1","bin":"dist/http-server.js"}"#,
+        )
+        .expect("write manifest");
+        write_binary(&stale_binary_path);
+        write_binary(&package_dir.join("dist").join("http-server.js"));
+
+        let preinstall_state = capture_installation_state_with_item_id(
+            &stale_binary_path,
+            "http-server-string-bin",
+            &spec("http-server@14.1.1"),
+            "custom-http-server",
+            Some(&package_dir),
+            Some(&package_root),
+            None,
+        );
+
+        assert!(!installation_result_is_acceptable_with_item_id(
+            &preinstall_state,
+            &stale_binary_path,
+            PackageInstallRequest {
+                package: &spec("http-server@14.1.1"),
+                binary_name: "custom-http-server",
             },
             Some(&package_dir),
             Some(&package_root),

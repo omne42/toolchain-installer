@@ -2161,6 +2161,72 @@ chmod +x "$package_dir/node_modules/other/bin/http-server"
 
 #[cfg(unix)]
 #[test]
+fn npm_global_rejects_stale_wrapper_when_string_bin_manifest_does_not_export_requested_binary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fake_bin_dir = temp.path().join("fake-bin");
+    let fake_npm = fake_bin_dir.join("npm");
+    write_executable(
+        &fake_npm,
+        r#"#!/bin/sh
+[ -n "$npm_config_prefix" ] || exit 9
+package_dir="$npm_config_prefix/lib/node_modules/http-server"
+mkdir -p "$package_dir/dist"
+cat > "$package_dir/package.json" <<'EOF'
+{"name":"http-server","version":"14.1.1","bin":"dist/http-server.js"}
+EOF
+cat > "$package_dir/dist/http-server.js" <<'EOF'
+#!/bin/sh
+echo "package script"
+EOF
+chmod +x "$package_dir/dist/http-server.js"
+exit 0
+"#,
+    );
+
+    let managed_dir = temp.path().join("custom-npm-prefix");
+    std::fs::create_dir_all(managed_dir.join("bin")).expect("create managed bin");
+    write_executable(
+        &managed_dir.join("bin").join("custom-http-server"),
+        r#"#!/bin/sh
+echo "stale wrapper"
+"#,
+    );
+
+    let mut cmd = bootstrap_cmd();
+    let output = cmd
+        .env("PATH", path_with_prepend(&fake_bin_dir))
+        .args([
+            "--json",
+            "--strict",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
+            "--method",
+            "npm_global",
+            "--id",
+            "http-server-string-bin",
+            "--package",
+            "http-server@14.1.1",
+            "--binary-name",
+            "custom-http-server",
+        ])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).expect("valid json");
+    assert_eq!(json["items"][0]["status"], "failed");
+    assert_eq!(json["items"][0]["error_code"], "install_failed");
+    assert!(
+        json["items"][0]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("did not update the expected binary path")
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn npm_global_pnpm_prepends_pnpm_home_to_path() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fake_bin_dir = temp.path().join("fake-bin");
