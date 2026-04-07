@@ -376,8 +376,6 @@ def default_phases_for_target(target_triple: str) -> list[str]:
     phases.append(GIT_BOOTSTRAP_PHASE)
     if platform_id != "windows":
         phases.append(SYSTEM_PACKAGE_PHASE)
-        if platform_id == "linux":
-            phases.append(APT_PHASE)
     return phases
 
 
