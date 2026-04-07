@@ -12,7 +12,6 @@ pub(crate) struct FileFingerprint {
     len: u64,
 }
 
-#[cfg(test)]
 pub(crate) fn find_managed_python_executable(
     managed_dir: &Path,
     version: &str,
@@ -73,7 +72,7 @@ where
             let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if !name.starts_with("python") {
+            if !name.starts_with("python") || is_backup_artifact_name(name) {
                 continue;
             }
             if let Some(matched_candidate) = matched_python_candidate(&path, version, 1)
@@ -128,7 +127,8 @@ fn find_python_under_installation_dir(
             let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if !name.starts_with("python") || !name.ends_with(ext) {
+            if !name.starts_with("python") || !name.ends_with(ext) || is_backup_artifact_name(name)
+            {
                 continue;
             }
             if let Some(matched_candidate) = matched_python_candidate(&path, version, 2) {
@@ -152,6 +152,10 @@ fn preferred_python_candidate_names(version: &str, ext: &str) -> Vec<String> {
     names.push(format!("python{ext}"));
     names.dedup();
     names
+}
+
+fn is_backup_artifact_name(name: &str) -> bool {
+    name.contains(".toolchain-installer-backup")
 }
 
 fn python_major(version: &str) -> Option<&str> {
@@ -254,7 +258,7 @@ fn discover_managed_python_candidate_paths(
             let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if name.starts_with("python") {
+            if name.starts_with("python") && !is_backup_artifact_name(name) {
                 paths.push(path);
             }
         }
@@ -298,7 +302,7 @@ fn discover_python_paths_under_installation_dir(
             let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if name.starts_with("python") && name.ends_with(ext) {
+            if name.starts_with("python") && name.ends_with(ext) && !is_backup_artifact_name(name) {
                 paths.push(path);
             }
         }

@@ -180,6 +180,7 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - 当当前 host triple 是 Windows 时，相对 `destination` 会按 Windows 路径分隔语义归一化；仅仅把 `target_triple` 设成 Windows，不会让 Unix 宿主机把反斜杠改解释成目录分隔符。
 - `uv_tool` 若提供 `binary_name`，结果里的 `destination` 会指向该二进制在 `managed_dir` 下的实际路径；安装成功后若该路径不存在，整项返回失败。
 - `uv_tool` 若显式提供 `binary_name`，installer 会改用 `uv tool install --from <package> <binary_name>`，把请求的可执行文件名直接纳入上游安装契约，而不是只在安装后被动检查结果路径。
+- `uv_tool` 若提供 `python=3`、`3.13`、`3.13.12` 这类纯版本选择器，installer 会优先把它解析到已存在的托管 Python 可执行文件；只有当前托管根里还没有匹配解释器时，才会把它映射成带平台/`libc` 约束的完整 Python request 传给 `uv`，避免上游在 Linux 上自行选错 `gnu` / `musl` 变体。
 - `uv_tool` 若未显式提供 `binary_name`，且按包名推导出的默认入口不存在，installer 会优先检查 item `id` 对应的托管入口，再在本次新建/更新的托管 launcher 里按稳定顺序选择实际 CLI；像 `httpie -> http` 这类 distribution 名与命令名不同的包不会再被误判成失败。
 - `uv_tool` 的幂等 no-op 重跑同样会沿用这条 `id` 回退提示语义：如果本次安装没有改写 launcher，但托管目录里已经存在一个与 item `id` 匹配且健康的既有入口，installer 会把它视为当前请求对应的 CLI，而不是把无变化的重跑误报为失败。
 - `cargo_install`、`go_install`、`uv_tool` 在替换同名目标路径时，会先按最终 `destination` 获取同级 advisory lock，再把旧路径整体暂存到 canonical backup；并发 installer 命中同一目标时会串行等待，不会因为共享固定备份名而互相删掉对方的新产物。旧路径无论原先是文件还是目录，安装成功后都会清理备份，失败时恢复原状，不会把目录误当文件导致残留 `.toolchain-installer-backup`。
@@ -194,7 +195,9 @@ plan 模式让调用方声明“装什么”，安装器只提供执行基建，
 - `uv_python`、`uv_tool` 在缺少健康托管 `uv` 时，会先按顺序尝试复用健康 host `uv`、再尝试用宿主 `python -m pip install --target ... uv` 在 `managed_dir/.uv-bootstrap/` 下自举一个可复用 `uv`；只有这些本地可复用路径都失败后，才会回退到 GitHub public release 下载独立 `uv` 二进制。
 - `uv_python` 只有在 `managed_dir` 下实际发现“本次新建或更新”的匹配版本 Python 可执行文件后才算成功；单纯 `uv python install` 退出码为 `0`，或目录里本来就残留着匹配版本旧解释器，都不构成成功条件。
 - `uv_python` 的版本匹配按版本段比较：请求 `3` 可以接受托管目录里的任意 `3.x.y`，请求 `3.13` 可以接受 `3.13.x`，但请求 `3.13.1` 不会误接受 `3.13.12`。
+- `uv_python` 调用 `uv python install` 时会把 canonical `target_triple` 显式映射成完整 Python request（例如 `cpython-3.13.12-linux-x86_64-gnu`），避免把宿主平台的 `gnu` / `musl` / `windows` / `macos` 选择交给上游默认猜测。
 - `uv_python` 当请求 `3` 或 `3.13` 这类 family selector 时，会在所有匹配的托管解释器里选择版本最高的那个，不会因为目录字典序或旧安装残留而回退到更老的 patch 版本。
+- `uv_python` 在失败回滚时会一起恢复同次安装里可能被改写的 `.uv-python`、`.uv-cache`、`.uv-bootstrap` 和 `managed_dir` 顶层 `python` / `python3` / `python3.x` shim；如果原目标本来不存在，也会清掉失败半程留下的残留，而不是把半更新状态留在托管根里。
 - `system_package`、`pip`、`npm_global`、`workspace_package`、`cargo_install`、`rustup_component`、`go_install`，以及 bootstrap 为托管 `uv` 走的 `python -m pip install --target ... uv` fallback，都会通过统一 host recipe 执行边界施加 hard timeout；默认超时是 `900` 秒，也可通过 `--host-recipe-timeout-seconds` 或 `TOOLCHAIN_INSTALLER_HOST_RECIPE_TIMEOUT_SECONDS` 覆盖。超时会直接返回 install error，并附带有界 stdout/stderr，而不是无限期挂住整个 installer。
 - `uv_python`、`uv_tool` 的托管 `uv` 安装子进程都会带 hard timeout，并对 stdout/stderr 做有界捕获；默认超时是 `900` 秒，也可通过 `TOOLCHAIN_INSTALLER_UV_TIMEOUT_SECONDS` 覆盖。installer 不会因为挂起进程或无限输出把自身卡死或无限占用内存。
 - `uv_tool` 若目标路径上已有同名旧二进制，installer 会先把旧文件挪到临时备份；只有本次 `uv tool install` 真正产出新的目标二进制，且该入口还能通过一次带超时上限的 `--version` 健康探测后才算成功，失败时会恢复旧文件。

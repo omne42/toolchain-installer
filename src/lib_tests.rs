@@ -47,7 +47,9 @@ use crate::installer_runtime_config::{
     GitHubReleasePolicy, HostRecipePolicy, InstallerRuntimeConfig, ManagedToolchainPolicy,
     PackageIndexPolicy, PythonMirrorPolicy,
 };
-use crate::managed_toolchain::managed_environment_layout::managed_python_installation_dir;
+use crate::managed_toolchain::managed_environment_layout::{
+    managed_python_installation_dir, managed_uv_cache_dir,
+};
 use crate::managed_toolchain::managed_root_dir::{
     default_managed_dir_under_data_root, resolve_managed_toolchain_dir,
 };
@@ -5152,6 +5154,87 @@ exit 2
     assert!(err.detail().contains(
         "no newly created or updated managed Python executable matching `3.13.12` was found"
     ));
+    assert!(
+        !managed_python_installation_dir(&managed_dir).exists(),
+        "failed install should restore managed python state"
+    );
+    let version_output = std::process::Command::new(managed_dir.join("python3.13"))
+        .arg("--version")
+        .output()?;
+    let stdout = String::from_utf8_lossy(&version_output.stdout);
+    let stderr = String::from_utf8_lossy(&version_output.stderr);
+    assert!(
+        stdout.contains("Python 3.13.12") || stderr.contains("Python 3.13.12"),
+        "expected preinstall interpreter to remain intact: stdout={stdout:?} stderr={stderr:?}"
+    );
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
+#[tokio::test]
+async fn execute_uv_python_item_restores_new_state_when_install_command_fails() -> anyhow::Result<()>
+{
+    let tmp = tempfile::tempdir()?;
+    let managed_dir = tmp.path().join("managed");
+    std::fs::create_dir_all(&managed_dir)?;
+    write_executable(
+        &managed_dir.join("uv"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "uv 0.11.0"
+  exit 0
+fi
+if [ "$1" = "python" ] && [ "$2" = "install" ]; then
+  install_root="$UV_PYTHON_INSTALL_DIR/cpython-3.13.12-linux-x86_64-gnu/bin"
+  mkdir -p "$install_root"
+  mkdir -p "$UV_CACHE_DIR"
+  cat > "$install_root/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$install_root/python3.13"
+  cat > "$UV_PYTHON_BIN_DIR/python3.13" <<'EOF'
+#!/bin/sh
+echo "Python 3.13.12"
+EOF
+  chmod +x "$UV_PYTHON_BIN_DIR/python3.13"
+  exit 23
+fi
+echo "unexpected args: $*" >&2
+exit 2
+"#,
+    )?;
+
+    let item = UvPythonPlanItem {
+        id: "python3.13.12".to_string(),
+        version: "3.13.12".to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let err = execute_uv_python_item(
+        &item,
+        "x86_64-unknown-linux-gnu",
+        &managed_dir,
+        &test_runtime_config(),
+        &client,
+    )
+    .await
+    .expect_err("failed uv command should roll back managed python state");
+    assert_eq!(err.exit_code(), ExitCode::Install);
+    assert!(
+        !managed_python_installation_dir(&managed_dir).exists(),
+        "failed install should remove managed python installation dir"
+    );
+    assert!(
+        !managed_uv_cache_dir(&managed_dir).exists(),
+        "failed install should remove uv cache dir"
+    );
+    assert!(
+        !managed_dir.join("python3.13").exists(),
+        "failed install should remove created python shim"
+    );
     Ok(())
 }
 

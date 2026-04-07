@@ -39,9 +39,6 @@ impl ManagedDestinationBackup {
     }
 
     pub(crate) fn restore(&self) -> Result<(), String> {
-        let Some(backup) = self.backup.as_ref() else {
-            return Ok(());
-        };
         remove_path_if_exists(&self.original).map_err(|err| {
             format!(
                 "cannot remove failed {} {} before restore: {err}",
@@ -49,6 +46,9 @@ impl ManagedDestinationBackup {
                 self.original.display()
             )
         })?;
+        let Some(backup) = self.backup.as_ref() else {
+            return Ok(());
+        };
         std::fs::rename(backup, &self.original).map_err(|err| {
             format!(
                 "cannot restore previous {} {} from {}: {err}",
@@ -273,6 +273,27 @@ mod tests {
     use std::time::Duration;
 
     use super::{ManagedDestinationBackup, path_entry_exists, promote_staged_file};
+
+    #[test]
+    fn restore_removes_failed_output_when_original_did_not_exist() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let destination = temp.path().join("python3.13");
+        let backup =
+            ManagedDestinationBackup::stash(&destination, "managed binary").expect("stash backup");
+
+        std::fs::write(&destination, b"failed install artifact").expect("write failed artifact");
+        assert!(
+            destination.exists(),
+            "failed artifact should exist before restore"
+        );
+
+        backup.restore().expect("restore failed artifact");
+
+        assert!(
+            !destination.exists(),
+            "restore should remove failed output when no original existed"
+        );
+    }
 
     #[test]
     fn discard_removes_directory_backup_without_leaving_residue() {

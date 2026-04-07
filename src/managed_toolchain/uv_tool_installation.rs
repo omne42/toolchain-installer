@@ -16,6 +16,7 @@ use crate::managed_toolchain::managed_environment_layout::{
     bootstrap_uv_root, managed_python_installation_dir, managed_tool_binary_path,
     managed_uv_cache_dir, managed_uv_process_env, managed_uv_tool_dir,
 };
+use crate::managed_toolchain::managed_python_executable_discovery::find_managed_python_executable;
 use crate::managed_toolchain::managed_uv_host_execution::run_managed_uv_recipe;
 use crate::managed_toolchain::managed_uv_installation::{
     ManagedUvBootstrapMode, ensure_managed_uv,
@@ -23,6 +24,9 @@ use crate::managed_toolchain::managed_uv_installation::{
 use crate::managed_toolchain::source_candidate_attempts::attempt_source_candidates;
 use crate::managed_toolchain::uv_installation_source_candidates::{
     package_index_installation_source_candidates, prioritize_reachable_installation_sources,
+};
+use crate::managed_toolchain::uv_python_installation::{
+    is_version_like_python_selector, managed_python_request,
 };
 use crate::managed_toolchain::version_probe::binary_reports_version;
 use crate::plan_items::UvToolPlanItem;
@@ -45,6 +49,8 @@ pub(crate) async fn execute_uv_tool_item(
     )
     .await?;
     let base_env = managed_uv_process_env(managed_dir);
+    let install_args = build_uv_tool_install_args(item, target_triple, managed_dir)
+        .map_err(crate::error::OperationError::install)?;
     let candidates = prioritize_reachable_installation_sources(
         client,
         package_index_installation_source_candidates(cfg),
@@ -66,11 +72,9 @@ pub(crate) async fn execute_uv_tool_item(
         let backup = ManagedDestinationBackup::stash(&destination, "managed binary")
             .map_err(crate::error::OperationError::install)?;
 
-        let args = build_uv_tool_install_args(item);
-
         if let Err(err) = run_managed_uv_recipe(
             uv.program.as_os_str(),
-            &args,
+            &install_args,
             &env,
             cfg.managed_toolchain.uv_recipe_timeout,
         ) {
@@ -330,7 +334,11 @@ fn merge_detail(first: Option<String>, second: Option<String>) -> Option<String>
     }
 }
 
-fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {
+fn build_uv_tool_install_args(
+    item: &UvToolPlanItem,
+    target_triple: &str,
+    managed_dir: &Path,
+) -> Result<Vec<OsString>, String> {
     let mut args = vec![
         OsString::from("tool"),
         OsString::from("install"),
@@ -338,7 +346,11 @@ fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {
     ];
     if let Some(python) = item.python.as_deref() {
         args.push(OsString::from("--python"));
-        args.push(OsString::from(python));
+        args.push(resolve_uv_tool_python_arg(
+            python,
+            target_triple,
+            managed_dir,
+        )?);
     }
     if item.binary_name_explicit {
         args.push(OsString::from("--from"));
@@ -347,16 +359,36 @@ fn build_uv_tool_install_args(item: &UvToolPlanItem) -> Vec<OsString> {
     } else {
         args.push(item.package.install_arg());
     }
-    args
+    Ok(args)
+}
+
+fn resolve_uv_tool_python_arg(
+    python: &str,
+    target_triple: &str,
+    managed_dir: &Path,
+) -> Result<OsString, String> {
+    if !is_version_like_python_selector(python) {
+        return Ok(OsString::from(python));
+    }
+    if let Some(existing_python) =
+        find_managed_python_executable(managed_dir, python, target_triple)
+    {
+        return Ok(existing_python.into_os_string());
+    }
+    Ok(OsString::from(managed_python_request(
+        python,
+        target_triple,
+    )?))
 }
 
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::path::Path;
 
     use super::{
         build_uv_tool_install_args, capture_managed_uv_tool_state, merge_detail,
-        resolve_uv_tool_destination,
+        resolve_uv_tool_destination, resolve_uv_tool_python_arg,
     };
     use crate::plan_items::{HostPackageInput, UvToolPlanItem};
 
@@ -370,11 +402,20 @@ mod tests {
             binary_name_explicit: true,
         };
 
-        let args = build_uv_tool_install_args(&item);
+        let args =
+            build_uv_tool_install_args(&item, "x86_64-unknown-linux-gnu", Path::new("/managed"))
+                .expect("build args");
         assert_eq!(
             args,
             vec![
-                "tool", "install", "--force", "--python", "3.13", "--from", "ruff-lsp", "ruff-lsp"
+                "tool",
+                "install",
+                "--force",
+                "--python",
+                "cpython-3.13-linux-x86_64-gnu",
+                "--from",
+                "ruff-lsp",
+                "ruff-lsp"
             ]
             .into_iter()
             .map(OsString::from)
@@ -392,7 +433,9 @@ mod tests {
             binary_name_explicit: false,
         };
 
-        let args = build_uv_tool_install_args(&item);
+        let args =
+            build_uv_tool_install_args(&item, "x86_64-unknown-linux-gnu", Path::new("/managed"))
+                .expect("build args");
         assert_eq!(
             args,
             vec!["tool", "install", "--force", "ruff-lsp"]
@@ -416,6 +459,42 @@ mod tests {
         );
     }
 
+    #[cfg_attr(windows, ignore = "mock python shim is unix-specific")]
+    #[test]
+    fn resolve_uv_tool_python_arg_prefers_existing_managed_python_path() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir()?;
+        let managed_dir = tmp.path().join("managed");
+        std::fs::create_dir_all(&managed_dir)?;
+        let python = managed_dir.join("python3.13");
+        std::fs::write(
+            &python,
+            r#"#!/bin/sh
+echo "Python 3.13.12"
+"#,
+        )?;
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))?;
+
+        let python_arg =
+            resolve_uv_tool_python_arg("3.13.12", "x86_64-unknown-linux-gnu", &managed_dir)
+                .expect("resolve managed python path");
+        assert_eq!(python_arg, python.into_os_string());
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_uv_tool_python_arg_maps_version_selector_when_managed_python_is_missing() {
+        let managed_dir = tempfile::tempdir().expect("tempdir");
+        let python_arg =
+            resolve_uv_tool_python_arg("3.13.12", "x86_64-unknown-linux-gnu", managed_dir.path())
+                .expect("map managed python request");
+        assert_eq!(
+            python_arg,
+            OsString::from("cpython-3.13.12-linux-x86_64-gnu")
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn local_path_package_keeps_os_path_install_args() {
@@ -428,7 +507,8 @@ mod tests {
         };
 
         assert_eq!(
-            build_uv_tool_install_args(&item),
+            build_uv_tool_install_args(&item, "x86_64-unknown-linux-gnu", Path::new("/managed"))
+                .expect("build args"),
             vec![
                 OsString::from("tool"),
                 OsString::from("install"),
