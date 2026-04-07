@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use omne_process_primitives::{HostRecipeRequest, command_path_exists, resolve_command_path};
+use serde::{Deserialize, Serialize};
 
 use crate::contracts::{BootstrapItem, BootstrapSourceKind, BootstrapStatus};
 use crate::error::{OperationError, OperationResult};
@@ -26,6 +27,19 @@ struct NpmGlobalRecipe {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FileFingerprint {
     modified: Option<SystemTime>,
+    len: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct NpmGlobalInstallReceipt {
+    package: String,
+    binary_name: String,
+    fingerprint: StoredFileFingerprint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredFileFingerprint {
+    modified_unix_nanos: Option<u128>,
     len: u64,
 }
 
@@ -125,6 +139,7 @@ pub(crate) fn execute_npm_global_item_with_timeout(
             destination.display()
         )));
     }
+    write_install_receipt(&destination, &item.package_spec, &item.binary_name)?;
 
     Ok(BootstrapItem {
         tool: item.id.clone(),
@@ -424,6 +439,11 @@ fn capture_installation_state_with_item_id(
     if let Some(root) = fallback_search_root {
         paths.extend(find_matching_binary_paths_under_dir(root, binary_name));
     }
+    let receipt_paths = paths
+        .iter()
+        .map(|path| npm_global_install_receipt_path(path))
+        .collect::<Vec<_>>();
+    paths.extend(receipt_paths);
     paths.sort();
     paths.dedup();
     paths
@@ -489,13 +509,13 @@ fn installation_result_is_acceptable_with_item_id(
     }
 
     destination_preexisted(preinstall_state, destination)
-        && managed_package_matches_request_for_destination(
+        && (managed_package_matches_request_for_destination(
             destination,
             request,
             fallback_package_dir,
             package_search_root,
             fallback_search_root,
-        )
+        ) || install_receipt_matches_request(destination, request))
 }
 
 fn destination_preexisted(
@@ -1272,6 +1292,80 @@ fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
     })
 }
 
+fn write_install_receipt(
+    destination: &Path,
+    package: &HostPackageInput,
+    binary_name: &str,
+) -> OperationResult<()> {
+    let fingerprint = file_fingerprint(destination).ok_or_else(|| {
+        OperationError::install(format!(
+            "cannot capture npm_global binary fingerprint at {}",
+            destination.display()
+        ))
+    })?;
+    let receipt = NpmGlobalInstallReceipt {
+        package: package.render(),
+        binary_name: binary_name.to_string(),
+        fingerprint: StoredFileFingerprint::from_fingerprint(&fingerprint),
+    };
+    let receipt_path = npm_global_install_receipt_path(destination);
+    if let Some(parent) = receipt_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| OperationError::install(format!("cannot create receipt dir: {err}")))?;
+    }
+    let payload = serde_json::to_vec(&receipt).map_err(|err| {
+        OperationError::install(format!("cannot serialize install receipt: {err}"))
+    })?;
+    std::fs::write(&receipt_path, payload).map_err(|err| {
+        OperationError::install(format!(
+            "cannot write npm_global install receipt {}: {err}",
+            receipt_path.display()
+        ))
+    })
+}
+
+fn install_receipt_matches_request(destination: &Path, request: PackageInstallRequest<'_>) -> bool {
+    let Some(current_fingerprint) = file_fingerprint(destination) else {
+        return false;
+    };
+    let receipt_path = npm_global_install_receipt_path(destination);
+    let Ok(payload) = std::fs::read(&receipt_path) else {
+        return false;
+    };
+    let Ok(receipt) = serde_json::from_slice::<NpmGlobalInstallReceipt>(&payload) else {
+        return false;
+    };
+    receipt.package == request.package.render()
+        && receipt.binary_name == request.binary_name
+        && receipt.fingerprint == StoredFileFingerprint::from_fingerprint(&current_fingerprint)
+}
+
+fn npm_global_install_receipt_path(destination: &Path) -> PathBuf {
+    destination.with_file_name(format!(
+        "{}.toolchain-installer-npm-global.json",
+        destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("managed-tool")
+    ))
+}
+
+impl StoredFileFingerprint {
+    fn from_fingerprint(fingerprint: &FileFingerprint) -> Self {
+        Self {
+            modified_unix_nanos: fingerprint.modified.and_then(system_time_to_unix_nanos),
+            len: fingerprint.len,
+        }
+    }
+}
+
+fn system_time_to_unix_nanos(value: SystemTime) -> Option<u128> {
+    value
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_nanos())
+}
+
 fn candidate_binary_names(binary_name: &str) -> Vec<String> {
     #[cfg(windows)]
     {
@@ -1310,10 +1404,12 @@ mod tests {
         build_npm_global_recipe_for_spec, capture_installation_state,
         capture_installation_state_with_item_id, file_fingerprint, find_binary_at_path,
         find_matching_binary_paths_under_dir, find_package_dirs_under_root, global_binary_filename,
-        installation_result_is_acceptable, installation_result_is_acceptable_with_item_id,
-        npm_global_package_dir, npm_package_request, package_bin_relative_path,
-        parse_pnpm_root_stdout, path_has_no_symlink_components, resolve_npm_global_destination,
+        install_receipt_matches_request, installation_result_is_acceptable,
+        installation_result_is_acceptable_with_item_id, npm_global_package_dir,
+        npm_package_request, package_bin_relative_path, parse_pnpm_root_stdout,
+        path_has_no_symlink_components, resolve_npm_global_destination,
         resolve_npm_global_destination_with_item_id, resolve_package_bin_script,
+        write_install_receipt,
     };
     use crate::plan_items::{HostPackageInput, NodePackageManager};
 
@@ -1528,6 +1624,67 @@ mod tests {
         }
 
         assert!(find_binary_at_path(&missing_path, &binary_name).is_none());
+    }
+
+    #[test]
+    fn install_receipt_matches_request_for_unchanged_binary_without_package_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        std::fs::create_dir_all(binary_path.parent().expect("binary parent"))
+            .expect("create binary parent");
+        std::fs::write(&binary_path, "#!/bin/sh\necho ok\n").expect("write binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+        }
+        write_install_receipt(&binary_path, &spec("http-server@14.1.1"), "http-server")
+            .expect("write receipt");
+
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
+            None,
+        );
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn install_receipt_matches_request_rejects_binary_fingerprint_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        std::fs::create_dir_all(binary_path.parent().expect("binary parent"))
+            .expect("create binary parent");
+        std::fs::write(&binary_path, "#!/bin/sh\necho old\n").expect("write binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+        }
+        write_install_receipt(&binary_path, &spec("http-server@14.1.1"), "http-server")
+            .expect("write receipt");
+        std::fs::write(&binary_path, "#!/bin/sh\necho rewritten-binary\n").expect("rewrite binary");
+
+        assert!(!install_receipt_matches_request(
+            &binary_path,
+            PackageInstallRequest {
+                package: &spec("http-server@14.1.1"),
+                binary_name: "http-server",
+            },
+        ));
     }
 
     #[test]
@@ -1892,6 +2049,67 @@ mod tests {
             "http-server",
             None,
             Some(temp.path().join("global").as_path()),
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_accepts_noop_with_matching_install_receipt_without_package_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        write_binary(&binary_path);
+        write_install_receipt(&binary_path, &spec("http-server@14.1.1"), "http-server")
+            .expect("write receipt");
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
+            None,
+        );
+
+        assert!(installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn installation_result_rejects_noop_with_stale_install_receipt_after_binary_changes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let binary_path = temp.path().join("bin").join("http-server");
+        write_binary(&binary_path);
+        write_install_receipt(&binary_path, &spec("http-server@14.1.1"), "http-server")
+            .expect("write receipt");
+        std::fs::write(&binary_path, "#!/bin/sh\necho changed\n").expect("rewrite binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod binary");
+        }
+        let preinstall_state = capture_installation_state(
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
+            None,
+        );
+
+        assert!(!installation_result_is_acceptable(
+            &preinstall_state,
+            &binary_path,
+            "http-server@14.1.1",
+            "http-server",
+            None,
+            None,
             None,
         ));
     }
