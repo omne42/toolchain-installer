@@ -457,7 +457,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(windows, ignore = "mock python shim is unix-specific")]
+    #[cfg(unix)]
     #[test]
     fn resolve_uv_tool_python_arg_prefers_existing_managed_python_path() -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;
