@@ -3344,7 +3344,7 @@ fn conflicting_nested_plan_destinations_return_usage_exit_code() {
 }
 
 #[test]
-fn apt_method_rejects_non_apt_get_manager() {
+fn apt_alias_stays_unsupported_even_with_explicit_apt_get_manager() {
     let mut cmd = bootstrap_cmd();
     let stderr = cmd
         .args([
