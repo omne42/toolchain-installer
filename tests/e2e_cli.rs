@@ -152,17 +152,26 @@ fn tool_and_plan_file_conflict_returns_usage_error() {
 }
 
 #[test]
-fn apt_alias_method_returns_usage_error() {
+fn apt_alias_method_normalizes_before_host_bound_validation() {
     let mut cmd = bootstrap_cmd();
     let stderr = cmd
-        .args(["--method", "apt", "--id", "apt-demo", "--package", "curl"])
+        .args([
+            "--method",
+            "apt",
+            "--id",
+            "apt-demo",
+            "--package",
+            "curl",
+            "--target-triple",
+            "aarch64-apple-darwin",
+        ])
         .assert()
         .code(2)
         .get_output()
         .stderr
         .clone();
     let stderr = String::from_utf8_lossy(&stderr);
-    assert!(stderr.contains("unsupported method `apt`"));
+    assert!(stderr.contains("host-bound method `system_package`"));
 }
 
 #[test]
@@ -3344,7 +3353,7 @@ fn conflicting_nested_plan_destinations_return_usage_exit_code() {
 }
 
 #[test]
-fn apt_alias_stays_unsupported_even_with_explicit_apt_get_manager() {
+fn apt_alias_rejects_non_apt_get_manager() {
     let mut cmd = bootstrap_cmd();
     let stderr = cmd
         .args([
@@ -3355,7 +3364,7 @@ fn apt_alias_stays_unsupported_even_with_explicit_apt_get_manager() {
             "--package",
             "demo-package",
             "--manager",
-            "apt-get",
+            "dnf",
         ])
         .assert()
         .code(2)
@@ -3363,7 +3372,7 @@ fn apt_alias_stays_unsupported_even_with_explicit_apt_get_manager() {
         .stderr
         .clone();
     let stderr = String::from_utf8_lossy(&stderr);
-    assert!(stderr.contains("unsupported method `apt`"));
+    assert!(stderr.contains("only accepts `manager=apt-get`"));
 }
 
 #[cfg_attr(
