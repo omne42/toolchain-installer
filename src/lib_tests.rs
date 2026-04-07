@@ -4347,7 +4347,7 @@ fn validate_plan_accepts_system_package_method_with_explicit_apt_get_manager() {
 }
 
 #[test]
-fn validate_plan_rejects_apt_method_even_with_explicit_manager() {
+fn validate_plan_accepts_apt_method_and_normalizes_to_apt_get_manager() {
     let plan = InstallPlan {
         schema_version: PLAN_SCHEMA_VERSION,
         items: vec![InstallPlanItem {
@@ -4364,14 +4364,50 @@ fn validate_plan_rejects_apt_method_even_with_explicit_manager() {
             python: None,
         }],
     };
+    let items = validate_plan(
+        &plan,
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    )
+    .expect("apt method should remain compatible");
+
+    assert!(matches!(
+        items.as_slice(),
+        [ResolvedPlanItem::SystemPackage(item)]
+            if item.package == "demo"
+                && item.mode == SystemPackageMode::Explicit(SystemPackageManager::AptGet)
+    ));
+}
+
+#[test]
+fn validate_plan_rejects_apt_method_with_non_apt_get_manager() {
+    let plan = InstallPlan {
+        schema_version: PLAN_SCHEMA_VERSION,
+        items: vec![InstallPlanItem {
+            id: "demo".to_string(),
+            method: "apt".to_string(),
+            version: None,
+            url: None,
+            sha256: None,
+            archive_binary: None,
+            binary_name: None,
+            destination: None,
+            package: Some("demo".to_string()),
+            manager: Some("dnf".to_string()),
+            python: None,
+        }],
+    };
     let err = validate_plan(
         &plan,
         "x86_64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     )
-    .expect_err("apt method should stay unsupported");
+    .expect_err("apt method should reject non apt-get managers");
     assert_eq!(err.exit_code(), ExitCode::Usage);
-    assert!(err.to_string().contains("unsupported method `apt`"));
+    assert!(
+        err.to_string().contains("only accepts `manager=apt-get`"),
+        "unexpected error: {err}"
+    );
 }
 
 #[cfg_attr(windows, ignore = "mock uv shim is unix-specific")]
