@@ -1630,12 +1630,7 @@ fn system_package_recipe_helpers_match_runtime_validation_contract() {
     assert_eq!(apt_recipe.program, "apt-get");
     assert_eq!(
         apt_recipe.args,
-        vec![
-            "install".to_string(),
-            "-y".to_string(),
-            "--".to_string(),
-            "git".to_string()
-        ]
+        vec!["install".to_string(), "--".to_string(), "git".to_string()]
     );
 
     assert_eq!(
