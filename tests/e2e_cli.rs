@@ -554,10 +554,14 @@ fn default_bootstrap_json_shape_contains_target_and_items() {
 
 #[test]
 fn single_item_download_failure_uses_download_exit_code() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
     let mut cmd = bootstrap_cmd();
     let output = cmd
         .args([
             "--json",
+            "--managed-dir",
+            managed_dir.to_str().expect("utf8 path"),
             "--method",
             "release",
             "--id",
@@ -1244,9 +1248,13 @@ fn archive_tree_release_retries_mirror_after_invalid_canonical_archive() {
 #[test]
 fn archive_tree_release_allows_cross_target() {
     let target = non_host_target_triple();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed_dir = temp.path().join("managed");
     let mut cmd = bootstrap_cmd();
     cmd.args([
         "--json",
+        "--managed-dir",
+        managed_dir.to_str().expect("utf8 path"),
         "--target-triple",
         &target,
         "--method",
