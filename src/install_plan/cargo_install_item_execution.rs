@@ -63,7 +63,6 @@ pub(crate) fn execute_cargo_install_item_with_timeout(
             format!("cargo:path:{}", package_path.display())
         }
         CargoInstallSource::RegistryPackage { package, version } => {
-            args.push(OsString::from("--locked"));
             args.push(OsString::from(package));
             if let Some(version) = version.as_deref() {
                 args.push(OsString::from("--version"));
@@ -328,6 +327,22 @@ mod tests {
                 OsString::from("/tmp/stage"),
             ]
         );
+    }
+
+    #[test]
+    fn registry_package_install_args_do_not_force_locked_mode() {
+        let item = CargoInstallPlanItem {
+            id: "demo".to_string(),
+            source: CargoInstallSource::RegistryPackage {
+                package: "demo".to_string(),
+                version: Some("1.2.3".to_string()),
+            },
+            binary_name: "demo".to_string(),
+            binary_name_explicit: false,
+        };
+
+        let args = build_cargo_install_args(&item, Path::new("/tmp/stage"));
+        assert!(!args.contains(&OsString::from("--locked")));
     }
 
     #[cfg(unix)]
